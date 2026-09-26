@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { PAUSE_ICON, PLAY_ICON, ROUTE_ICON, SETTINGS_ICON, TAGS_ICON, WEATHER_RADAR_ICON } from "../lib/actionIcons";
+import { PAUSE_ICON, ROUTE_ICON, SETTINGS_ICON, TAGS_ICON, WEATHER_RADAR_ICON } from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { fullscreenIcon } from "../lib/fullscreen";
 import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
+import type { RadarState } from "../lib/radar";
 import { toggleButtonClass } from "../lib/toggleButtonStyle";
 import { IconButton } from "./IconButton";
 import { SettingsPanel } from "./SettingsPanel";
@@ -60,32 +61,27 @@ export interface ControlsPanelProps {
    * `document.fullscreenEnabled` is false (some embedded/iframe contexts
    * and older Safari versions). */
   fullscreenDisabled: boolean;
-  /** Live weather radar overlay (#1896, see lib/radar.ts). `radarOn` is
-   * the toggle-active state driving the icon's own coloring, distinct from
-   * this component's local `radarExpanded` state (whether the popover
-   * showing the toggle/opacity/play controls is open) -- opening the
-   * popover doesn't itself turn the layer on, matching every other
-   * IconButton's `active` meaning "the feature is on," not "its controls
-   * are visible." */
-  radarOn: boolean;
-  onToggleRadar: () => void;
+  /** Live weather radar overlay (#1896, see lib/radar.ts). #2015 collapsed
+   * the old separate on/off switch + Play/Pause button (and their popover)
+   * into this one tri-state value -- one click cycles
+   * off -> on -> animate -> off, driving both the button's active styling
+   * (on and animate both read active) and which icon it shows (the JSX
+   * below swaps in PAUSE_ICON once actually animating). No popover, no
+   * `radarExpanded`-style local state anymore -- the button *is* the
+   * whole control. */
+  radarState: RadarState;
+  onCycleRadar: () => void;
   /** 0-1, applied live via `raster-opacity` -- see lib/controlsPersistence.ts
-   * for why 0.2 is the default. #2012 moved the slider itself into the
-   * Settings panel's "Radar" heading; the on/off switch and Play/Pause
-   * button below stay in this popover for now (see the separate
-   * radar-button issue this panel's docstring points at). */
+   * for why 0.2 is the default. Lives in the Settings panel's "Radar"
+   * heading (#2012); this component only forwards it through. */
   radarOpacity: number;
   onRadarOpacityChange: (value: number) => void;
-  /** Whether the last-30-minutes playback loop is currently animating.
-   * Disabled (not hidden) whenever `radarOn` is false, matching
-   * `rangeOutlineDisabled`'s convention -- play/pause is meaningless with
-   * no radar layer to animate. */
-  radarPlaying: boolean;
-  onToggleRadarPlaying: () => void;
-  /** #1910: true only while playback's frame-prefetch phase is in
-   * progress -- shows a spinner on the Play button instead of the
-   * play/pause icon, and disables it, so the pause before the loop
-   * visibly starts reads as "loading," not a stalled click. */
+  /** #1910: true only while animate's frame-prefetch phase is in progress
+   * -- shows a spinner on the Radar button instead of its icon. #2015:
+   * unlike every other IconButton `loading` caller, this one must stay
+   * clickable through the spinner (see `loadingDisabled={false}` below) --
+   * the operator can cycle straight out of animate (e.g. back to "off")
+   * without waiting for prefetch to finish or time out. */
   radarPlaybackLoading: boolean;
   /** #2000: multiplies both the aircraft icon-size expression (MapView.tsx)
    * and the info box's rendered size (InfoBoxLayer.tsx, via a CSS
@@ -121,9 +117,9 @@ export interface ControlsPanelProps {
 // own standalone button (the latter two behind small popovers) -- all three
 // moved into the new Settings panel below (components/SettingsPanel.tsx),
 // along with a brand-new Range Rings toggle and Radar's opacity slider. This
-// column now ends in Radar (its on/off switch + opacity + Play/Pause popover
-// left as-is for this issue -- see the separate radar-button issue for that
-// rework) followed by the new Settings button.
+// column now ends in Radar (#2015 collapsed its old on/off switch + Play/
+// Pause popover into a single tri-state button, no popover at all) followed
+// by the new Settings button.
 //
 // The connection-status dot that used to float here (its own top-2/right-2
 // wrapper, independent of this column's top-4/right-4 inset) has moved into
@@ -149,25 +145,22 @@ export function ControlsPanel({
   fullscreen,
   onToggleFullscreen,
   fullscreenDisabled,
-  radarOn,
-  onToggleRadar,
+  radarState,
+  onCycleRadar,
   radarOpacity,
   onRadarOpacityChange,
-  radarPlaying,
-  onToggleRadarPlaying,
   radarPlaybackLoading,
   displayScale,
   onDisplayScaleChange,
 }: ControlsPanelProps) {
-  // Purely local, transient UI state -- whether the radar popover is open.
-  // Not lifted to MapView/persisted: unlike radarOn/radarOpacity, this
-  // isn't an operator preference worth restoring on reload (matching
-  // AircraftListPanel's own open/closed drawer state, which also resets
-  // fresh each load).
-  const [radarExpanded, setRadarExpanded] = useState(false);
-  // Same rationale as radarExpanded above -- only whether the Settings panel
-  // is open is transient/local; every value it shows/edits is itself already
-  // lifted to MapView and persisted there.
+  // Purely local, transient UI state -- whether the Settings panel is
+  // open. Not lifted to MapView/persisted: every value the panel itself
+  // shows/edits is already lifted and persisted there; only its own
+  // open/closed disclosure state is local (matching AircraftListPanel's
+  // own open/closed drawer state, which also resets fresh each load).
+  // #2015 removed this component's other local disclosure state
+  // (`radarExpanded`) along with the Radar popover it gated -- the new
+  // tri-state Radar button below needs no local state of its own.
   const [settingsExpanded, setSettingsExpanded] = useState(false);
 
   return (
@@ -178,9 +171,10 @@ export function ControlsPanel({
       // AircraftListPanel use -- without this, an info box with a high
       // altitude-derived z-index (up to MAX_LABEL_Z_INDEX itself) paints
       // over whichever button in this column it happens to overlap.
-      // #1909 fixed only the radar popover this way; this covers the
-      // whole column (including the popover, whose own zIndex below is
-      // now redundant but harmless).
+      // #1909 originally fixed only the radar popover this way; this
+      // covers the whole column (the Radar popover itself is gone as of
+      // #2015 -- the Settings popover below is the only one left, and
+      // relies on this same wrapper rather than setting its own zIndex).
       style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       <div className="pointer-events-auto flex flex-col gap-2">
@@ -216,66 +210,23 @@ export function ControlsPanel({
           onClick={onToggleHistoryAll}
           size="md"
         />
-        <div className="relative">
-          <IconButton
-            label="Radar"
-            icon={WEATHER_RADAR_ICON}
-            active={radarOn}
-            onClick={() => setRadarExpanded((prev) => !prev)}
-            size="md"
-          />
-          {radarExpanded && (
-            <div
-              className="absolute top-0 right-full mr-2 flex w-48 flex-col gap-3 rounded-md border border-slate-200 bg-white p-3 shadow-md dark:border-slate-700 dark:bg-slate-900"
-              // Popover content is its own click surface, independent of
-              // the toggle button beside it -- no outside-click-to-close
-              // handling here, matching this codebase's other disclosure
-              // (AircraftListPanel's drawer also only closes on its own
-              // explicit toggle). No zIndex needed here (#1953) -- the
-              // outer wrapper above already covers this popover.
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-700 dark:text-slate-200">Radar</span>
-                {/* Phone-style toggle switch, replacing the bordered On/Off
-                    text button -- radar-specific, not a shared component
-                    (a deliberate scope decision, not an oversight).
-                    role="switch"/aria-checked is the correct ARIA pattern
-                    for this control shape, matching (and improving on) the
-                    aria-pressed convention every other on/off button here
-                    still uses. */}
-                <button
-                  type="button"
-                  onClick={onToggleRadar}
-                  role="switch"
-                  aria-checked={radarOn}
-                  aria-label={radarOn ? "Turn radar off" : "Turn radar on"}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                    radarOn ? "bg-blue-600" : "bg-slate-300 dark:bg-slate-600"
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                      radarOn ? "translate-x-4" : "translate-x-0.5"
-                    }`}
-                  />
-                </button>
-              </div>
-              {/* #2012: the opacity slider that used to live here moved into
-                  the Settings panel's "Radar" heading -- this popover now
-                  holds only the on/off switch above and the Play/Pause
-                  button below. */}
-              <IconButton
-                label={radarPlaybackLoading ? "Loading radar frames" : radarPlaying ? "Pause" : "Play"}
-                icon={radarPlaying ? PAUSE_ICON : PLAY_ICON}
-                active={radarPlaying}
-                onClick={onToggleRadarPlaying}
-                disabled={!radarOn}
-                loading={radarPlaybackLoading}
-                size="md"
-              />
-            </div>
-          )}
-        </div>
+        {/* #2015: one button, three states (off -> on -> animate -> off on
+            each click), no popover -- opacity (its only remaining
+            popover content pre-#2015) already moved to Settings in
+            #2012. `loadingDisabled={false}` is the load-bearing part:
+            every other IconButton `loading` caller lets it disable the
+            button too, but this one must stay clickable through
+            animate's prefetch spinner so the operator can cycle straight
+            back out (e.g. to "off") without waiting. */}
+        <IconButton
+          label={radarButtonLabel(radarState, radarPlaybackLoading)}
+          icon={radarState === "animate" && !radarPlaybackLoading ? PAUSE_ICON : WEATHER_RADAR_ICON}
+          active={radarState !== "off"}
+          onClick={onCycleRadar}
+          loading={radarState === "animate" && radarPlaybackLoading}
+          loadingDisabled={false}
+          size="md"
+        />
         {/* #2012: consolidates Map Labels, Text & Icon Size, Range Outline,
             the new Range Rings toggle, and Radar's opacity slider into one
             panel -- same popover-behind-an-icon-button shape as Radar
@@ -313,4 +264,15 @@ export function ControlsPanel({
       </div>
     </div>
   );
+}
+
+// #2015: title/aria-label text for the tri-state Radar button, covering
+// all four visually distinct moments -- off, on, animate-loading (spinner),
+// and animate-playing (PAUSE_ICON, "click to stop") -- so a screen reader
+// or hover tooltip announces the same distinction the icon/spinner swap
+// conveys visually.
+function radarButtonLabel(state: RadarState, loading: boolean): string {
+  if (state === "off") return "Radar off (click to turn on)";
+  if (state === "on") return "Radar on (click to animate)";
+  return loading ? "Radar animating: loading frames (click to stop)" : "Radar animating (click to stop)";
 }

@@ -56,12 +56,17 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Radar, Sett
   });
 
   it("sizes each IconButton-based control to h-9 w-9 via the size prop", () => {
-    const labels = ["Labels", "Trails", "Radar", "Settings"];
+    const labels = ["Labels", "Trails", "Settings"];
     for (const label of labels) {
       const index = controlsPanelSource.indexOf(`label="${label}"`);
       const callSite = controlsPanelSource.slice(index, index + 250);
       expect(callSite).toContain('size="md"');
     }
+    // #2015: the Radar button's label is computed (radarButtonLabel(...)),
+    // not a literal string, so it's anchored differently than the others.
+    const radarIndex = controlsPanelSource.indexOf("onClick={onCycleRadar}");
+    const radarCallSite = controlsPanelSource.slice(radarIndex - 250, radarIndex + 250);
+    expect(radarCallSite).toContain('size="md"');
   });
 
   it("renders the controls in the required top-to-bottom order: Fullscreen, Center, Labels, Trails, Radar, Settings", () => {
@@ -69,7 +74,7 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Radar, Sett
     const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
     const labelsIndex = controlsPanelSource.indexOf('label="Labels"');
     const trailsIndex = controlsPanelSource.indexOf('label="Trails"');
-    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
+    const radarIndex = controlsPanelSource.indexOf("onClick={onCycleRadar}");
     const settingsIndex = controlsPanelSource.indexOf('label="Settings"');
 
     const indices = [fullscreenIndex, recenterIndex, labelsIndex, trailsIndex, radarIndex, settingsIndex];
@@ -261,99 +266,83 @@ describe("Fullscreen toggle button", () => {
   });
 });
 
-describe("Radar control (#1896) -- last standalone button in the column, before Settings", () => {
+describe("Radar control (#1896, tri-state redesign #2015) -- one button, no popover, before Settings", () => {
+  const radarCallIndex = controlsPanelSource.indexOf("onClick={onCycleRadar}");
+  // Slice back far enough to cover the whole <IconButton ... /> call site
+  // (label/icon/active/loading props all precede onClick in JSX source
+  // order here).
+  const radarCallSite = controlsPanelSource.slice(radarCallIndex - 350, radarCallIndex + 150);
+
+  it("finds exactly one JSX call site wiring onClick to onCycleRadar", () => {
+    expect(radarCallIndex).toBeGreaterThan(-1);
+  });
+
   it("renders after Trails and before Settings", () => {
     const trailsIndex = controlsPanelSource.indexOf('label="Trails"');
-    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
     const settingsIndex = controlsPanelSource.indexOf('label="Settings"');
-    expect(radarIndex).toBeGreaterThan(trailsIndex);
-    expect(settingsIndex).toBeGreaterThan(radarIndex);
+    expect(radarCallIndex).toBeGreaterThan(trailsIndex);
+    expect(settingsIndex).toBeGreaterThan(radarCallIndex);
   });
 
-  it("uses WEATHER_RADAR_ICON", () => {
-    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
-    const callSite = controlsPanelSource.slice(radarIndex, radarIndex + 150);
-    expect(callSite).toContain("icon={WEATHER_RADAR_ICON}");
+  it("no popover, no local expand state -- #2015 removed the Radar popover entirely", () => {
+    expect(controlsPanelSource).not.toContain("const [radarExpanded");
+    // Exactly one local disclosure useState left (settingsExpanded) --
+    // radarExpanded's own declaration is gone, not just unused.
+    const useStateFalseCount = (controlsPanelSource.match(/useState\(false\)/g) ?? []).length;
+    expect(useStateFalseCount).toBe(1);
+    expect(controlsPanelSource).not.toContain('role="switch"');
+    expect(controlsPanelSource).not.toContain("PLAY_ICON}");
   });
 
-  it("the Radar icon's active state reflects radarOn, not whether the popover is expanded", () => {
-    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
-    const callSite = controlsPanelSource.slice(radarIndex, radarIndex + 150);
-    expect(callSite).toContain("active={radarOn}");
+  it("no longer accepts the old separate radarOn/onToggleRadar/radarPlaying/onToggleRadarPlaying props", () => {
+    expect(controlsPanelSource).not.toContain("radarOn: boolean");
+    expect(controlsPanelSource).not.toContain("onToggleRadar:");
+    expect(controlsPanelSource).not.toContain("radarPlaying: boolean");
+    expect(controlsPanelSource).not.toContain("onToggleRadarPlaying:");
   });
 
-  it("the Radar icon's onClick toggles local expand state, not onToggleRadar directly", () => {
-    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
-    const callSite = controlsPanelSource.slice(radarIndex, radarIndex + 150);
-    expect(callSite).toContain("setRadarExpanded");
-    expect(callSite).not.toContain("onClick={onToggleRadar}");
+  it("accepts radarState (RadarState) and onCycleRadar instead", () => {
+    expect(controlsPanelSource).toContain('import type { RadarState } from "../lib/radar"');
+    expect(controlsPanelSource).toContain("radarState: RadarState;");
+    expect(controlsPanelSource).toContain("onCycleRadar: () => void;");
   });
 
-  it("declares local radarExpanded state via useState, not lifted/persisted", () => {
-    expect(controlsPanelSource).toContain('import { useState } from "react"');
-    expect(controlsPanelSource).toContain("useState(false)");
+  it("derives its label from radarButtonLabel(radarState, radarPlaybackLoading)", () => {
+    expect(radarCallSite).toContain("label={radarButtonLabel(radarState, radarPlaybackLoading)}");
   });
 
-  it("the expanded popover wires an on/off toggle to onToggleRadar", () => {
-    expect(controlsPanelSource).toContain("onClick={onToggleRadar}");
-    expect(controlsPanelSource).toContain("aria-checked={radarOn}");
+  it("is active whenever radarState is not \"off\" (both on and animate read active)", () => {
+    expect(radarCallSite).toContain('active={radarState !== "off"}');
   });
 
-  it("#1911: the on/off control is a phone-style toggle switch (role=switch, sliding thumb), not a bordered text button", () => {
-    const toggleIndex = controlsPanelSource.indexOf("onClick={onToggleRadar}");
-    expect(toggleIndex).toBeGreaterThan(-1);
-    const callSite = controlsPanelSource.slice(toggleIndex, toggleIndex + 700);
-    expect(callSite).toContain('role="switch"');
-    expect(callSite).toContain("aria-checked={radarOn}");
-    expect(callSite).not.toContain(">On<");
-    expect(callSite).not.toContain(">Off<");
-    // Track color reflects on/off state, and the inner thumb slides via a
-    // translate-x change -- the two load-bearing visual pieces of the
-    // switch idiom, not just decorative classes.
-    expect(callSite).toContain("radarOn ? \"bg-blue-600\"");
-    expect(callSite).toContain('radarOn ? "translate-x-4" : "translate-x-0.5"');
+  it("swaps in PAUSE_ICON once actually animating (not loading), and WEATHER_RADAR_ICON otherwise", () => {
+    expect(radarCallSite).toContain(
+      'icon={radarState === "animate" && !radarPlaybackLoading ? PAUSE_ICON : WEATHER_RADAR_ICON}',
+    );
   });
 
-  // #2012: the opacity slider that used to live in this popover moved into
-  // the Settings panel's "Radar" heading -- the popover now holds only the
-  // on/off switch and the Play/Pause button.
-  it("no longer renders an opacity slider in this popover -- it moved to SettingsPanel", () => {
-    const popoverIndex = controlsPanelSource.indexOf("{radarExpanded && (");
-    const nextDivIndex = controlsPanelSource.indexOf("</div>\n        </div>\n        {/* #2012", popoverIndex);
-    const callSite =
-      nextDivIndex > -1
-        ? controlsPanelSource.slice(popoverIndex, nextDivIndex)
-        : controlsPanelSource.slice(popoverIndex, popoverIndex + 1200);
-    expect(callSite).not.toContain('type="range"');
-    expect(callSite).not.toContain("onRadarOpacityChange");
+  it("shows the loading spinner only during animate's own prefetch phase", () => {
+    expect(radarCallSite).toContain('loading={radarState === "animate" && radarPlaybackLoading}');
   });
 
-  it("the play/pause control swaps icon and label by radarPlaying, and is disabled when radar is off", () => {
-    const playIndex = controlsPanelSource.indexOf("radarPlaying ?");
-    expect(playIndex).toBeGreaterThan(-1);
-    const callSite = controlsPanelSource.slice(playIndex, playIndex + 400);
-    expect(callSite).toContain("PAUSE_ICON");
-    expect(callSite).toContain("PLAY_ICON");
-    expect(callSite).toContain("onClick={onToggleRadarPlaying}");
-    expect(callSite).toContain("disabled={!radarOn}");
+  // #2015's core fix: the button must stay clickable through the loading
+  // spinner, so the operator can cancel out of animate immediately rather
+  // than waiting for prefetch to finish/time out.
+  it("passes loadingDisabled={false} -- the load-bearing fix for staying clickable while loading", () => {
+    expect(radarCallSite).toContain("loadingDisabled={false}");
   });
 
-  it("only renders the popover's controls when radarExpanded is true", () => {
-    expect(controlsPanelSource).toContain("{radarExpanded && (");
+  it("wires onClick to onCycleRadar, not a local expand toggle", () => {
+    expect(radarCallSite).toContain("onClick={onCycleRadar}");
   });
 
-  it("#1910: the play/pause button shows a loading spinner and a distinct label while radarPlaybackLoading is true", () => {
-    const playIndex = controlsPanelSource.indexOf("radarPlaybackLoading ?");
-    expect(playIndex).toBeGreaterThan(-1);
-    const callSite = controlsPanelSource.slice(playIndex, playIndex + 400);
-    expect(callSite).toContain('"Loading radar frames"');
-    expect(callSite).toContain("loading={radarPlaybackLoading}");
-  });
-
-  it("#1953: the popover no longer needs its own zIndex -- the outer column wrapper covers it", () => {
-    const popoverIndex = controlsPanelSource.indexOf("{radarExpanded && (");
-    const callSite = controlsPanelSource.slice(popoverIndex, popoverIndex + 1200);
-    expect(callSite).not.toContain("style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}");
+  it("radarButtonLabel distinguishes all four visually-distinct moments (off, on, animate-loading, animate-playing)", () => {
+    const fnIndex = controlsPanelSource.indexOf("function radarButtonLabel(");
+    expect(fnIndex).toBeGreaterThan(-1);
+    const body = controlsPanelSource.slice(fnIndex, fnIndex + 400);
+    expect(body).toContain('state === "off"');
+    expect(body).toContain('state === "on"');
+    expect(body).toContain("loading ?");
   });
 });
 

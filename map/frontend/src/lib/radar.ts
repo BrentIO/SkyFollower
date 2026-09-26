@@ -119,6 +119,71 @@ export interface RadarAmbientCacheEntry {
 // #1965's own "trade-offs" section.
 export const RADAR_AMBIENT_MATCH_TOLERANCE_MS = 2.5 * 60 * 1000;
 
+// #2015: the tri-state Radar button's animate state no longer tears down a
+// fetch-frame source/layer the instant the operator cancels out of it --
+// it keeps loading in the background (see MapView.tsx's playback effect),
+// cached across animate sessions in a Map keyed by offsetMinutes rather
+// than being refetched from scratch every time. RadarFetchCacheEntry is
+// that cache's own value shape; radarFetchAction below is the pure
+// decision of what to do with a given plan entry against it.
+export interface RadarFetchCacheEntry {
+  /** When this offset's fetch was last *attempted* (source added, or an
+   * existing one retargeted) -- not when/if it resolved. Drives the retry
+   * cooldown below. */
+  attemptedAtMs: number;
+  /** True once MapLibre reports the source fully loaded (isSourceLoaded).
+   * A loaded entry is reused outright, regardless of age -- the cooldown
+   * only ever gates *unresolved* attempts. */
+  loaded: boolean;
+}
+
+// Minimum wait since a frame's last fetch *attempt* before it's eligible
+// to be fetched again, so a rapid off/on/animate/off/on/animate burst
+// can't fire duplicate in-flight requests for the same gap -- the operator
+// re-entering animate finds the previous attempt still (or newly) resolved
+// and just reuses it. ~15s per the issue's own discussion: long enough to
+// cover a realistic "wrong button" burst of clicks, short enough that a
+// genuinely new animate session shortly after isn't held back by a stale
+// attempt for long.
+export const RADAR_FETCH_RETRY_COOLDOWN_MS = 15 * 1000;
+
+/**
+ * Decides what MapView's playback effect should do with one plan entry
+ * that needs a fresh fetch (`source.kind === "fetch"`), given whatever
+ * cache entry already exists for that offset (undefined if never
+ * attempted this radarOn session):
+ * - "issue": no entry yet, or its attempt is unresolved and past the
+ *   cooldown -- (re)issue the fetch and stamp a fresh attemptedAtMs.
+ * - "reuse": the entry is already loaded -- use it as-is, no network
+ *   activity, unaffected by the cooldown regardless of age.
+ * - "wait": the entry is unresolved but still within the cooldown of its
+ *   last attempt -- leave it alone; it either finishes on its own or gets
+ *   reconsidered next time this is called.
+ */
+export function radarFetchAction(
+  entry: RadarFetchCacheEntry | undefined,
+  nowMs: number,
+): "issue" | "reuse" | "wait" {
+  if (!entry) return "issue";
+  if (entry.loaded) return "reuse";
+  return nowMs - entry.attemptedAtMs >= RADAR_FETCH_RETRY_COOLDOWN_MS ? "issue" : "wait";
+}
+
+// #2015: collapses the old separate radarOn/radarPlaying booleans into one
+// tri-state value driving a single icon-column button.
+export type RadarState = "off" | "on" | "animate";
+
+/**
+ * Advances the tri-state Radar button's state on each click: off -> on ->
+ * animate -> off. Pure so the cycle order is unit-testable without
+ * mounting MapView.
+ */
+export function nextRadarState(current: RadarState): RadarState {
+  if (current === "off") return "on";
+  if (current === "on") return "animate";
+  return "off";
+}
+
 export type RadarPlaybackFrameSource = { kind: "ambient"; slot: number } | { kind: "fetch" };
 
 export interface RadarPlaybackPlan {

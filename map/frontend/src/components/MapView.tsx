@@ -52,6 +52,7 @@ import {
 import { infoBoxOffsetForZoom } from "../lib/infoBoxOffset";
 import { isWithinCenterTolerance } from "../lib/mapCentered";
 import {
+  nextRadarState,
   planRadarPlaybackFrames,
   RADAR_AMBIENT_CACHE_CAPACITY,
   RADAR_FRAME_INTERVAL_MS,
@@ -61,9 +62,12 @@ import {
   RADAR_REFRESH_INTERVAL_MS,
   RADAR_TILE_SIZE,
   radarAmbientFrameId,
+  radarFetchAction,
   radarFrameTileUrl,
   radarPlaybackFrameId,
   type RadarAmbientCacheEntry,
+  type RadarFetchCacheEntry,
+  type RadarState,
 } from "../lib/radar";
 import { topIcaoHex } from "../lib/mapHitTest";
 import { nextSelection } from "../lib/selection";
@@ -207,10 +211,23 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // of the box; turning it off is what hides the basemap's text. Distinct
   // from labelsAll above, which is about aircraft info boxes.
   const [mapLabelsOn, setMapLabelsOn] = useState(() => loadPersistedControls().mapLabelsOn);
-  // Live weather radar overlay (#1896) -- on/off and opacity persist the
-  // same way as the four toggles above; radarPlaying does not (see its
-  // own useState below).
-  const [radarOn, setRadarOn] = useState(() => loadPersistedControls().radarOn);
+  // Live weather radar overlay (#1896). #2015 collapsed the old separate
+  // radarOn/radarPlaying booleans into one tri-state value driving a
+  // single icon-column button (off -> on -> animate -> off on each click,
+  // see ControlsPanel's Radar button and handleCycleRadar below) instead
+  // of a popover with an on/off switch and a separate Play/Pause button.
+  // Only "on"-ness persists across a reload (radarOn below) -- "animate"
+  // never does, matching radarPlaying's own not-persisted convention
+  // before this issue (a reload always starts paused on the current
+  // snapshot, if radar was left on at all).
+  const [radarState, setRadarState] = useState<RadarState>(() =>
+    loadPersistedControls().radarOn ? "on" : "off",
+  );
+  // Derived, not independent state -- every existing effect below still
+  // reads these two exactly as before #2015; only how they're produced
+  // changed.
+  const radarOn = radarState !== "off";
+  const radarPlaying = radarState === "animate";
   const [radarOpacity, setRadarOpacity] = useState(() => loadPersistedControls().radarOpacity);
   // #2000: multiplies both the aircraft icon-size expression (below) and
   // InfoBoxLayer's rendered size -- see ControlsPanel.tsx's displayScale
@@ -244,13 +261,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
     displayScale,
   ]);
 
-  // Whether the last-30-minutes playback loop is animating -- transient UI
-  // state, not persisted (a reload always starts paused on the current
-  // snapshot, same as every other momentary action in this component,
-  // e.g. isolateEnabled/tracePointsEnabled below). Turning radar off while
-  // playing also stops playback, via handleToggleRadar below -- otherwise
-  // turning it back on later would silently resume animating.
-  const [radarPlaying, setRadarPlaying] = useState(false);
   // #1910: true only during the playback effect's frame-prefetch phase
   // (below) -- surfaced on the Play button as a loading spinner so the
   // pause before the loop visibly starts reads as "loading," not a
@@ -281,6 +291,17 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // whenever playback isn't running. Null only before the first ambient
   // capture completes.
   const radarNewestAmbientSlotRef = useRef<number | null>(null);
+  // #2015: fetched playback frames (the plan's "fetch" gaps, as opposed to
+  // ones reused from the ambient cache above) now persist across animate
+  // sessions instead of being torn down the instant the operator cancels
+  // out of animate -- a fetch that was mid-flight keeps loading in the
+  // background, and a quick re-entry into animate can reuse it. Keyed by
+  // offsetMinutes (radarPlaybackFrameId's own key); torn down entirely
+  // only when radarOn itself goes false (see the ambient-capture effect's
+  // cleanup below), mirroring radarAmbientCacheRef's own all-or-nothing
+  // lifetime. See lib/radar.ts's radarFetchAction for the pure decision of
+  // what to do with a given cache entry (issue/reuse/wait).
+  const radarPlaybackFetchCacheRef = useRef<Map<number, RadarFetchCacheEntry>>(new Map());
   // Mirrors of state that the ambient-capture interval (below) needs to
   // read at fire time without restarting the interval on every change --
   // restarting on radarOpacity would be harmless but wasteful, and
@@ -294,12 +315,14 @@ function MapViewInner({ config }: { config: AppConfig }) {
   useEffect(() => {
     radarPlayingRef.current = radarPlaying;
   }, [radarPlaying]);
-  function handleToggleRadar() {
-    setRadarOn((prev) => {
-      const next = !prev;
-      if (!next) setRadarPlaying(false);
-      return next;
-    });
+  // #2015: single handler cycling the tri-state value forward (off -> on
+  // -> animate -> off). Immediate -- no gating on radarPlaybackLoading --
+  // so clicking during animate's prefetch spinner instantly steps state
+  // (e.g. animate -> off) rather than waiting it out; the playback
+  // effect's own cleanup (below) is what reacts to radarPlaying flipping
+  // false, exactly as it always has.
+  function handleCycleRadar() {
+    setRadarState((prev) => nextRadarState(prev));
   }
 
   // Whole-page Fullscreen API toggle -- not persisted like the four above,
@@ -1292,6 +1315,18 @@ function MapViewInner({ config }: { config: AppConfig }) {
       radarAmbientCacheRef.current.clear();
       radarNextAmbientSlotRef.current = 0;
       radarNewestAmbientSlotRef.current = null;
+      // #2015: radarOn going false is this component's one hard "no radar
+      // network activity at all" boundary (mirrors the ambient teardown
+      // above) -- any playback-fetch frame left over from a
+      // cancelled-but-still-loading animate session (see the playback
+      // effect below, which otherwise leaves these alone on cancel) is
+      // torn down here rather than lingering forever.
+      for (const offsetMinutes of radarPlaybackFetchCacheRef.current.keys()) {
+        const id = radarPlaybackFrameId(offsetMinutes);
+        if (radarMap.getLayer(id)) radarMap.removeLayer(id);
+        if (radarMap.getSource(id)) radarMap.removeSource(id);
+      }
+      radarPlaybackFetchCacheRef.current.clear();
     };
   }, [radarOn, mapLoaded]);
 
@@ -1364,9 +1399,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
     const frameIds = plan.map((step) =>
       step.source.kind === "ambient" ? radarAmbientFrameId(step.source.slot) : radarPlaybackFrameId(step.offsetMinutes),
     );
-    const fetchedFrameIds = plan
-      .filter((step) => step.source.kind === "fetch")
-      .map((step) => radarPlaybackFrameId(step.offsetMinutes));
 
     // Hide every ambient slot's own "current" display for the loop's
     // duration -- including whichever one(s) this plan reuses as a
@@ -1377,16 +1409,38 @@ function MapViewInner({ config }: { config: AppConfig }) {
       if (radarMap.getLayer(id)) radarMap.setPaintProperty(id, "raster-opacity", 0);
     });
 
+    // #2015: for each gap the plan above found, consult
+    // radarPlaybackFetchCacheRef (persists across animate sessions --
+    // see its own declaration above and the ambient-capture effect's
+    // cleanup, which is the only place these ever get torn down) rather
+    // than unconditionally fetching fresh every time animate starts:
+    // "reuse" an already-loaded prior attempt outright, "wait" on one
+    // that's unresolved but still within RADAR_FETCH_RETRY_COOLDOWN_MS of
+    // its last attempt (leave it loading, don't duplicate the request),
+    // or "issue" a fetch (fresh, or retargeting a stalled existing source
+    // past its cooldown -- same existing-source-or-not branching the
+    // ambient capture above already uses).
+    const now = Date.now();
     plan.forEach((step) => {
       if (step.source.kind !== "fetch") return;
-      const id = radarPlaybackFrameId(step.offsetMinutes);
-      map.addSource(id, {
-        type: "raster",
-        tiles: [radarFrameTileUrl(step.offsetMinutes)],
-        tileSize: RADAR_TILE_SIZE,
-        minzoom: RADAR_MIN_ZOOM,
-        maxzoom: RADAR_MAX_ZOOM,
-      });
+      const { offsetMinutes } = step;
+      const action = radarFetchAction(radarPlaybackFetchCacheRef.current.get(offsetMinutes), now);
+      if (action !== "issue") return;
+      radarPlaybackFetchCacheRef.current.set(offsetMinutes, { attemptedAtMs: now, loaded: false });
+      const id = radarPlaybackFrameId(offsetMinutes);
+      const url = radarFrameTileUrl(offsetMinutes);
+      const existingSource = map.getSource(id) as maplibregl.RasterTileSource | undefined;
+      if (existingSource) {
+        existingSource.setTiles([url]);
+      } else {
+        map.addSource(id, {
+          type: "raster",
+          tiles: [url],
+          tileSize: RADAR_TILE_SIZE,
+          minzoom: RADAR_MIN_ZOOM,
+          maxzoom: RADAR_MAX_ZOOM,
+        });
+      }
       // Every layer stays layout-visible the whole time -- a raster
       // layer's tiles are only ever requested for a source whose layer is
       // actually visible (verified live: visibility:"none" here meant
@@ -1395,15 +1449,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
       // equivalent of "hidden" that doesn't gate loading -- every frame
       // genuinely loads in parallel, and "which one is shown" is purely
       // which one currently has a nonzero opacity.
-      map.addLayer(
-        {
-          id,
-          type: "raster",
-          source: id,
-          paint: { "raster-opacity": 0 },
-        },
-        RANGE_RING_LAYER_ID,
-      );
+      if (!map.getLayer(id)) {
+        map.addLayer(
+          { id, type: "raster", source: id, paint: { "raster-opacity": 0 } },
+          RANGE_RING_LAYER_ID,
+        );
+      }
     });
 
     // Resolves once every one of the 7 frames reports loaded on 3
@@ -1415,13 +1466,14 @@ function MapViewInner({ config }: { config: AppConfig }) {
     // live this false positive is real (an addSource+addLayer pair
     // doesn't synchronously start loading; checking again immediately
     // found every source trivially "loaded" with zero tiles actually
-    // fetched). A frame reused from the ambient cache (#1965) was already
-    // loaded before this effect ran at all, so it reads "loaded" on the
-    // very first check -- the fewer gaps the plan above found, the sooner
-    // this resolves. Polling via requestAnimationFrame rather than an
-    // event/timeout pair per frame also sidesteps the separate fragility
-    // #1910's first attempt hit: no dependency on which specific MapLibre
-    // event fires when for a specific source.
+    // fetched). A frame reused from the ambient cache (#1965) -- or from
+    // radarPlaybackFetchCacheRef's own "reuse" case above (#2015) -- was
+    // already loaded before this effect ran at all, so it reads "loaded"
+    // on the very first check -- the fewer gaps the plan above found, the
+    // sooner this resolves. Polling via requestAnimationFrame rather than
+    // an event/timeout pair per frame also sidesteps the separate
+    // fragility #1910's first attempt hit: no dependency on which
+    // specific MapLibre event fires when for a specific source.
     function waitForAllFramesToLoad(): Promise<void> {
       return new Promise((resolve) => {
         const deadline = Date.now() + RADAR_FRAME_LOAD_TIMEOUT_MS;
@@ -1430,6 +1482,17 @@ function MapViewInner({ config }: { config: AppConfig }) {
           if (cancelled) {
             resolve();
             return;
+          }
+          // #2015: opportunistically mark any fetch-cache entry loaded the
+          // moment its own source resolves, independent of whether every
+          // frame in this run's plan has -- so a later animate session
+          // (even one whose own wait loop never started, because the
+          // operator cancelled before it did) still finds this one
+          // "reuse"-able rather than re-attempting it.
+          for (const [offsetMinutes, entry] of radarPlaybackFetchCacheRef.current) {
+            if (!entry.loaded && radarMap.isSourceLoaded(radarPlaybackFrameId(offsetMinutes))) {
+              entry.loaded = true;
+            }
           }
           const allLoaded = frameIds.every((id) => radarMap.isSourceLoaded(id));
           consecutiveLoadedReads = allLoaded ? consecutiveLoadedReads + 1 : 0;
@@ -1469,12 +1532,18 @@ function MapViewInner({ config }: { config: AppConfig }) {
       radarActiveFrameIdRef.current = null;
       if (rafHandle !== undefined) cancelAnimationFrame(rafHandle);
       if (interval) clearInterval(interval);
-      // Only the frames this run actually fetched fresh -- reused
-      // ambient-cache frames are owned by the ambient-capture effect above
-      // and outlive this loop.
-      fetchedFrameIds.forEach((id) => {
-        if (map.getLayer(id)) map.removeLayer(id);
-        if (map.getSource(id)) map.removeSource(id);
+      // #2015: fetched frames are no longer torn down here -- an
+      // in-flight fetch keeps loading in the background instead of being
+      // discarded the instant the operator cancels out of animate, and
+      // radarPlaybackFetchCacheRef (populated above) lets a subsequent
+      // animate session reuse whatever finished. Just hide them, mirroring
+      // how ambient frames are hidden below -- actual teardown happens
+      // only when radarOn itself goes false (the ambient-capture effect's
+      // own cleanup).
+      plan.forEach((step) => {
+        if (step.source.kind !== "fetch") return;
+        const id = radarPlaybackFrameId(step.offsetMinutes);
+        if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", 0);
       });
       // Restore the ambient cache's own "current" display. Hide every
       // populated slot first -- whichever frame this loop happened to be
@@ -1829,12 +1898,10 @@ function MapViewInner({ config }: { config: AppConfig }) {
           fullscreen={fullscreen}
           onToggleFullscreen={handleToggleFullscreen}
           fullscreenDisabled={!fullscreenSupported}
-          radarOn={radarOn}
-          onToggleRadar={handleToggleRadar}
+          radarState={radarState}
+          onCycleRadar={handleCycleRadar}
           radarOpacity={radarOpacity}
           onRadarOpacityChange={setRadarOpacity}
-          radarPlaying={radarPlaying}
-          onToggleRadarPlaying={() => setRadarPlaying((prev) => !prev)}
           radarPlaybackLoading={radarPlaybackLoading}
           displayScale={displayScale}
           onDisplayScaleChange={setDisplayScale}

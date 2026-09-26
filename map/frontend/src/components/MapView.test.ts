@@ -1008,7 +1008,7 @@ describe("radar overlay (#1896, #1965)", () => {
     const addLayerIndex = mapViewSource.indexOf("map.addLayer(", guardIndex);
     const callEnd = mapViewSource.indexOf("RANGE_RING_LAYER_ID,", addLayerIndex);
     expect(callEnd).toBeGreaterThan(-1);
-    expect(callEnd - addLayerIndex).toBeLessThan(300);
+    expect(callEnd - addLayerIndex).toBeLessThan(400);
   });
 
   it("declares each ambient-cache slot's source with the empirically-verified zoom bounds from lib/radar.ts, not hardcoded numbers", () => {
@@ -1030,7 +1030,10 @@ describe("radar overlay (#1896, #1965)", () => {
     expect(call).toContain("minzoom: RADAR_MIN_ZOOM");
     expect(call).toContain("maxzoom: RADAR_MAX_ZOOM");
     expect(call).toContain("tileSize: RADAR_TILE_SIZE");
-    expect(call).toContain("tiles: [radarFrameTileUrl(step.offsetMinutes)]");
+    // #2015: the URL is built once into a local `url` const (also passed to
+    // existingSource.setTiles() for the retry-past-cooldown case) rather
+    // than calling radarFrameTileUrl() inline a second time.
+    expect(call).toContain("tiles: [url]");
   });
 
   it("#1910 (2nd attempt): every freshly-fetched playback layer is added layout-visible (never visibility:none) -- verified live that a hidden raster layer's tiles never load at all", () => {
@@ -1059,7 +1062,11 @@ describe("radar overlay (#1896, #1965)", () => {
     const effectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
     const depsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", effectIndex);
     expect(depsIndex).toBeGreaterThan(-1);
-    expect(depsIndex - effectIndex).toBeLessThan(3000);
+    // #2015 grew this effect's cleanup (also tears down leftover
+    // playback-fetch frames, see radarPlaybackFetchCacheRef) without
+    // adding any new dependency -- generous enough to allow that, tight
+    // enough to still catch an accidental extra dep sneaking in.
+    expect(depsIndex - effectIndex).toBeLessThan(3500);
   });
 
   it("#1965: captures an ambient frame immediately and then every RADAR_REFRESH_INTERVAL_MS, independent of radarPlaying (read from a ref, not the effect's own deps), and stops on cleanup", () => {
@@ -1092,7 +1099,48 @@ describe("radar overlay (#1896, #1965)", () => {
     expect(body).toContain(
       'step.source.kind === "ambient" ? radarAmbientFrameId(step.source.slot) : radarPlaybackFrameId(step.offsetMinutes)',
     );
-    expect(body).toContain('const fetchedFrameIds = plan\n      .filter((step) => step.source.kind === "fetch")');
+  });
+
+  // #2015
+  describe("radarPlaybackFetchCacheRef -- fetched frames persist across animate sessions instead of being refetched from scratch", () => {
+    it("declares the cache ref alongside the ambient-cache refs, keyed for a Map<number, RadarFetchCacheEntry>", () => {
+      expect(mapViewSource).toContain(
+        "const radarPlaybackFetchCacheRef = useRef<Map<number, RadarFetchCacheEntry>>(new Map());",
+      );
+    });
+
+    it("for each 'fetch' gap in the plan, consults radarFetchAction against the cache before doing any network work", () => {
+      const effectIndex = mapViewSource.indexOf("if (!map || !mapLoaded || !radarOn || !radarPlaying) return;");
+      const body = mapViewSource.slice(effectIndex, mapViewSource.indexOf("async function loadThenPlay()", effectIndex));
+      expect(body).toContain(
+        "const action = radarFetchAction(radarPlaybackFetchCacheRef.current.get(offsetMinutes), now);",
+      );
+      expect(body).toContain('if (action !== "issue") return;');
+      expect(body).toContain(
+        "radarPlaybackFetchCacheRef.current.set(offsetMinutes, { attemptedAtMs: now, loaded: false });",
+      );
+    });
+
+    it("retargets an existing stalled source via setTiles() rather than calling addSource twice, mirroring the ambient capture's own existing-source branch", () => {
+      const guardIndex = mapViewSource.indexOf('if (step.source.kind !== "fetch") return;');
+      const body = mapViewSource.slice(guardIndex, guardIndex + 900);
+      expect(body).toContain("existingSource.setTiles([url])");
+    });
+
+    it("opportunistically marks a fetch-cache entry loaded the moment its own source resolves, independent of the overall wait's allLoaded check", () => {
+      const waitIndex = mapViewSource.indexOf("function waitForAllFramesToLoad()");
+      const body = mapViewSource.slice(waitIndex, waitIndex + 1200);
+      expect(body).toContain("for (const [offsetMinutes, entry] of radarPlaybackFetchCacheRef.current)");
+      expect(body).toContain("entry.loaded = true;");
+    });
+
+    it("the ambient-capture effect's cleanup is the only place these ever get torn down (radarOn -> false), not the playback effect's own cleanup", () => {
+      const ambientEffectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+      const ambientDepsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", ambientEffectIndex);
+      const ambientCleanup = mapViewSource.slice(ambientEffectIndex, ambientDepsIndex);
+      expect(ambientCleanup).toContain("radarPlaybackFetchCacheRef.current.keys()");
+      expect(ambientCleanup).toContain("radarPlaybackFetchCacheRef.current.clear();");
+    });
   });
 
   it("#1910 (2nd attempt): playback steps by toggling raster-opacity between the planned frame layers, never calling setTiles during the loop", () => {
@@ -1105,25 +1153,32 @@ describe("radar overlay (#1896, #1965)", () => {
     expect(body).not.toContain("setTiles");
   });
 
-  it("playback's cleanup tears down only the frames it fetched fresh (ambient-cache frames outlive the loop) and restores the ambient cache's own current display -- pause reverts to the current picture immediately", () => {
+  it("#2015: playback's cleanup no longer tears down fetched frames on cancel -- it only hides them, so a fetch still in flight keeps loading in the background", () => {
     const loadThenPlayIndex = mapViewSource.indexOf("async function loadThenPlay()");
     expect(loadThenPlayIndex).toBeGreaterThan(-1);
     const cleanupIndex = mapViewSource.indexOf("cancelled = true;", loadThenPlayIndex);
     expect(cleanupIndex).toBeGreaterThan(-1);
-    const cleanupBody = mapViewSource.slice(cleanupIndex, cleanupIndex + 1500);
+    const cleanupBody = mapViewSource.slice(cleanupIndex, cleanupIndex + 1900);
     expect(cleanupBody).toContain("radarActiveFrameIdRef.current = null;");
-    expect(cleanupBody).toContain("fetchedFrameIds.forEach((id) => {");
-    expect(cleanupBody).toContain("map.removeLayer(id)");
-    expect(cleanupBody).toContain("map.removeSource(id)");
+    // Hidden (opacity 0), not removed -- no removeLayer/removeSource call
+    // against a fetch-frame id anywhere in this cleanup anymore.
+    expect(cleanupBody).toContain('if (step.source.kind !== "fetch") return;');
+    expect(cleanupBody).toContain('if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", 0);');
+    expect(cleanupBody).not.toContain("map.removeLayer(id)");
+    expect(cleanupBody).not.toContain("map.removeSource(id)");
     expect(cleanupBody).toContain("const newest = radarNewestAmbientSlotRef.current;");
     expect(cleanupBody).toContain('map.setPaintProperty(id, "raster-opacity", radarOpacityRef.current);');
   });
 
-  it("turning radar off also stops playback, so turning it back on later doesn't silently resume animating", () => {
-    const handlerIndex = mapViewSource.indexOf("function handleToggleRadar()");
-    expect(handlerIndex).toBeGreaterThan(-1);
-    const body = mapViewSource.slice(handlerIndex, handlerIndex + 300);
-    expect(body).toContain("setRadarPlaying(false)");
+  it("turning radar all the way off (radarState \"off\") also implies not-playing, so turning it back on later doesn't silently resume animating", () => {
+    // #2015: radarPlaying is now derived (radarState === "animate"), not a
+    // separately-set boolean -- cycling straight to "off" via
+    // nextRadarState already implies radarPlaying is false on the very
+    // next render, with no separate setRadarPlaying(false) call needed
+    // anywhere.
+    expect(mapViewSource).toContain('const radarPlaying = radarState === "animate";');
+    expect(mapViewSource).not.toContain("function handleToggleRadar()");
+    expect(mapViewSource).not.toContain("setRadarPlaying(");
   });
 
   it("#1910 (2nd attempt): playback waits for all 7 frames to load before starting the visible interval", () => {
@@ -1138,7 +1193,10 @@ describe("radar overlay (#1896, #1965)", () => {
   it("#1910 (2nd attempt): the load wait polls isSourceLoaded for all 7 frames via requestAnimationFrame, not a single-source idle/sourcedata event -- verified live that event-based detection for one retargeted source never resolved promptly (20-30+ real seconds)", () => {
     const waitIndex = mapViewSource.indexOf("function waitForAllFramesToLoad()");
     expect(waitIndex).toBeGreaterThan(-1);
-    const body = mapViewSource.slice(waitIndex, waitIndex + 800);
+    // #2015 grew this function's check() body with the opportunistic
+    // fetch-cache "loaded" bookkeeping (see its own describe block above)
+    // -- widened from 800 to fit both without losing the original signal.
+    const body = mapViewSource.slice(waitIndex, waitIndex + 1400);
     expect(body).toContain("frameIds.every((id) => radarMap.isSourceLoaded(id))");
     expect(body).toContain("RADAR_FRAME_LOAD_TIMEOUT_MS");
     expect(body).toContain("requestAnimationFrame(check)");
@@ -1148,7 +1206,7 @@ describe("radar overlay (#1896, #1965)", () => {
 
   it("#1910 (2nd attempt): requires 3 consecutive loaded reads, not just one -- guards against isSourceLoaded() reporting a false positive the instant a source is added, before any tile request has actually been dispatched (verified live)", () => {
     const waitIndex = mapViewSource.indexOf("function waitForAllFramesToLoad()");
-    const body = mapViewSource.slice(waitIndex, waitIndex + 800);
+    const body = mapViewSource.slice(waitIndex, waitIndex + 1400);
     expect(body).toContain("consecutiveLoadedReads");
     expect(body).toContain("consecutiveLoadedReads >= 3");
   });
@@ -1162,10 +1220,11 @@ describe("radar overlay (#1896, #1965)", () => {
     expect(cleanupBody).toContain("setRadarPlaybackLoading(false)");
   });
 
-  it("#1910: radarPlaybackLoading is passed through to ControlsPanel, alongside the other radar props", () => {
-    const propsIndex = mapViewSource.indexOf("radarPlaying={radarPlaying}");
+  it("#1910/#2015: radarPlaybackLoading and the tri-state radarState/onCycleRadar pair are passed through to ControlsPanel", () => {
+    const propsIndex = mapViewSource.indexOf("radarState={radarState}");
     expect(propsIndex).toBeGreaterThan(-1);
-    const body = mapViewSource.slice(propsIndex, propsIndex + 200);
+    const body = mapViewSource.slice(propsIndex, propsIndex + 250);
+    expect(body).toContain("onCycleRadar={handleCycleRadar}");
     expect(body).toContain("radarPlaybackLoading={radarPlaybackLoading}");
   });
 
