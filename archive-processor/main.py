@@ -67,42 +67,29 @@ from shared.timing import (
 
 logger = logging.getLogger("archive-processor")
 
-# tmpfs-mounted in docker-compose.archive.yaml -- these writes must never
-# hit the host's storage, only /app/data (the S3 fallback queue) is
-# durable/persistent. Every timing value the archive processor uses is a
-# named constant from shared/timing.py, imported above (the
-# "last archived segment" stitch pointer TTL is STITCH_POINTER_TTL_SECONDS).
+# tmpfs-mounted (docker-compose.archive.yaml) -- must stay ephemeral;
+# only /app/data (S3 fallback queue) persists across restarts.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 
-# Each completed flight is written to S3 independently with no shared
-# mutable state between flights, so -- unlike message-processor's
-# consistent-hash-exchange affinity concerns -- there's no fair-dispatch or
-# ordering reason to keep this at 1. A prefetch_count of 1 forces a full
-# ack round trip before RabbitMQ delivers the next message, capping
-# throughput at the connection's round-trip latency rather than actual
-# processing capacity. 100 matches message-processor's
-# _RMQ_PREFETCH_COUNT precedent: enough to remove the round-trip stall as
-# the throughput ceiling, without buffering an excessive number of
-# messages client-side that would need reprocessing if the connection
-# drops mid-batch. It also bounds total in-flight work across the worker
-# pool below (RabbitMQ delivers at most this many unacked messages, so the
-# per-worker hand-off queues can never grow past it in aggregate).
+# Each flight writes to S3 independently with no shared mutable state, so
+# there's no fair-dispatch reason to keep this at 1: a prefetch_count of 1
+# forces a full ack round trip before the next delivery, capping
+# throughput at connection latency rather than processing capacity. Also
+# bounds total in-flight work across the worker pool below, since RabbitMQ
+# delivers at most this many unacked messages at a time.
 _RMQ_PREFETCH_COUNT = 100
 
-# A single pika BlockingConnection runs on_message_callback one message at
-# a time on one thread, and each flight does two or more sequential
-# synchronous S3 round trips (~150-250 ms each from a self-hosted host) --
-# so serial processing caps throughput at ~3-5 flights/sec regardless of
-# prefetch_count. The pika thread instead hands each delivery to a pool of
-# worker threads that do the S3/Redis work concurrently and marshal the
-# ack back via connection.add_callback_threadsafe.
+# A single pika connection runs on_message_callback on one thread, and each
+# flight does 2+ sequential synchronous S3 round trips, so serial
+# processing would cap throughput regardless of prefetch_count. The pika
+# thread instead hands each delivery to a worker pool that does the S3/
+# Redis work concurrently and marshals the ack back via
+# connection.add_callback_threadsafe.
 #
 # Partitioned by icao_hex (same aircraft -> same worker, FIFO): split-flight
-# stitching reads and writes a per-aircraft Redis pointer around the S3
-# write, so two segments for one aircraft must never be processed
-# concurrently or the stitch can split/merge out of order. Routing by
-# icao_hex keeps every segment of an aircraft strictly ordered on one
-# worker without any per-key locking.
+# stitching reads/writes a per-aircraft Redis pointer around the S3 write,
+# so two segments for one aircraft must never process concurrently or the
+# stitch can split/merge out of order.
 _ARCHIVE_WORKER_COUNT = 12
 
 # boto3's default connection pool is 10; size it to cover every worker
@@ -116,22 +103,15 @@ _S3_MAX_POOL_CONNECTIONS = _ARCHIVE_WORKER_COUNT + 4
 # ---------------------------------------------------------------------------
 
 def _normalize_timestamps(items: list[dict]) -> list[dict]:
-    """
-    Parse a position/velocity list's timestamp values back into datetime
-    objects wherever they're still strings, so a merged list can be sorted
-    uniformly regardless of which segment (or serialization round-trip) an
-    item came from.
+    """Parse a position/velocity list's timestamp strings back into
+    datetime objects, so a merged list sorts uniformly regardless of which
+    segment it came from.
 
-    Needed on *both* sides of a merge, not just the previously-archived
-    segment fetched from S3: CompletedFlight.positions/.velocities are
-    untyped `list[dict]` fields (see shared/models.py), so pydantic never
-    re-parses their inner "timestamp" strings back into datetime objects on
-    model_validate_json() -- meaning even a live flight fresh off RabbitMQ
-    (or one that round-tripped through the local SQLite fallback queue) has
-    string timestamps by the time it reaches here, same as the S3-fetched
-    segment. Skipping this on the live segment previously crashed every
-    real stitch attempt with positions/velocities present (comparing a
-    normalized datetime against a raw str during the sort below).
+    Needed on both sides of a merge, not just the S3-fetched segment:
+    CompletedFlight.positions/.velocities are untyped `list[dict]` (see
+    shared/models.py), so pydantic never re-parses their "timestamp"
+    strings on model_validate_json() -- the live segment has string
+    timestamps too by the time it reaches here.
     """
     out = []
     for item in items:
@@ -144,11 +124,9 @@ def _normalize_timestamps(items: list[dict]) -> list[dict]:
 
 
 def _merge_segments(new_flight: CompletedFlight, prev: dict) -> CompletedFlight:
-    """
-    Merge a previously-archived flight segment (raw dict, as read back from
-    S3) with the newly-completed segment that continues it, producing a
-    single CompletedFlight under the *original* segment's _id.
-    """
+    """Merge a previously-archived flight segment (raw dict, as read back
+    from S3) with the newly-completed segment that continues it, producing
+    a single CompletedFlight under the *original* segment's _id."""
     prev_positions = _normalize_timestamps(prev.get("positions") or [])
     prev_velocities = _normalize_timestamps(prev.get("velocities") or [])
     new_positions = _normalize_timestamps(new_flight.positions)
@@ -161,8 +139,7 @@ def _merge_segments(new_flight: CompletedFlight, prev: dict) -> CompletedFlight:
         prev_velocities + new_velocities, key=lambda v: v["timestamp"]
     )
     # Union, not concatenation: a rule may have matched independently on
-    # both segments (each processor evaluates rules with no knowledge of
-    # the other's matches), and the merged record should show it once.
+    # both segments, and the merged record should show it once.
     merged_rules = list(dict.fromkeys(
         (prev.get("matched_rules") or []) + new_flight.matched_rules
     ))
@@ -180,18 +157,12 @@ def _merge_segments(new_flight: CompletedFlight, prev: dict) -> CompletedFlight:
 
 
 def _merge_airport_field(prev_value: Optional[str], new_value: Optional[dict]) -> Optional[dict]:
-    """
-    Merge one origin/destination field across two stitched segments.
-    Segment 1 (`prev`, a plain dict read back from S3 -- its origin/
-    destination are already-reduced ICAO code strings) wins whenever it has
-    data, since it saw the departure phase and its resolution is at least
-    as trustworthy as segment 2's; segment 2 (`new_flight`, still a full
-    airport object/dict -- not yet reduced for S3) is used only when
-    segment 1 has none. `prev_value` is wrapped back into an
-    object/dict so the merged CompletedFlight stays type-consistent
-    (Optional[dict]) -- it's reduced to a bare string again by
-    _reduce_airports_to_icao_codes at S3-write time either way.
-    """
+    """Merge one origin/destination field across two stitched segments.
+    `prev` (an already-reduced ICAO code string from S3) wins whenever it
+    has data, since it saw the departure phase; `new_value` (still a full
+    airport object, not yet reduced) is used only when `prev` has none.
+    `prev_value` is wrapped back into a dict so the merged CompletedFlight
+    stays type-consistent (Optional[dict])."""
     if prev_value:
         return {"icao_code": prev_value}
     return new_value
@@ -204,15 +175,10 @@ def _merge_airport_field(prev_value: Optional[str], new_value: Optional[dict]) -
 # ---------------------------------------------------------------------------
 
 def _drop_default_value_fields(payload_dict: dict) -> None:
-    """
-    Drop force_archive/matched_rules from an S3 upload payload dict when
-    they carry no information -- force_archive False (the overwhelming
-    default) and matched_rules [] (no rule matched) are both the common
-    case, and persisting them on every flight is pure bloat. Only affects
-    the S3 upload payload; the in-memory CompletedFlight model and every
-    other consumer (RabbitMQ fallback queues, the Parquet index) are
-    unaffected.
-    """
+    """Drop force_archive/matched_rules from an S3 upload payload when
+    they carry no information (False / []) -- pure bloat otherwise. Only
+    affects the S3 upload payload, not the in-memory model or other
+    consumers."""
     if payload_dict.get("force_archive") is False:
         del payload_dict["force_archive"]
     if payload_dict.get("matched_rules") == []:
@@ -220,16 +186,11 @@ def _drop_default_value_fields(payload_dict: dict) -> None:
 
 
 def _reduce_airports_to_icao_codes(payload_dict: dict) -> None:
-    """
-    Down-convert origin/destination from the full airport object (carried
-    all the way through message-processor/rules-engine/MQTT so the rule
-    notification can conform to AirportInfo) to a bare ICAO code string for
-    S3/Parquet persistence — matches the legacy MongoDB document shape and
-    what management-ui's archive-search rehydrates from. Drops the field
-    entirely if the object has no icao_code. Only affects the S3 upload
-    payload; the in-memory CompletedFlight model and every other consumer
-    (RabbitMQ fallback queues, split-flight stitching) are unaffected.
-    """
+    """Down-convert origin/destination from the full airport object to a
+    bare ICAO code string for S3/Parquet persistence -- matches the legacy
+    document shape management-ui's archive-search rehydrates from. Drops
+    the field entirely if it has no icao_code. Only affects the S3 upload
+    payload, not the in-memory model or other consumers."""
     for field in ("origin", "destination"):
         value = payload_dict.get(field)
         if isinstance(value, dict):
@@ -265,15 +226,9 @@ class ArchiveProcessor:
         self._s3_connected = False
         self._s3_lock = threading.Lock()
 
-        # Pure in-memory running totals for this process's own lifetime --
-        # never written to Redis, never reset at an hour/midnight boundary.
-        # They are device-local counters published directly, so they reset
-        # to zero on every archive-processor restart by design (mirrors
-        # receiver/main.py's _RateTracker.lifetime_count). The increment
-        # sites (_post_write_success and the external-only skip path) run
-        # on concurrent S3 worker threads, so a lock guards the
-        # read-modify-write += 1 -- the receiver's equivalent increment is
-        # already inside _RateTracker._lock, which this doesn't have.
+        # Device-local counters, never written to Redis, resetting to zero
+        # on every restart by design. The increment sites run on concurrent
+        # S3 worker threads, so a lock guards the read-modify-write += 1.
         self._flights_archived_lifetime = 0
         self._flights_skipped_lifetime = 0
         self._lifetime_lock = threading.Lock()
@@ -300,13 +255,10 @@ class ArchiveProcessor:
         self._rmq_channel = None
         self._rmq_connected = False
 
-        # Worker pool for the live consume path. One unbounded hand-off
-        # queue per worker; _on_message routes each delivery to
-        # worker_queues[crc32(icao_hex) % N] so an aircraft's segments are
-        # always processed FIFO on a single worker (see _ARCHIVE_WORKER_COUNT).
-        # Aggregate depth is bounded by _RMQ_PREFETCH_COUNT. The fallback
-        # drain path does NOT use this pool -- it stays strictly serial and
-        # oldest-first (see _finish_s3_connect / _process_fallback_flight).
+        # One hand-off queue per worker; _on_message routes each delivery
+        # to worker_queues[crc32(icao_hex) % N] (see _ARCHIVE_WORKER_COUNT).
+        # The fallback drain path does NOT use this pool -- it stays
+        # strictly serial and oldest-first.
         self._worker_queues: list[queue.Queue] = [
             queue.Queue() for _ in range(_ARCHIVE_WORKER_COUNT)
         ]
@@ -383,31 +335,20 @@ class ArchiveProcessor:
         to route any live flight directly to S3.
 
         Without this gate, a continuation segment for an aircraft whose
-        prior segment is still sitting in the fallback queue could be
-        live-processed (and miss its _try_stitch() pointer lookup, since
-        the prior segment hasn't been written/pointer-updated yet) before
-        the background drain gets around to that prior segment -- splitting
-        one flight into two archived records.
+        prior segment is still fallback-queued could be live-processed and
+        miss its _try_stitch() pointer lookup before the background drain
+        reaches that prior segment -- splitting one flight into two
+        archived records. Any flight arriving mid-drain still sees
+        s3_available=False, so it queues to the same fallback queue rather
+        than going live; since drain() is strictly oldest-first, a
+        continuation can never be drained ahead of the segment it
+        continues, with no per-icao_hex locking needed.
 
-        Any flight arriving on the RabbitMQ consumer thread while this
-        drain is running still sees s3_available=False (this method hasn't
-        returned yet), so it queues to the *same* fallback queue rather
-        than going live -- fast, non-blocking (a local SQLite insert), no
-        RabbitMQ backpressure. Since FallbackQueue.drain() is strictly
-        oldest-first, a continuation segment can never be drained (and
-        therefore never reach _try_stitch()) before the segment it
-        continues. No per-icao_hex locking or queue scanning needed -- the
-        single queue's own ordering does the work.
-
-        If the drain stops early (S3 went away again mid-drain), _s3_connected
-        is left False and the normal 10s reconnect-loop retry cadence picks
-        the whole sequence -- reconnect, then this drain again -- back up
-        later, continuing from wherever the queue was left.
-
-        The index-fallback queue doesn't participate in the stitch race (it
-        only retries a Parquet index row for a flight object already
-        successfully written) so it keeps draining in the background as
-        before, not gated on this.
+        If the drain stops early (S3 drops again mid-drain), _s3_connected
+        stays False and the reconnect loop retries the whole sequence
+        later. The index-fallback queue doesn't participate in this gate --
+        it only retries an index row for an already-written flight, so it
+        keeps draining in the background regardless.
         """
         if not self._fallback.drain(self._process_fallback_flight):
             return
@@ -455,15 +396,10 @@ class ArchiveProcessor:
         )
 
     def _write_local_index_cache(self, index_key: str, index_bytes: bytes) -> None:
-        """
-        Best-effort local copy of a Parquet index row already durably
-        written to S3 above, on the volume shared with archive-compaction
-        (see docker-compose.archive.yaml). Lets archive-compaction read the
-        row back from local disk instead of downloading it again days
-        later. A failure here costs archive-compaction one S3 GetObject
-        call for this specific row when it eventually compacts — it never
-        affects archiving itself and never triggers a retry.
-        """
+        """Best-effort local copy of a Parquet index row already durably
+        written to S3, on the volume shared with archive-compaction. A
+        failure here just costs one extra S3 GetObject when
+        archive-compaction eventually compacts -- never a retry."""
         try:
             write_local_index(index_key, index_bytes, base_dir=INDEX_CACHE_DIR)
         except Exception as exc:
@@ -614,10 +550,8 @@ class ArchiveProcessor:
 
     def _incr_period_counters(self, key_fn, periods: tuple[str, ...]) -> None:
         """Atomically increments one or more hour/today period counters via
-        shared/lua/incr_period_counter.lua, so each genuinely resets at the
-        real UTC boundary (shared.metrics.next_period_boundary()) instead of
-        accumulating forever. No "lifetime" period here -- out of scope for
-        this component's existing counters (see archive-processor/README.md)."""
+        shared/lua/incr_period_counter.lua, so each resets at the real UTC
+        boundary instead of accumulating forever."""
         now = datetime.now(timezone.utc)
         for period in periods:
             self._redis.evalsha(
@@ -628,19 +562,16 @@ class ArchiveProcessor:
         """Write to S3 (or fallback) if S3 is currently reachable.
 
         External-only flights are dropped here, before either the S3
-        write or the local fallback queue — deliberately, not deferred, since
-        the whole point is avoiding the S3 storage cost of flights the user
-        never asked to keep. force_archive (set by a matching rule) overrides
-        the drop for external-only flights the user does care about.
-        """
+        write or the fallback queue, to avoid the storage cost of flights
+        the user never asked to keep. force_archive overrides the drop for
+        external-only flights a matching rule cares about."""
         if set(flight.receiver_sources) == {"EXTERNAL"} and not flight.force_archive:
             try:
                 self._incr_period_counters(metrics_flights_skipped_key, ("hour", "today"))
             except Exception as exc:
                 logger.warning("Redis counter update failed: %s", exc)
-            # In-memory lifetime total -- independent of the Redis
-            # hour/today counters above, so it still increments even if
-            # Redis is unreachable (see __init__'s _lifetime_lock comment).
+            # Increments even if Redis is unreachable -- independent of
+            # the counters above.
             with self._lifetime_lock:
                 self._flights_skipped_lifetime += 1
             logger.debug("Skipped external-only flight %s (no force_archive match).", flight.id)
@@ -661,10 +592,9 @@ class ArchiveProcessor:
 
     def _drain_fallback(self) -> None:
         """Drain the SQLite fallback queue into S3 in the background --
-        the periodic telemetry-tick safety sweep's path (_drain_all_fallbacks,
-        called whenever s3_connected is already True). The reconnect-
+        the periodic telemetry-tick safety sweep's path. The reconnect-
         triggered drain runs synchronously instead, gating _s3_connected
-        itself -- see _finish_s3_connect."""
+        itself (see _finish_s3_connect)."""
         had_backlog = self._fallback.depth() > 0
 
         def _log_done() -> None:
@@ -675,26 +605,18 @@ class ArchiveProcessor:
         self._fallback.drain_in_background(self._process_fallback_flight, on_done=_log_done)
 
     def _drain_all_fallbacks(self) -> None:
-        """
-        Drain both fallback queues. Both get the same two triggers (S3
+        """Drain both fallback queues. Both get the same two triggers (S3
         reconnect and every telemetry tick) even though only the index
-        queue strictly needs the periodic one — the flight queue only
-        ever fills while S3 is known to be down, so the reconnect loop's
-        edge-triggered detection is sufficient for it in theory. But a
-        periodic sweep is a strictly stronger guarantee for near-zero
-        extra cost (an empty-queue check when there's nothing to drain),
-        so both queues get both triggers rather than leaving the flight
-        queue with the weaker one.
-        """
+        queue strictly needs the periodic one -- a periodic sweep costs
+        almost nothing when there's nothing to drain, so it's simpler to
+        give both queues both triggers."""
         self._drain_fallback()
         self._drain_index_fallback()
 
     def _drain_index_fallback(self) -> None:
-        """
-        Retry Parquet index writes for flights whose object write already
-        succeeded but whose index row failed. Only rebuilds/rewrites the
-        index row — never re-archives the flight object itself.
-        """
+        """Retry Parquet index writes for flights whose object write
+        already succeeded but whose index row failed. Only rewrites the
+        index row -- never re-archives the flight object itself."""
         def process(payload: str) -> None:
             data = json.loads(payload)
             flight = CompletedFlight.model_validate_json(data["flight_json"])
@@ -714,14 +636,10 @@ class ArchiveProcessor:
         self._index_fallback.drain_in_background(process, on_done=_log_done)
 
     def _archive_flight_to_s3(self, flight: CompletedFlight) -> None:
-        """
-        Check whether this flight continues a recently-archived segment for
-        the same aircraft (a processor-count resize can force an early
-        archive mid-flight); if so, merge into that segment instead of
-        writing a second S3 object. Otherwise write normally. Assumes S3 is
-        reachable — raises on failure so the caller can decide fallback
-        handling.
-        """
+        """Check whether this flight continues a recently-archived segment
+        for the same aircraft; if so, merge into that segment instead of
+        writing a second S3 object. Assumes S3 is reachable -- raises on
+        failure so the caller can decide fallback handling."""
         s3_key = build_s3_key(flight)
         stitched = self._try_stitch(flight)
         if stitched is not None:
@@ -742,13 +660,10 @@ class ArchiveProcessor:
     # ------------------------------------------------------------------
 
     def _try_stitch(self, flight: CompletedFlight) -> Optional[tuple[CompletedFlight, str]]:
-        """
-        If this flight's start is within flight_ttl_seconds of the last
+        """If this flight's start is within flight_ttl_seconds of the last
         archived segment for the same aircraft, fetch that segment and
-        merge. Returns (merged_flight, original_s3_key), or None if this is
-        a genuinely new flight (no prior pointer, gap too large or negative,
-        or the prior segment couldn't be fetched).
-        """
+        merge. Returns (merged_flight, original_s3_key), or None if this
+        is a genuinely new flight."""
         icao_hex = flight.aircraft.get("icao_hex", "")
         if not icao_hex:
             return None
@@ -770,16 +685,12 @@ class ArchiveProcessor:
 
         ttl = self._flight_ttl_seconds
         gap = flight.first_message.timestamp() - prev_last_message
-        # A negative gap means the pointer is for a segment that actually
-        # started *after* this one -- this flight arrived out of order
-        # (e.g. it failed and got parked in the local retry queue while a
-        # later continuation raced ahead and archived first).
-        # _merge_segments always takes first_message from `prev` and
-        # leaves last_message from `flight`, which assumes `prev` is
-        # chronologically earlier -- merging backwards here would silently
-        # produce a record with last_message before first_message rather
-        # than just missing a legitimate stitch, so this is rejected the
-        # same way a too-large gap already is.
+        # A negative gap means this flight arrived out of order (e.g. it
+        # was parked in the retry queue while a later continuation raced
+        # ahead and archived first). _merge_segments assumes `prev` is
+        # chronologically earlier, so merging backwards would silently
+        # produce last_message before first_message -- rejected the same
+        # way a too-large gap already is.
         if gap > ttl or gap < 0:
             return None
 
@@ -853,11 +764,8 @@ class ArchiveProcessor:
         except Exception as exc:
             logger.warning("Redis counter update failed: %s", exc)
 
-        # In-memory lifetime total -- independent of the Redis hour/today
-        # counters above, so it still increments even if Redis is
-        # unreachable (see __init__'s _lifetime_lock comment). Only reached
-        # on a genuine successful S3 write (the caller writes before
-        # calling this method).
+        # Increments even if Redis is unreachable -- independent of the
+        # counters above. Only reached on a genuine successful S3 write.
         with self._lifetime_lock:
             self._flights_archived_lifetime += 1
 
@@ -896,12 +804,10 @@ class ArchiveProcessor:
     # ------------------------------------------------------------------
 
     def _healthcheck_loop(self) -> None:
-        """Touch a heartbeat file while genuinely connected to RabbitMQ, for
-        Docker's HEALTHCHECK to check the mtime of. S3 deliberately isn't
-        part of the condition: an S3 outage is absorbed by the fallback queue
-        by design, so it isn't an unhealthy container. Runs at
-        HEALTHCHECK_INTERVAL_SECONDS, tuned against HEALTHCHECK_MAX_AGE_SECONDS
-        (see shared/timing.py) independent of the MQTT publish cadence."""
+        """Touch a heartbeat file while connected to RabbitMQ, for
+        Docker's HEALTHCHECK to check the mtime of. S3 isn't part of the
+        condition: an S3 outage is absorbed by the fallback queue by
+        design, so it isn't an unhealthy container."""
         heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
         heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
         while not self._shutdown.is_set():
@@ -936,9 +842,8 @@ class ArchiveProcessor:
             ("flights_archived_today", "Flights Archived (Today)", "mdi:airplane-landing", "total_increasing", None, None),
             ("flights_skipped_hour", "Flights Skipped External-Only (Hour)", "mdi:airplane-off", "total_increasing", None, None),
             ("flights_skipped_today", "Flights Skipped External-Only (Today)", "mdi:airplane-off", "total_increasing", None, None),
-            # total_increasing is the correct HA semantics for a counter
-            # that legitimately resets on a device restart -- which these
-            # two do, being sourced from the in-memory counters, not Redis.
+            # total_increasing is correct HA semantics even though these
+            # two reset on restart (in-memory, not Redis-backed).
             ("flights_archived_lifetime", "Flights Archived (Lifetime)", "mdi:counter", "total_increasing", None, None),
             ("flights_skipped_lifetime", "Flights Skipped External-Only (Lifetime)", "mdi:counter", "total_increasing", None, None),
             ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, None),
@@ -979,15 +884,11 @@ class ArchiveProcessor:
     def _telemetry_loop(self) -> None:
         while not self._shutdown.is_set():
             time.sleep(MQTT_PUBLISH_INTERVAL_SECONDS)
-            # Independent of MQTT/_publish_telemetry below: a periodic
-            # sweep of both fallback queues, not just a reaction to
-            # _s3_reconnect_loop's edge-triggered "was down, now up"
-            # detection — see _drain_all_fallbacks for why both queues
-            # get this even though only the index queue strictly needs it.
-            # Each queue's _drain_fallback()/_drain_index_fallback() spawns
-            # its own background thread (or skips if one's already
-            # running for that specific queue), so this call returns
-            # immediately and never delays the telemetry publish below it.
+            # Periodic sweep of both fallback queues, independent of
+            # _s3_reconnect_loop's edge-triggered detection (see
+            # _drain_all_fallbacks). Each drain call spawns its own
+            # background thread and returns immediately, so this never
+            # delays the telemetry publish below.
             with self._s3_lock:
                 s3_connected = self._s3_connected
             if s3_connected:
@@ -1023,11 +924,8 @@ class ArchiveProcessor:
             str(self._redis_counter(metrics_flights_skipped_key("today"))),
             retain=True,
         )
-        # Device-local running totals for this process's lifetime, sourced
-        # straight from the in-memory counters and never from Redis -- so
-        # they reset to zero on every archive-processor restart. No lock
-        # needed here: a plain int read is atomic, the lock only guards the
-        # read-modify-write increments in _post_write_success/_process_flight.
+        # In-memory only, resets on every restart. No lock needed for a
+        # plain int read -- the lock only guards the increments.
         self._mqtt.publish(
             f"{base}/flights_archived_lifetime",
             str(self._flights_archived_lifetime),
