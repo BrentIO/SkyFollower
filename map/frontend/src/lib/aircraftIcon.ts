@@ -12,10 +12,15 @@
 // shape is scaled to the same pixel footprint here, so the SDF resolution
 // is uniform; real relative size is applied on the map via `icon-size` and
 // each shape's `scale`. For the rare shape whose Accent layer survives
-// generation (`shape.accentD`), it's stroked onto the filled outline with
-// `destination-out` compositing -- a flat single-color fill has no other
-// way to show interior detail, so it's carved out as a thin transparent
-// cutout rather than drawn as a second fill.
+// generation (`shape.accentD`), a flat single-color fill has no way to show
+// a *second* color for interior detail, so it's composited onto the filled
+// outline one of two ways depending on `shape.accentMode`: `"cutout"`
+// strokes it with `destination-out`, carving a thin transparent gap through
+// the fill (for detail that sits inside the outline, e.g. BALL's gore
+// lines); `"add"` strokes it with `source-over` in the same solid fill
+// color, drawing on top instead (for detail that extends beyond the
+// outline and would carve nothing visible as a cutout, e.g. EC35's rotor
+// blades, wider than the fuselage).
 //
 // Source paths are drawn nose-up (north), matching `icon-rotate` bound to
 // heading -- no rotation offset.
@@ -212,18 +217,27 @@ export function buildShapeIconImageData(shape: AircraftShape): ImageData {
   ctx.fill(new Path2D(shape.d));
 
   if (shape.accentD) {
-    // Erase a thin gap along the Accent path through the fill just laid
-    // down. `ctx.lineWidth` is in the same (still-active) user-space
-    // coordinates as the fill above, so the current `k` scale carries it to
-    // device pixels the same way it carried the outline geometry -- setting
-    // it to `shape.accentStrokeWidth` here is equivalent to an on-canvas
-    // width of `shape.accentStrokeWidth * k`. Clamp that to >= 1 on-canvas
-    // pixel (by flooring the user-space width at `1 / k`) so the cutout
-    // doesn't antialias away before the later downscale to the SDF canvas.
+    // `ctx.lineWidth` is in the same (still-active) user-space coordinates
+    // as the fill above, so the current `k` scale carries it to device
+    // pixels the same way it carried the outline geometry -- setting it to
+    // `shape.accentStrokeWidth` here is equivalent to an on-canvas width of
+    // `shape.accentStrokeWidth * k`. Clamp that to >= 1 on-canvas pixel (by
+    // flooring the user-space width at `1 / k`) so the stroke doesn't
+    // antialias away before the later downscale to the SDF canvas.
     ctx.lineWidth = Math.max(shape.accentStrokeWidth ?? 0, 1 / k);
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.stroke(new Path2D(shape.accentD));
-    ctx.globalCompositeOperation = "source-over";
+    if (shape.accentMode === "add") {
+      // Draw the Accent path on top of the fill in the same solid color,
+      // for detail that extends beyond the outline (e.g. EC35's rotor
+      // blades) and would carve nothing visible as a cutout.
+      ctx.strokeStyle = "#000000";
+      ctx.stroke(new Path2D(shape.accentD));
+    } else {
+      // "cutout" (today's only other mode, used by BALL): erase a thin gap
+      // along the Accent path through the fill just laid down.
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.stroke(new Path2D(shape.accentD));
+      ctx.globalCompositeOperation = "source-over";
+    }
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);

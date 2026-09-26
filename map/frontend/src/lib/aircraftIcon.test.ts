@@ -132,19 +132,19 @@ describe("shapeIconId", () => {
   });
 });
 
-describe("buildShapeIconImageData -- accent cutout", () => {
+describe("buildShapeIconImageData -- accent modes", () => {
   // `buildShapeIconImageData` needs a 2D canvas, which this project's
   // "node" vitest environment doesn't provide (see the file-header note
   // above). Rather than pull in jsdom + a canvas polyfill, this installs a
   // minimal fake `document`/`Path2D`/`CanvasRenderingContext2D` for just
   // this suite -- only the handful of calls the function under test
   // actually makes (clearRect, setTransform, fill, stroke,
-  // globalCompositeOperation, getImageData), and only geometry this suite
-  // needs: an axis-aligned filled rectangle (a synthetic outline `d`) and
-  // a straight horizontal line (a synthetic `accentD`). That's enough to
-  // exercise the real destination-out cutout logic in aircraftIcon.ts
-  // end-to-end (including the real `coverageToSdf`), without reimplementing
-  // a general SVG path rasterizer.
+  // globalCompositeOperation, strokeStyle, getImageData), and only geometry
+  // this suite needs: an axis-aligned filled rectangle (a synthetic outline
+  // `d`) and a straight horizontal line (a synthetic `accentD`). That's
+  // enough to exercise the real "cutout" and "add" accent logic in
+  // aircraftIcon.ts end-to-end (including the real `coverageToSdf`),
+  // without reimplementing a general SVG path rasterizer.
 
   class FakePath2D {
     constructor(public readonly d: string) {}
@@ -161,10 +161,15 @@ describe("buildShapeIconImageData -- accent cutout", () => {
 
   class FakeCanvasRenderingContext2D {
     fillStyle = "#000000";
+    strokeStyle = "#000000";
     lineWidth = 1;
     globalCompositeOperation: "source-over" | "destination-out" = "source-over";
     private transform = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
     readonly data: Uint8ClampedArray;
+    /** Recorded at each `stroke()` call, so tests can assert which
+     * compositing mode / color the accent branch actually used, not just
+     * infer it from pixel output. */
+    readonly strokeCalls: Array<{ compositeOperation: string; strokeStyle: string }> = [];
 
     constructor(
       private readonly width: number,
@@ -186,19 +191,21 @@ describe("buildShapeIconImageData -- accent cutout", () => {
       return [t.a * x + t.c * y + t.e, t.b * x + t.d * y + t.f];
     }
 
-    private paintPixel(x: number, y: number, isFill: boolean): void {
+    /** Paints one device pixel per the active compositing mode: erases
+     * alpha under "destination-out" (the cutout treatment), otherwise
+     * fills solid black (both the body fill and the "add" accent stroke
+     * use plain "source-over" with the same solid color). */
+    private paintPixel(x: number, y: number): void {
       if (x < 0 || y < 0 || x >= this.width || y >= this.height) return;
       const i = (y * this.width + x) * 4;
       if (this.globalCompositeOperation === "destination-out") {
         this.data[i + 3] = 0;
         return;
       }
-      if (isFill) {
-        this.data[i] = 0;
-        this.data[i + 1] = 0;
-        this.data[i + 2] = 0;
-        this.data[i + 3] = 255;
-      }
+      this.data[i] = 0;
+      this.data[i + 1] = 0;
+      this.data[i + 2] = 0;
+      this.data[i + 3] = 255;
     }
 
     /** Axis-aligned bounding-box fill -- sufficient for this suite's
@@ -212,13 +219,14 @@ describe("buildShapeIconImageData -- accent cutout", () => {
       const y0 = Math.min(...ys);
       const y1 = Math.max(...ys);
       for (let y = Math.ceil(y0); y < y1; y++) {
-        for (let x = Math.ceil(x0); x < x1; x++) this.paintPixel(x, y, true);
+        for (let x = Math.ceil(x0); x < x1; x++) this.paintPixel(x, y);
       }
     }
 
     /** Straight axis-aligned (horizontal or vertical) line stroke -- this
      * suite's `accentD` is always one such segment. */
     stroke(path: FakePath2D): void {
+      this.strokeCalls.push({ compositeOperation: this.globalCompositeOperation, strokeStyle: this.strokeStyle });
       const pts = parsePoints(path.d).map(([x, y]) => this.toDevice(x, y));
       const [[x0, y0], [x1, y1]] = pts;
       const scale = Math.hypot(this.transform.a, this.transform.b) || 1;
@@ -226,13 +234,13 @@ describe("buildShapeIconImageData -- accent cutout", () => {
       if (y0 === y1) {
         for (let py = Math.floor(y0 - halfWidth); py <= Math.ceil(y0 + halfWidth); py++) {
           for (let px = Math.floor(Math.min(x0, x1)); px <= Math.ceil(Math.max(x0, x1)); px++) {
-            this.paintPixel(px, py, false);
+            this.paintPixel(px, py);
           }
         }
       } else if (x0 === x1) {
         for (let px = Math.floor(x0 - halfWidth); px <= Math.ceil(x0 + halfWidth); px++) {
           for (let py = Math.floor(Math.min(y0, y1)); py <= Math.ceil(Math.max(y0, y1)); py++) {
-            this.paintPixel(px, py, false);
+            this.paintPixel(px, py);
           }
         }
       } else {
@@ -245,6 +253,8 @@ describe("buildShapeIconImageData -- accent cutout", () => {
     }
   }
 
+  let lastContext: FakeCanvasRenderingContext2D | undefined;
+
   beforeAll(() => {
     (globalThis as unknown as { document: unknown }).document = {
       createElement(tag: string) {
@@ -254,7 +264,8 @@ describe("buildShapeIconImageData -- accent cutout", () => {
           height: 0,
           getContext(type: string) {
             if (type !== "2d") return null;
-            return new FakeCanvasRenderingContext2D(canvas.width, canvas.height);
+            lastContext = new FakeCanvasRenderingContext2D(canvas.width, canvas.height);
+            return lastContext;
           },
         };
         return canvas;
@@ -278,18 +289,30 @@ describe("buildShapeIconImageData -- accent cutout", () => {
     span: 10,
     scale: 1,
   };
-  const SQUARE_SHAPE_WITH_ACCENT: AircraftShape = {
+  const SQUARE_SHAPE_WITH_ACCENT_CUTOUT: AircraftShape = {
     ...SQUARE_SHAPE,
     // A straight horizontal line through the square's vertical centre.
     accentD: "M0,5 L10,5",
     accentStrokeWidth: 2,
+    accentMode: "cutout",
+  };
+  const SQUARE_SHAPE_WITH_ACCENT_ADD: AircraftShape = {
+    ...SQUARE_SHAPE,
+    // Same horizontal centre-line, but extended past the square's right
+    // edge (x=10) -- mirrors EC35's rotor blades being wider than the
+    // fuselage, so "add" mode's defining behavior (painting solid outside
+    // the base fill) is distinguishable from "cutout" (which can only ever
+    // remove coverage, never add it).
+    accentD: "M0,5 L15,5",
+    accentStrokeWidth: 2,
+    accentMode: "add",
   };
 
   const idx = (x: number, y: number) => y * SDF_CANVAS_PX + x;
   const center = SDF_CANVAS_PX / 2;
 
-  it("a shape with accentD drops alpha below the solid-fill level along the accent line", () => {
-    const imageData = buildShapeIconImageData(SQUARE_SHAPE_WITH_ACCENT);
+  it("'cutout': drops alpha below the solid-fill level along the accent line", () => {
+    const imageData = buildShapeIconImageData(SQUARE_SHAPE_WITH_ACCENT_CUTOUT);
     const alphaAt = (x: number, y: number) => imageData.data[idx(x, y) * 4 + 3];
 
     // Deep interior, away from every edge (including the accent line) --
@@ -300,6 +323,34 @@ describe("buildShapeIconImageData -- accent cutout", () => {
     // On the accent line, at the square's centre -- inside the cutout.
     const onAccentLine = alphaAt(center, center);
     expect(onAccentLine).toBeLessThan(solidFillLevel);
+  });
+
+  it("'cutout': strokes with destination-out compositing", () => {
+    buildShapeIconImageData(SQUARE_SHAPE_WITH_ACCENT_CUTOUT);
+    expect(lastContext?.strokeCalls).toEqual([{ compositeOperation: "destination-out", strokeStyle: "#000000" }]);
+  });
+
+  it("'add': strokes with source-over compositing in the fill color", () => {
+    buildShapeIconImageData(SQUARE_SHAPE_WITH_ACCENT_ADD);
+    expect(lastContext?.strokeCalls).toEqual([{ compositeOperation: "source-over", strokeStyle: "#000000" }]);
+  });
+
+  it("'add': paints solid coverage beyond the base fill, where 'cutout' cannot", () => {
+    const imageData = buildShapeIconImageData(SQUARE_SHAPE_WITH_ACCENT_ADD);
+    const alphaAt = (x: number, y: number) => imageData.data[idx(x, y) * 4 + 3];
+
+    // The square's fill footprint is device x in [13, 83] (span 10 * k=7,
+    // centred on the 96px canvas); center+40 = 88 is past its right edge
+    // but still on the accent line's extended run (device x up to 95,
+    // clipped from source x=15), on the accent line's y (=center) --
+    // outside the base fill footprint, but on the added stroke.
+    const beyondFillOnAccentLine = alphaAt(center + 40, center);
+    expect(beyondFillOnAccentLine).toBeGreaterThan(SDF_EDGE_ALPHA);
+
+    // Same x, off the accent line's y -- outside both the fill and the
+    // stroke, so it stays background.
+    const beyondFillOffAccentLine = alphaAt(center + 40, center - 20);
+    expect(beyondFillOffAccentLine).toBeLessThan(SDF_EDGE_ALPHA);
   });
 
   it("a shape without accentD is unaffected at the same coordinate", () => {

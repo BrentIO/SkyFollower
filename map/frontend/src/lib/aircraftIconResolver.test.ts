@@ -183,34 +183,38 @@ describe("compact/simple-silhouette shape scale floor", () => {
   });
 });
 
-describe("accent-detail icon cutouts (ACCENT_CUTOUT_RATIO_THRESHOLD)", () => {
-  // Mirrors ACCENT_CUTOUT_RATIO_THRESHOLD = 2 in
+describe("accent-detail icon treatments (ACCENT_CUTOUT_RATIO_THRESHOLD / ACCENT_ADD_KEYS)", () => {
+  // Mirrors ACCENT_CUTOUT_RATIO_THRESHOLD = 2 and ACCENT_ADD_KEYS in
   // scripts/generate-aircraft-shapes.mjs: BALL (balloon) is the sole shape
-  // whose Accent/outline ratio crosses the threshold and still renders as a
+  // whose Accent/outline ratio crosses the threshold and renders as a
   // cutout. EC35 also crosses the ratio threshold (~2.5) but is explicitly
-  // excluded via ACCENT_CUTOUT_SKIP_KEYS in the generator -- its Accent
-  // layer is a rotor-blade cross spanning the whole fuselage, which
-  // fragments the cabin into an unrecognizable lattice as a cutout rather
-  // than reading as detail (see #1884). Keep this list in sync with the
-  // generator script's own threshold/skip-list.
+  // listed in ACCENT_ADD_KEYS in the generator instead -- its Accent layer
+  // is a rotor-blade cross spanning the whole fuselage, wider than the
+  // body, which fragments the cabin into an unrecognizable lattice as a
+  // cutout rather than reading as a rotor (see #1884, #2013). Keep these
+  // lists in sync with the generator script's own threshold/add-list.
   const SHAPES_WITH_ACCENT_CUTOUT = ["BALL"];
+  const SHAPES_WITH_ACCENT_ADD = ["EC35"];
 
-  it("gives exactly the expected shapes an accentD cutout, no others", () => {
-    for (const key of SHAPES_WITH_ACCENT_CUTOUT) {
+  it("gives exactly the expected shapes an accentD, no others", () => {
+    const expectedKeys = [...SHAPES_WITH_ACCENT_CUTOUT, ...SHAPES_WITH_ACCENT_ADD];
+    for (const key of expectedKeys) {
       expect(AIRCRAFT_SHAPES[key], `AIRCRAFT_SHAPES[${key}]`).toBeDefined();
       expect(AIRCRAFT_SHAPES[key].accentD, `${key}.accentD`).toBeTruthy();
     }
     const actualKeysWithAccent = Object.keys(AIRCRAFT_SHAPES).filter((key) => AIRCRAFT_SHAPES[key].accentD);
-    expect(actualKeysWithAccent.sort()).toEqual([...SHAPES_WITH_ACCENT_CUTOUT].sort());
+    expect(actualKeysWithAccent.sort()).toEqual(expectedKeys.sort());
   });
 
-  it("BALL's existing cutout is unaffected by the threshold change", () => {
+  it("BALL's existing cutout is unaffected by the added-key change", () => {
     expect(AIRCRAFT_SHAPES.BALL.accentD).toBeTruthy();
     expect(AIRCRAFT_SHAPES.BALL.accentStrokeWidth).toBeGreaterThan(0);
+    expect(AIRCRAFT_SHAPES.BALL.accentMode).toBe("cutout");
   });
 
-  it("EC35 renders as a plain filled silhouette, no accentD cutout", () => {
-    expect(AIRCRAFT_SHAPES.EC35.accentD).toBeUndefined();
-    expect(AIRCRAFT_SHAPES.EC35.accentStrokeWidth).toBeUndefined();
+  it("EC35 renders its rotor Accent layer in 'add' mode, not a cutout", () => {
+    expect(AIRCRAFT_SHAPES.EC35.accentD).toBeTruthy();
+    expect(AIRCRAFT_SHAPES.EC35.accentStrokeWidth).toBeGreaterThan(0);
+    expect(AIRCRAFT_SHAPES.EC35.accentMode).toBe("add");
   });
 });
