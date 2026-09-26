@@ -366,28 +366,19 @@ def delete_stack(cf, stack_name: str) -> None:
 # ---------------------------------------------------------------------------
 # Two-tier credential model
 #
-# CloudFormation is given a service role (RoleARN on create_change_set,
-# bound once when the change set is created and carried automatically
-# through execute_change_set) so it runs the template's underlying
-# resource actions as that role rather than as the caller. Two policies
-# fall out of this and both are built here, from the same parameters, so
-# the live IAM calls and the copy in docs/aws-configuration.md cannot drift:
+# CloudFormation runs the template's resource actions as a service role
+# (RoleARN bound at create_change_set, carried through execute_change_set)
+# rather than as the caller. build_execution_role_policy() covers
+# everything the template creates/updates/deletes, attached to that role
+# by ensure_execution_role(); build_bootstrap_policy() covers only what
+# the caller itself needs (the CloudFormation control plane, PassRole/
+# role management on that one role, and bootstrap-user self-delete),
+# rendered by --print-bootstrap-policy.
 #
-#   build_execution_role_policy()  -- everything the template creates,
-#                                     updates, or deletes. Attached to the
-#                                     execution role by ensure_execution_role().
-#   build_bootstrap_policy()       -- all the caller itself needs: the
-#                                     CloudFormation control plane, PassRole
-#                                     + role management on the one execution
-#                                     role, and (bootstrap user only) its
-#                                     own self-delete. Rendered by
-#                                     --print-bootstrap-policy.
-#
-# Derived by reading the template and this file, NOT from a live deploy:
-# CloudFormation's own resource-tagging can require actions that are not
-# obvious from the template. Confirm end-to-end (create, update, delete)
-# against a real account and fold any AccessDenied fix back into the
-# builder it belongs to. See docs/aws-configuration.md.
+# Both are derived by reading the template and this file, not from a live
+# deploy -- confirm end-to-end against a real account and fold any
+# AccessDenied fix back into the builder it belongs to (see
+# docs/aws-configuration.md).
 # ---------------------------------------------------------------------------
 
 def _provisioning_context(env: dict) -> dict:
