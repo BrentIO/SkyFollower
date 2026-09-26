@@ -444,6 +444,33 @@ function MapViewInner({ config }: { config: AppConfig }) {
     pendingDeepLinkIcaoHexRef.current = null;
   }, [aircraft, selectedIcaoHex, mapLoaded]);
 
+  // Center-on-select (#2011): a fresh selection -- whether a map click or
+  // an Aircraft List row click -- gets the same one-shot recenter as the
+  // panel's own Zoom To button, once that aircraft's position is known.
+  // Deliberately not Follow: this fires once per new selectedIcaoHex
+  // value, never again for the same selection as `aircraft` keeps
+  // updating (that repeat-on-every-update behavior is Follow's own effect
+  // above, and is opt-in). centeredForIcaoHexRef records which selection
+  // has already been centered for; it only resets on an actual change of
+  // *which* aircraft is selected (including back to none), so re-clicking
+  // the same already-selected aircraft is a no-op (selectedIcaoHex
+  // wouldn't even change), while Isolate re-targeting a different
+  // aircraft centers again. Reuses deepLinkReadyToZoom for the same
+  // "position known and map ready" precondition the deep-link effect
+  // above already waits on -- harmless if both fire for the same initial
+  // selection, since they're redundant easeTo calls to the same target.
+  const centeredForIcaoHexRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedIcaoHex === null) {
+      centeredForIcaoHexRef.current = null;
+      return;
+    }
+    if (centeredForIcaoHexRef.current === selectedIcaoHex) return;
+    if (!deepLinkReadyToZoom(aircraft, selectedIcaoHex, mapLoaded)) return;
+    handleZoomTo();
+    centeredForIcaoHexRef.current = selectedIcaoHex;
+  }, [selectedIcaoHex, aircraft, mapLoaded]);
+
   // Keeps the address bar in sync with the current selection, continuously
   // -- not just on initial load -- so a link copied at any point in a
   // session reproduces that exact selection: selecting sets
