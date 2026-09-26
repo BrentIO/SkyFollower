@@ -35,8 +35,8 @@ export default defineConfig({
       { text: "Getting Started", link: "/getting-started/" },
       { text: "AWS Configuration", link: "/aws-configuration" },
       { text: "Deployment", link: "/deployment/" },
-      { text: "Architecture", link: "/architecture/" },
       { text: "Rules & Areas", link: "/rules-and-areas/" },
+      { text: "Architecture", link: "/architecture/" },
       { text: "Components", link: "/components/" },
       { text: "Data Runners", link: "/runners/" },
       { text: "Tools", link: "/tools/" },
@@ -44,14 +44,20 @@ export default defineConfig({
 
     sidebar: [
       {
-        text: "Guide",
+        text: "User Guide",
         items: [
           { text: "Getting Started", link: "/getting-started/" },
           { text: "AWS Configuration", link: "/aws-configuration" },
           { text: "Deployment", link: "/deployment/" },
-          { text: "Architecture", link: "/architecture/" },
-          { text: "Timing & Cadences", link: "/architecture/timing" },
           { text: "Rules & Areas", link: "/rules-and-areas/" },
+        ],
+      },
+      {
+        text: "Architecture",
+        items: [
+          { text: "Overview", link: "/architecture/" },
+          { text: "Timing & Cadences", link: "/architecture/timing" },
+          { text: "Local Development", link: "/architecture/local-development" },
         ],
       },
       {
