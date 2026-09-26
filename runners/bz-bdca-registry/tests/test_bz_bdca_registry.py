@@ -10,10 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -44,10 +40,6 @@ publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 def _make_row(
     registration="V3-ABC",
@@ -84,10 +76,6 @@ def _make_redis_no_match():
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: _clean_owner
-# ---------------------------------------------------------------------------
-
 class TestCleanOwner:
     def test_plain_name_unchanged(self):
         assert _clean_owner("Belize Air Ltd") == "Belize Air Ltd"
@@ -110,10 +98,6 @@ class TestCleanOwner:
         result = _clean_owner("(Charterer by Demise)")
         assert result == ""
 
-
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
 
 class TestBuildRecord:
     def test_full_record(self):
@@ -188,10 +172,6 @@ class TestBuildRecord:
         assert "city" not in record.get("registrant", {})
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("V3ABC") == "V3ABC"
@@ -202,10 +182,6 @@ class TestEscapeTag:
     def test_empty_string(self):
         assert _escape_tag("") == ""
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_record_written_when_found_in_redis(self):
@@ -268,10 +244,6 @@ class TestWriteToRedis:
         assert "city" not in written["registrant"]
         assert "street" not in written["registrant"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

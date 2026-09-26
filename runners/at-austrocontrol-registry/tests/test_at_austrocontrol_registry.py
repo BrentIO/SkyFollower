@@ -11,10 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -49,10 +45,6 @@ publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 def _make_item(
     oid=296490,
@@ -102,10 +94,6 @@ def _make_redis_with_search(icao_hex="440123", registration="OE-ARG", simple_rec
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: _decode_aircraft_type
-# ---------------------------------------------------------------------------
-
 class TestDecodeAircraftType:
     def test_flugzeug(self):
         assert _decode_aircraft_type("Flugzeug") == "Airplane"
@@ -134,10 +122,6 @@ class TestDecodeAircraftType:
     def test_strips_whitespace(self):
         assert _decode_aircraft_type("  Flugzeug  ") == "Airplane"
 
-
-# ---------------------------------------------------------------------------
-# Tests: _decode_country
-# ---------------------------------------------------------------------------
 
 class TestDecodeCountry:
     def test_oesterreich(self):
@@ -177,10 +161,6 @@ class TestDecodeCountry:
             result = _decode_country(name)
             assert result is not None and len(result) == 2, f"{name!r} → {result!r}"
 
-
-# ---------------------------------------------------------------------------
-# Tests: _parse_halter
-# ---------------------------------------------------------------------------
 
 class TestParseHalter:
     def test_austrian_individual(self):
@@ -255,10 +235,6 @@ class TestParseHalter:
         assert result["street"] == ["Pago de Patria"]
 
 
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
-
 class TestBuildRecord:
     def test_full_record(self):
         item = _make_item()
@@ -310,10 +286,6 @@ class TestBuildRecord:
         assert "serial_number" not in record["aircraft"]
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("OEARG") == "OEARG"
@@ -326,10 +298,6 @@ class TestEscapeTag:
         result = _escape_tag("OE.ARG")
         assert "\\." in result
 
-
-# ---------------------------------------------------------------------------
-# Tests: _type_tokens
-# ---------------------------------------------------------------------------
 
 class TestTypeTokens:
     def test_plain_designator(self):
@@ -359,10 +327,6 @@ class TestTypeTokens:
     def test_empty_string_returns_empty(self):
         assert _type_tokens("") == set()
 
-
-# ---------------------------------------------------------------------------
-# Tests: _type_check_passes
-# ---------------------------------------------------------------------------
 
 class TestTypeCheckPasses:
     def test_empty_detail_model_passes(self):
@@ -396,10 +360,6 @@ class TestTypeCheckPasses:
         simple = {"type_designator": "B737"}
         assert _type_check_passes(simple, "b737-800") is True
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_active_record_written(self):
@@ -468,13 +428,10 @@ class TestWriteToRedis:
         r.pipeline.return_value.json.return_value.set.assert_not_called()
 
     def test_registration_prefixed_with_oe(self):
-        # Verify that at least one RediSearch query was issued for OE-ARG
         item = _make_item(kennzeichen="ARG")
         r = _make_redis_with_search(icao_hex="440123", registration="OE-ARG")
         count = write_to_redis([item], r, REDIS_TTL)
-        # Registration OE-ARG matched → one record written
         assert count == 1
-        # The built record carries the OE- prefixed registration and writes to detail key
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call is not None
         key_used, _, written = set_call[0]
@@ -548,10 +505,6 @@ class TestWriteToRedis:
         assert "manufacturer" not in written["aircraft"]
         assert "serial_number" not in written["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

@@ -2,26 +2,16 @@
 """
 SkyFollower Georgia GCAA Data Runner
 
-Fetches the Georgia Civil Aviation Agency aircraft register page, parses two
-pre-rendered HTML tables (table_1: operator data; table_2: owner data), merges
-them by registration mark, looks up each 4L- registration in the Redis simple
-search index to find the ICAO hex (provided by Mictronics), writes enrichment
-data to aircraft:registry:{icao_hex}, publishes MQTT completion stats, then exits.
+Fetches the Georgia Civil Aviation Agency register page, parses its two
+pre-rendered HTML tables (table_1: operator; table_2: owner), merges them by
+4L- registration mark, resolves each to an ICAO hex via the Redis Mictronics
+search index, and writes enrichment to aircraft:registry:{icao_hex}.
 
-Table columns (0-based; identical layout in both tables):
-  0: Operator / Owner (Georgian + English text; stored differently per table)
-  1: Aircraft type   (stored as aircraft.model)
-  2: Registration    (4L-prefix; used as lookup key)
-  3: Registration date (not stored)
-  4: Serial number   (stored as aircraft.serial_number)
-  5: Year of manufacture (4-digit year → stored as aircraft.manufactured_date YYYY-01-01)
+Table columns (0-based, same layout in both tables): 0 party, 1 model,
+2 registration, 3 registration date (unused), 4 serial, 5 year.
 
-Merge logic:
-  - aircraft.model and aircraft.serial_number: from whichever table provides them
-  - aircraft.manufactured_date: from whichever table provides the year
-  - registrant.names[0]: owner (table_2 col 0) only; table_1 (operator) is still
-    fetched and parsed for its aircraft fields, but its party column is never
-    used for registrant.names
+registrant.names[0] comes from table_2 (owner) only — table_1's operator
+column is parsed for aircraft fields but never used as a registrant name.
 
 Data source: https://gcaa.ge/civil-aircraft-register/
 """
@@ -78,15 +68,11 @@ _COL_SERIAL = 4
 _COL_YEAR = 5
 
 
-# ---------------------------------------------------------------------------
-# Download + parse
-# ---------------------------------------------------------------------------
-
 def _parse_table(table_tag) -> list[dict]:
     """Extract rows from a BeautifulSoup table element, skipping the header."""
     rows = table_tag.find_all("tr")
     records = []
-    for tr in rows[1:]:  # skip header
+    for tr in rows[1:]:
         cells = [_WHITESPACE_RE.sub(" ", td.get_text(strip=True)) for td in tr.find_all("td")]
         if len(cells) < 6:
             continue
@@ -161,10 +147,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     return records
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build detail enrichment record from a merged row."""
     aircraft_fields: dict = {}
@@ -207,10 +189,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -221,10 +199,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return "".join(result)
 
-
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
@@ -240,10 +214,6 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         )
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
     """Batch-query Redis simple search index for icao_hex by registration mark."""
@@ -269,10 +239,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
     return reg_map
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Georgia GCAA data to aircraft:detail keys in Redis. Returns count written."""
@@ -328,10 +294,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished: %d written, %d errors.", count, errors)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -417,10 +379,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

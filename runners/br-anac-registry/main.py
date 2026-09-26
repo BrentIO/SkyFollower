@@ -59,10 +59,6 @@ DOWNLOAD_URL = "https://sistemas.anac.gov.br/dadosabertos/Aeronaves/RAB/dados_ae
 MQTT_ROOT = "SkyFollower/runner/br-anac-registry"
 BATCH_SIZE = 100
 
-# ---------------------------------------------------------------------------
-# Decode tables
-# ---------------------------------------------------------------------------
-
 _AIRCRAFT_TYPE_MAP: dict[str, str] = {
     "L": "Airplane",
     "H": "Helicopter",
@@ -85,10 +81,6 @@ _ENGINE_TYPE_MAP: dict[str, str] = {
     "E": "Electric",
 }
 
-# ---------------------------------------------------------------------------
-# Type sanity check
-# ---------------------------------------------------------------------------
-
 _TYPE_TOKEN_RE = re.compile(r'[A-Z]{1,4}\d{2,4}')
 
 
@@ -110,10 +102,6 @@ def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
         return True
     return bool(simple_tokens & detail_tokens)
 
-
-# ---------------------------------------------------------------------------
-# Field parsers
-# ---------------------------------------------------------------------------
 
 def _format_registration(marca: str) -> Optional[str]:
     """Convert MARCA to hyphenated registration: PPAJH → PP-AJH."""
@@ -202,10 +190,6 @@ def _parse_proprietarios(raw: Optional[str]) -> Optional[str]:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     """Build the aircraft:registry:{hex} enrichment record from a RAB row."""
     aircraft_type, engine_count, engine_type = _decode_cdcls(row.get("CDCLS"))
@@ -259,16 +243,8 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
 
 
 def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
-    """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
-    and set aircraft.manufacturer_model and aircraft.description_code when found.
-
-    Unconditional: this runner's own type_designator is sourced directly from ANAC
-    and is authoritative, so the lookup happens regardless of whether Mictronics
-    also has data for the same hex — merge_aircraft.lua's "registry wins over
-    mictronics" precedence rule already guarantees this value takes priority at read
-    time. The reference table is not a hard dependency: a lookup failure or a missing
-    entry leaves the record exactly as _build_record produced it.
-    """
+    """Look up aircraft:type:{designator} and set manufacturer_model/description_code
+    when found. Non-fatal: a lookup failure or miss leaves the record unchanged."""
     aircraft = record.get("aircraft")
     if not aircraft:
         return
@@ -290,10 +266,6 @@ def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
         aircraft["description_code"] = description_code
 
 
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
-
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
@@ -308,10 +280,6 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         )
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
@@ -357,10 +325,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
     return reg_map
 
 
-# ---------------------------------------------------------------------------
-# Download
-# ---------------------------------------------------------------------------
-
 def download_register(session: requests.Session) -> list[dict]:
     """Download the ANAC RAB register and return parsed records."""
     logger.info("Downloading from %s", DOWNLOAD_URL)
@@ -371,10 +335,6 @@ def download_register(session: requests.Session) -> list[dict]:
     logger.info("Parsed %d records.", len(data))
     return data
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(records: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Filter active records, resolve icao_hex via RediSearch, write to Redis.
@@ -444,10 +404,6 @@ def write_to_redis(records: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished: %d written, %d type mismatches, %d errors.", count, skipped_type, errors)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -534,10 +490,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

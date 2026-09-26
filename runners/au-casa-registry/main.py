@@ -3,14 +3,12 @@
 SkyFollower Australia CASA Data Runner
 
 Downloads the Civil Aviation Safety Authority (CASA) aircraft register CSV,
-looks up each VH- registration in the Mictronics simple index to find the ICAO
-hex, performs a type sanity check to reject false cross-registry joins, writes
-full CASA enrichment records to aircraft:registry:{icao_hex} keys in Redis,
-publishes MQTT completion stats, then exits.
+resolves each VH- registration to an ICAO hex via the Mictronics simple index,
+runs a type sanity check to reject false cross-registry joins, and writes
+CASA enrichment records to aircraft:registry:{icao_hex}.
 
-Important: the CASA register does not publish ICAO hex (Mode S) addresses.
-This runner can only enrich records that already exist in Redis from Mictronics.
-Schedule it AFTER the Mictronics runner.
+This register publishes no ICAO hex of its own, so it can only enrich records
+Mictronics has already written — schedule this runner after Mictronics.
 
 Data source: https://services.casa.gov.au/CSV/acrftreg.csv
 """
@@ -59,10 +57,6 @@ logger = logging.getLogger("au-casa-registry")
 DOWNLOAD_URL = "https://services.casa.gov.au/CSV/acrftreg.csv"
 MQTT_ROOT = "SkyFollower/runner/au-casa-registry"
 BATCH_SIZE = 100
-
-# ---------------------------------------------------------------------------
-# Decode tables
-# ---------------------------------------------------------------------------
 
 # Airframe → aircraft.type; pass through unknown values
 _AIRCRAFT_TYPES: dict[str, str] = {
@@ -120,10 +114,6 @@ _COUNTRY_NAMES: dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Decode helpers
-# ---------------------------------------------------------------------------
-
 def _decode_aircraft_type(raw: str) -> Optional[str]:
     """Map CASA Airframe to canonical aircraft.type; pass through unknown values."""
     value = raw.strip()
@@ -174,10 +164,6 @@ def _parse_int(value: str) -> Optional[int]:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Type sanity check (detect false joins between registries)
-# ---------------------------------------------------------------------------
-
 _TYPE_TOKEN_RE = re.compile(r'[A-Z]{1,4}\d{2,4}')
 
 
@@ -187,11 +173,8 @@ def _type_tokens(model_str: str) -> set:
 
 
 def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
-    """Return True if the CASA model string is consistent with the Mictronics simple record.
-
-    Returns True (pass) when either side has no extractable tokens — we only
-    reject when both sides have tokens and they share none in common.
-    """
+    """True if the CASA model string shares a type token with the Mictronics
+    simple record, or either side has no tokens to compare."""
     if not detail_model_str:
         return True
     simple_tokens = _type_tokens(
@@ -206,10 +189,6 @@ def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
     return bool(simple_tokens & detail_tokens)
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -221,13 +200,8 @@ def _escape_tag(value: str) -> str:
     return ''.join(result)
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build the enrichment record from a CASA CSV row."""
-    # aircraft sub-object
     aircraft_fields: dict = {
         "type": _decode_aircraft_type(row.get("Airframe", "")),
         "manufacturer": row.get("Manu", "").strip() or None,
@@ -237,7 +211,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
         "type_designator": row.get("ICAOtypedesig", "").strip() or None,
     }
 
-    # powerplant sub-object
     powerplant_fields = {
         "count": _parse_int(row.get("engnum", "")),
         "manufacturer": row.get("Engmanu", "").strip() or None,
@@ -250,7 +223,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
 
     aircraft = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 
-    # registrant sub-object
     name = row.get("regholdname", "").strip() or None
     street = [s for s in [
         row.get("regholdadd1", "").strip() or None,
@@ -275,16 +247,9 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
 
 
 def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
-    """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
-    and set aircraft.manufacturer_model and aircraft.description_code when found.
-
-    Unconditional: this runner's own type_designator is sourced directly from CASA
-    and is authoritative, so the lookup happens regardless of whether Mictronics
-    also has data for the same hex — merge_aircraft.lua's "registry wins over
-    mictronics" precedence rule already guarantees this value takes priority at read
-    time. The reference table is not a hard dependency: a lookup failure or a missing
-    entry leaves the record exactly as _build_record produced it.
-    """
+    """Look up aircraft:type:{designator} and fill in manufacturer_model /
+    description_code when found. Best-effort: a lookup failure or missing
+    entry leaves the record as _build_record produced it."""
     aircraft = record.get("aircraft")
     if not aircraft:
         return
@@ -306,10 +271,6 @@ def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
         aircraft["description_code"] = description_code
 
 
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
-
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft detail JSON search index if it does not already exist."""
     try:
@@ -325,16 +286,9 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
-
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
-    """Batch-query Redis search index for icao_hex by registration mark.
-
-    Returns {registration → icao_hex} for registrations already in Redis.
-    Registrations not found (aircraft not yet in Mictronics) are omitted.
-    """
+    """Batch-query Redis search index; returns {registration: icao_hex} for
+    registrations already present."""
     reg_map: dict[str, str] = {}
     total_batches = (len(registrations) + BATCH_SIZE - 1) // BATCH_SIZE
 
@@ -363,10 +317,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
     return reg_map
 
 
-# ---------------------------------------------------------------------------
-# Download
-# ---------------------------------------------------------------------------
-
 def download_registry(url: str) -> list[dict]:
     """Download the CASA aircraft register CSV and return rows as dicts."""
     logger.info("Downloading Australia CASA aircraft register from %s", url)
@@ -381,19 +331,13 @@ def download_registry(url: str) -> list[dict]:
     return rows
 
 
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
-
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write CASA data to aircraft:detail Redis keys. Returns count of records written."""
-    # Filter suspended records
     active_rows = [row for row in rows if row.get("suspendstatus", "").strip().lower() != "suspended"]
     suspended_count = len(rows) - len(active_rows)
     if suspended_count:
         logger.info("Filtered %d suspended records; %d active rows remain.", suspended_count, len(active_rows))
 
-    # Build {VH-XXX → row} mapping
     reg_row_map: dict[str, dict] = {}
     for row in active_rows:
         mark = row.get("Mark", "").strip()
@@ -424,8 +368,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     for registration, icao_hex in reg_icao_map.items():
         row = reg_row_map[registration]
 
-        # Type sanity check: reject false joins where registries share a mark
-        # for different aircraft.
         au_casa_model = row.get("Model", "").strip()
         simple_raw = r.json().get(aircraft_mictronics_key(icao_hex))
         if simple_raw is not None and not _type_check_passes(simple_raw, au_casa_model):
@@ -458,10 +400,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished writing %d records to Redis.", count)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -549,10 +487,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

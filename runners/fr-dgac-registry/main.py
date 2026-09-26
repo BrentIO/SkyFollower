@@ -2,17 +2,14 @@
 """
 SkyFollower France DGAC Data Runner
 
-Downloads the Direction Générale de l'Aviation Civile (DGAC) aircraft register
-CSV, groups rows by registration to handle co-ownership, looks up each F-
-registration in the Mictronics search index (idx:aircraft:mictronics)
-to find the ICAO hex, performs a type sanity check against the Mictronics
-record, then writes DGAC enrichment data to
-aircraft:registry:{icao_hex} (fire-and-forget, no read-before-write).
-Publishes MQTT completion stats then exits.
+Downloads the DGAC (Direction Générale de l'Aviation Civile) aircraft
+register CSV, groups rows by registration to handle co-ownership, resolves
+each F- registration to an ICAO hex via the Mictronics search index, checks
+the DGAC model string against the Mictronics record before writing, and
+writes enrichment to aircraft:registry:{icao_hex}.
 
-Important: the DGAC register does not publish ICAO hex (Mode S) addresses.
-This runner can only enrich records that already exist in Redis from Mictronics.
-Schedule it AFTER the Mictronics runner.
+The DGAC register has no ICAO hex of its own, so it can only enrich records
+Mictronics has already written — schedule this runner after Mictronics.
 
 Data source: https://immat.aviation-civile.gouv.fr/immat/servlet/static/upload/export.csv
 """
@@ -62,13 +59,8 @@ DOWNLOAD_URL = "https://immat.aviation-civile.gouv.fr/immat/servlet/static/uploa
 MQTT_ROOT = "SkyFollower/runner/fr-dgac-registry"
 BATCH_SIZE = 100
 
-# ---------------------------------------------------------------------------
-# Country decode tables (French names → ISO 3166-1 alpha-2)
-# Multi-word entries must be checked before single-word entries.
-# ---------------------------------------------------------------------------
-
-# Checked by suffix match against the end of the address string (uppercased).
-# Ordered longest-first within this list so more specific matches win.
+# French country name → ISO 3166-1 alpha-2, matched by suffix against the
+# uppercased address. Must be checked before _COUNTRY_SINGLE_WORD.
 _COUNTRY_MULTI_WORD: list[tuple[str, str]] = [
     ("ETATS UNIS D'AMERIQUE", "US"),
     ("ÉTATS-UNIS D'AMÉRIQUE", "US"),
@@ -123,20 +115,11 @@ _COUNTRY_SINGLE_WORD: dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Address parsing
-# ---------------------------------------------------------------------------
-
 def _parse_address(raw: str) -> tuple[Optional[list[str]], Optional[str], Optional[str], Optional[str]]:
-    """Parse ADRESSE_PROPRIETAIRE into (street, city, postal_code, country).
-
-    Algorithm:
-    1. Strip known French country name from the end (multi-word first).
-    2. If a 5-digit postal code is found, extract street/postal_code/city.
-    3. Fallback: record country only; skip street/city/postal_code.
-
-    Returns (street_lines, city, postal_code, country_iso).
-    """
+    """Parse ADRESSE_PROPRIETAIRE into (street, city, postal_code, country):
+    strip a trailing known French country name, then extract a 5-digit
+    postal code from what remains; falls back to country-only if no postal
+    code is found."""
     addr = raw.strip()
     if not addr:
         return None, None, None, None
@@ -145,21 +128,18 @@ def _parse_address(raw: str) -> tuple[Optional[list[str]], Optional[str], Option
     country_iso: Optional[str] = None
     remainder = addr
 
-    # Try multi-word country names first
     for french, iso in _COUNTRY_MULTI_WORD:
         if addr_upper.endswith(french.upper()):
             country_iso = iso
             remainder = addr[:len(addr) - len(french)].strip().rstrip(",").strip()
             break
 
-    # Try single-word country name
     if not country_iso:
         last_word = addr_upper.rsplit(None, 1)[-1]
         if last_word in _COUNTRY_SINGLE_WORD:
             country_iso = _COUNTRY_SINGLE_WORD[last_word]
             remainder = addr.rsplit(None, 1)[0].strip().rstrip(",").strip()
 
-    # Try to find 5-digit postal code in remainder
     m = re.search(r'^(.*?)\b(\d{5})\b\s*(.*?)\s*$', remainder)
     if m:
         street_raw = m.group(1).strip().rstrip(",").strip()
@@ -168,13 +148,8 @@ def _parse_address(raw: str) -> tuple[Optional[list[str]], Optional[str], Option
         street = [street_raw] if street_raw else None
         return street, city, postal_code, country_iso
 
-    # No postal code — record country only
     return None, None, None, country_iso
 
-
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
 
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
@@ -186,10 +161,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return ''.join(result)
 
-
-# ---------------------------------------------------------------------------
-# Type sanity check
-# ---------------------------------------------------------------------------
 
 _TYPE_TOKEN_RE = re.compile(r'[A-Z]{1,4}\d{2,4}')
 
@@ -218,10 +189,6 @@ def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
     return bool(simple_tokens & detail_tokens)
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(
     icao_hex: str,
     registration: str,
@@ -230,7 +197,6 @@ def _build_record(
     address_raw: Optional[str],
 ) -> dict:
     """Build the enrichment record from grouped DGAC rows."""
-    # aircraft sub-object
     aircraft_fields = {
         "manufacturer": first_row.get("CONSTRUCTEUR", "").strip() or None,
         "model": first_row.get("MODELE", "").strip() or None,
@@ -238,7 +204,6 @@ def _build_record(
     }
     aircraft = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 
-    # registrant sub-object
     registrant: Optional[dict] = None
     street, city, postal_code, country = _parse_address(address_raw or "")
     registrant_fields: dict = {}
@@ -263,10 +228,6 @@ def _build_record(
     return record
 
 
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
-
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
@@ -282,15 +243,8 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
-
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
-    """Batch-query Redis search index for icao_hex by registration mark.
-
-    Returns {registration → icao_hex} for registrations already in Redis.
-    """
+    """Batch-query Redis search index for icao_hex by registration mark."""
     reg_map: dict[str, str] = {}
     total_batches = (len(registrations) + BATCH_SIZE - 1) // BATCH_SIZE
 
@@ -319,10 +273,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
     return reg_map
 
 
-# ---------------------------------------------------------------------------
-# Download
-# ---------------------------------------------------------------------------
-
 def download_registry(url: str) -> list[dict]:
     """Download the DGAC aircraft register CSV and return rows as dicts."""
     logger.info("Downloading France DGAC aircraft register from %s", url)
@@ -336,10 +286,6 @@ def download_registry(url: str) -> list[dict]:
     logger.info("Parsed %d rows.", len(rows))
     return rows
 
-
-# ---------------------------------------------------------------------------
-# Group rows by registration (co-ownership)
-# ---------------------------------------------------------------------------
 
 def _group_by_registration(rows: list[dict]) -> dict[str, dict]:
     """Group co-ownership rows by IMMATRICULATION.
@@ -378,10 +324,6 @@ def _group_by_registration(rows: list[dict]) -> dict[str, dict]:
     return groups
 
 
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
-
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write DGAC enrichment records to aircraft:registry:{icao_hex}. Returns count written."""
     groups = _group_by_registration(rows)
@@ -408,7 +350,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         group = groups[registration]
         fr_dgac_model = group["first_row"].get("MODELE", "").strip()
 
-        # Type sanity check: compare DGAC model against the simple record.
         simple_raw = r.json().get(aircraft_mictronics_key(icao_hex))
         if simple_raw is not None and not _type_check_passes(simple_raw, fr_dgac_model):
             logger.debug("Type sanity check failed for %s (%s), skipping.", registration, fr_dgac_model)
@@ -440,10 +381,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished writing %d records to Redis.", count)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -531,10 +468,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

@@ -9,10 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -44,10 +40,6 @@ REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 _PAGE_URL = _mod._PAGE_URL
 
-
-# ---------------------------------------------------------------------------
-# HTML fixtures
-# ---------------------------------------------------------------------------
 
 _HEADER_1 = "<tr><th>-</th><th>Registreerimisnumber</th><th>-</th><th>-</th><th>Tüüp</th><th>Seerianumber</th><th>Omanik</th><th>Käitaja</th><th>-</th></tr>"
 _HEADER_2 = "<tr><th>-</th><th>Registration mark</th><th>-</th><th>-</th><th>Type of Aircraft</th><th>Serial number</th><th>Owner</th><th>Operator</th><th>-</th></tr>"
@@ -115,10 +107,6 @@ def _make_redis_no_match():
     r.ft.return_value.search.return_value = results
     return r
 
-
-# ---------------------------------------------------------------------------
-# Tests: download_and_parse
-# ---------------------------------------------------------------------------
 
 class TestDownloadAndParse:
     def test_raises_on_http_error(self):
@@ -211,10 +199,6 @@ class TestDownloadAndParse:
         assert download_and_parse(session) == []
 
 
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
-
 class TestBuildRecord:
     def test_full_record(self):
         row = _make_row()
@@ -253,10 +237,6 @@ class TestBuildRecord:
         assert record["source"] == "ee-transpordiamet-registry"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_hyphen_escaped(self):
         assert "\\-" in _escape_tag("ES-AAA")
@@ -264,10 +244,6 @@ class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("ABCD") == "ABCD"
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_record_written_when_found(self):
@@ -316,10 +292,6 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert "model" not in set_call[0][2]["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

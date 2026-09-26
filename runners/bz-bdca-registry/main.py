@@ -63,10 +63,6 @@ _CHARTERER_RE = re.compile(r'\s*\(Charterer by Demise\)\s*', re.IGNORECASE)
 _NULL_SERIAL = frozenset(["–", "-", ""])
 
 
-# ---------------------------------------------------------------------------
-# Download + parse
-# ---------------------------------------------------------------------------
-
 def download_and_parse(session: requests.Session) -> list[dict]:
     """Fetch the Belize BDCA register page and parse the HTML table."""
     logger.info("Downloading Belize BDCA civil aircraft register from %s", REGISTER_URL)
@@ -76,8 +72,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
     soup = BeautifulSoup(resp.text, "lxml")
 
-    # The page contains several navigation tables before the register table.
-    # Find the one whose first row contains "Registration Number".
+    # Page has several navigation tables before the register table; match by header text.
     table = None
     for candidate in soup.find_all("table"):
         first_row = candidate.find("tr")
@@ -92,7 +87,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     if not rows:
         raise RuntimeError("Register table on Belize BDCA register page is empty.")
 
-    # Extract header names from first row
     header_cells = rows[0].find_all(["th", "td"])
     headers = [cell.get_text(strip=True) for cell in header_cells]
     logger.debug("Headers: %s", headers)
@@ -109,10 +103,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     logger.info("Parsed %d rows from register.", len(records))
     return records
 
-
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
 
 def _clean_owner(raw: str) -> str:
     """Strip '(Charterer by Demise)' qualifier from owner name."""
@@ -165,10 +155,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -179,10 +165,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return ''.join(result)
 
-
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
@@ -198,10 +180,6 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         )
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
     """Batch-query Redis simple search index for icao_hex by registration mark."""
@@ -229,10 +207,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
     return reg_map
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Belize BDCA data to aircraft:detail keys in Redis. Returns count written."""
@@ -286,10 +260,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished: %d written, %d errors.", count, errors)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -375,10 +345,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

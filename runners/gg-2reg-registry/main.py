@@ -3,10 +3,9 @@
 SkyFollower Guernsey (2-reg) Data Runner
 
 Discovers the current aircraft register PDF from the 2-reg index page, parses
-main-register pages (skipping the special sections at the end), looks up each
-2-prefix registration in the Redis simple search index to find the ICAO hex
-(provided by Mictronics), writes enrichment data to aircraft:registry:{icao_hex},
-publishes MQTT completion stats, then exits.
+main-register pages (skipping special sections at the end), resolves each
+2-prefix registration to an ICAO hex via the Redis Mictronics search index,
+and writes enrichment to aircraft:registry:{icao_hex}.
 
 PDF column layout (all pages; determined from word x-positions):
   x <  126 → Registration          (2-prefix; lookup key)
@@ -90,10 +89,6 @@ _SKIP_PREFIXES = (
 _PRIVATE_PLACEHOLDERS = {"(PRIVATE)", "PRIVATE"}
 
 
-# ---------------------------------------------------------------------------
-# PDF word → column assignment
-# ---------------------------------------------------------------------------
-
 def _col_index(x0: float) -> int:
     """Return 0-based column index for a word at horizontal position x0."""
     for i, threshold in enumerate(_COL_THRESHOLDS):
@@ -109,10 +104,6 @@ def _words_to_cols(words: list[dict]) -> list[str]:
         cols[_col_index(w["x0"])].append(w["text"])
     return [" ".join(c) for c in cols]
 
-
-# ---------------------------------------------------------------------------
-# Download + parse
-# ---------------------------------------------------------------------------
 
 def _find_pdf_url(session: requests.Session) -> str:
     """Scrape the 2-reg index page and return the URL of the current register PDF."""
@@ -170,10 +161,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     return records
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build detail enrichment record from a parsed PDF row."""
     aircraft_fields: dict = {}
@@ -210,10 +197,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -224,10 +207,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return "".join(result)
 
-
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
@@ -243,10 +222,6 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         )
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
     """Batch-query Redis simple search index for icao_hex by registration mark."""
@@ -272,10 +247,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
     return reg_map
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Guernsey 2-reg data to aircraft:detail keys in Redis. Returns count written."""
@@ -331,10 +302,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished: %d written, %d errors.", count, errors)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -420,10 +387,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

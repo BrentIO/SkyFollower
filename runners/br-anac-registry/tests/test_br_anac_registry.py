@@ -23,10 +23,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import helper
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -63,10 +59,6 @@ REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 def _make_row(
     marca="PPAJH",
     dtcanc=None,
@@ -94,10 +86,6 @@ def _make_row(
         "PROPRIETARIOSJSON": proprietariosjson,
     }
 
-
-# ---------------------------------------------------------------------------
-# Tests: _is_active
-# ---------------------------------------------------------------------------
 
 class TestIsActive:
     def test_normal_record_is_active(self):
@@ -140,10 +128,6 @@ class TestIsActive:
         assert _is_active(_make_row(dtcanc=None)) is True
 
 
-# ---------------------------------------------------------------------------
-# Tests: _format_registration
-# ---------------------------------------------------------------------------
-
 class TestFormatRegistration:
     def test_inserts_hyphen_after_position_2(self):
         assert _format_registration("PPAJH") == "PP-AJH"
@@ -172,10 +156,6 @@ class TestFormatRegistration:
     def test_empty_returns_none(self):
         assert _format_registration("") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _decode_cdcls
-# ---------------------------------------------------------------------------
 
 class TestDecodeCdcls:
     def test_l1p_airplane_piston(self):
@@ -257,10 +237,6 @@ class TestDecodeCdcls:
         assert etype == "Piston"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _parse_year
-# ---------------------------------------------------------------------------
-
 class TestParseYear:
     def test_valid_year(self):
         assert _parse_year("1980") == "1980-01-01T00:00:00Z"
@@ -278,10 +254,6 @@ class TestParseYear:
         assert _parse_year("198") is None
 
 
-# ---------------------------------------------------------------------------
-# Tests: _parse_seats
-# ---------------------------------------------------------------------------
-
 class TestParseSeats:
     def test_valid_integer(self):
         assert _parse_seats("4") == 4
@@ -295,10 +267,6 @@ class TestParseSeats:
     def test_non_numeric_returns_none(self):
         assert _parse_seats("N/A") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _parse_proprietarios
-# ---------------------------------------------------------------------------
 
 class TestParseProprietarios:
     def _encode(self, owners: list) -> str:
@@ -338,10 +306,6 @@ class TestParseProprietarios:
         raw = self._encode([{"NOME": "  João Silva  "}])
         assert _parse_proprietarios(raw) == "João Silva"
 
-
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
 
 class TestBuildRecord:
     def test_top_level_fields(self):
@@ -433,10 +397,6 @@ class TestBuildRecord:
         assert "category" not in record.get("aircraft", {})
 
 
-# ---------------------------------------------------------------------------
-# Tests: _apply_type_lookup
-# ---------------------------------------------------------------------------
-
 class TestApplyTypeLookup:
     def _make_redis(self, type_doc=None) -> MagicMock:
         r = MagicMock()
@@ -499,10 +459,6 @@ class TestApplyTypeLookup:
         _apply_type_lookup(record, r)
         assert "manufacturer_model" not in record["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def _make_redis(self, simple_record: dict = None, type_doc: dict = None, icao_hex: str = "E491A0") -> MagicMock:
@@ -621,10 +577,6 @@ class TestWriteToRedis:
         written = r.json.return_value.set.call_args.args[2]
         assert "registrant" not in written
 
-
-# ---------------------------------------------------------------------------
-# Tests: MQTT completion stats (mocked)
-# ---------------------------------------------------------------------------
 
 class TestMqttCompletionStats:
     def _setup_mock_client(self):

@@ -9,10 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -52,10 +48,6 @@ REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 DOWNLOAD_URL = _mod.DOWNLOAD_URL
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 def _make_row(
     mark="ABC",
@@ -107,17 +99,9 @@ def _make_redis():
 
 
 def _make_redis_with_search(icao_hex="7C1234", registration="VH-ABC", simple_record=None, type_doc=None):
-    """Mock Redis client that resolves one registration via the Mictronics search index.
-
-    ``simple_record`` is what ``r.json().get(...)`` returns for the
-    aircraft:mictronics key used by the type sanity check. ``None`` (the
-    default) simulates the key not existing, which does NOT block the write.
-
-    ``type_doc`` is what ``r.json().get(...)`` returns for the aircraft:type
-    key used by ``_apply_type_lookup``. Kept distinct from ``simple_record``
-    via a key-aware side_effect, since both go through the same
-    ``r.json().get(...)`` call shape but query different keys.
-    """
+    """Mock Redis that resolves one registration via search, and routes
+    r.json().get(...) by key so the mictronics (type check) and aircraft:type
+    (_apply_type_lookup) lookups can return different values."""
     r = _make_redis()
     doc = MagicMock()
     doc.id = f"aircraft:mictronics:{icao_hex}"
@@ -143,10 +127,6 @@ def _make_redis_no_match():
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: _decode_aircraft_type
-# ---------------------------------------------------------------------------
-
 class TestDecodeAircraftType:
     def test_power_driven_aeroplane_maps_to_airplane(self):
         assert _decode_aircraft_type("Power Driven Aeroplane") == "Airplane"
@@ -163,10 +143,6 @@ class TestDecodeAircraftType:
     def test_empty_returns_none(self):
         assert _decode_aircraft_type("") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _decode_engine_type
-# ---------------------------------------------------------------------------
 
 class TestDecodeEngineType:
     def test_piston_maps_to_piston(self):
@@ -185,10 +161,6 @@ class TestDecodeEngineType:
         assert _decode_engine_type("") is None
 
 
-# ---------------------------------------------------------------------------
-# Tests: _decode_country
-# ---------------------------------------------------------------------------
-
 class TestDecodeCountry:
     def test_australia_maps_to_au(self):
         assert _decode_country("Australia") == "AU"
@@ -203,10 +175,6 @@ class TestDecodeCountry:
         assert _decode_country("") is None
 
 
-# ---------------------------------------------------------------------------
-# Tests: _parse_manufactured_date
-# ---------------------------------------------------------------------------
-
 class TestParseManufacturedDate:
     def test_valid_year(self):
         assert _parse_manufactured_date("2010") == "2010-01-01T00:00:00Z"
@@ -217,10 +185,6 @@ class TestParseManufacturedDate:
     def test_invalid_returns_none(self):
         assert _parse_manufactured_date("unknown") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _parse_int
-# ---------------------------------------------------------------------------
 
 class TestParseInt:
     def test_valid_int(self):
@@ -235,10 +199,6 @@ class TestParseInt:
     def test_invalid_returns_none(self):
         assert _parse_int("abc") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _type_tokens / _type_check_passes
-# ---------------------------------------------------------------------------
 
 class TestTypeCheckPasses:
     def test_empty_detail_model_always_passes(self):
@@ -256,10 +216,6 @@ class TestTypeCheckPasses:
         assert _type_check_passes(simple, "LEONARDO AW139") is False
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("VHABC") == "VHABC"
@@ -270,10 +226,6 @@ class TestEscapeTag:
     def test_empty_string(self):
         assert _escape_tag("") == ""
 
-
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
 
 class TestBuildRecord:
     def test_full_record(self):
@@ -343,10 +295,6 @@ class TestBuildRecord:
         assert "serial_number" not in record.get("aircraft", {})
 
 
-# ---------------------------------------------------------------------------
-# Tests: _apply_type_lookup
-# ---------------------------------------------------------------------------
-
 class TestApplyTypeLookup:
     def _make_redis(self, type_doc=None) -> MagicMock:
         r = MagicMock()
@@ -410,10 +358,6 @@ class TestApplyTypeLookup:
         assert "manufacturer_model" not in record["aircraft"]
 
 
-# ---------------------------------------------------------------------------
-# Tests: download_registry
-# ---------------------------------------------------------------------------
-
 class TestDownloadRegistry:
     def test_parses_rows(self):
         with patch("au_casa_registry_main.requests.get") as mock_get:
@@ -436,10 +380,6 @@ class TestDownloadRegistry:
             with pytest.raises(RuntimeError, match="HTTP 503"):
                 download_registry(DOWNLOAD_URL)
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_record_written_when_found_in_redis(self):
@@ -533,10 +473,6 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert set_call[0][2]["registration"] == "VH-ABC"
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

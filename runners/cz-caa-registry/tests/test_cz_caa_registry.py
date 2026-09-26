@@ -10,10 +10,6 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 import requests
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -52,10 +48,6 @@ MQTT_ROOT = _mod.MQTT_ROOT
 _LIST_URL = _mod._LIST_URL
 _DETAIL_URL = _mod._DETAIL_URL
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 def _make_response(json_data=None, status_code=200):
     resp = MagicMock()
@@ -136,10 +128,6 @@ def _make_redis():
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: _fetch_active_ids
-# ---------------------------------------------------------------------------
-
 class TestFetchActiveIds:
     def test_filters_deleted_records(self):
         session = MagicMock()
@@ -188,10 +176,6 @@ class TestFetchActiveIds:
         ])
         assert _fetch_active_ids(session) == []
 
-
-# ---------------------------------------------------------------------------
-# Tests: _fetch_detail
-# ---------------------------------------------------------------------------
 
 class TestFetchDetail:
     def test_returns_json_on_success(self):
@@ -301,10 +285,6 @@ class TestFetchDetail:
         assert mock_sleep.call_args_list[1] == call(2)
 
 
-# ---------------------------------------------------------------------------
-# Tests: _first_display_name
-# ---------------------------------------------------------------------------
-
 class TestFirstDisplayName:
     def test_returns_first_entry(self):
         assert _first_display_name([{"display_name": "Alice"}, {"display_name": "Bob"}]) == "Alice"
@@ -341,10 +321,6 @@ class TestAllDisplayNames:
         entries = [{"display_name": "  John  Doe  "}]
         assert _all_display_names(entries) == ["John Doe"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: download_and_parse
-# ---------------------------------------------------------------------------
 
 class TestDownloadAndParse:
     def _session_with(self, list_records, detail_responses):
@@ -485,10 +461,6 @@ class TestDownloadAndParse:
         mock_sleep.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
-
 class TestBuildRecord:
     def test_full_record(self):
         row = _make_row()
@@ -622,10 +594,6 @@ class TestBuildRecord:
         assert "description_code" not in record["aircraft"]
 
 
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
-
 class TestWriteToRedis:
     def test_writes_record(self):
         r = _make_redis()
@@ -664,10 +632,6 @@ class TestWriteToRedis:
         assert "model" not in written["aircraft"]
         assert "seats" not in written["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: apply_type_designator_consensus (#1888)
-# ---------------------------------------------------------------------------
 
 def _make_consensus_redis(mictronics_docs_by_hex: dict, type_docs_by_designator: dict):
     r = MagicMock()
@@ -749,10 +713,6 @@ class TestApplyTypeDesignatorConsensus:
         apply_type_designator_consensus(rows, r)
         assert "type_designator" not in rows[0]
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

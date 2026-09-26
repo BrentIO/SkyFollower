@@ -11,10 +11,6 @@ from unittest.mock import MagicMock, patch
 import openpyxl
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -47,10 +43,6 @@ write_to_redis = _mod.write_to_redis
 _INDEX_URL = _mod._INDEX_URL
 publish_completion_stats = _mod.publish_completion_stats
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _make_row(
     registration="LZ-ABC",
@@ -109,10 +101,6 @@ def _make_session(index_content=_INDEX_HTML, xlsx_bytes=None, index_status=200, 
     return session
 
 
-# ---------------------------------------------------------------------------
-# _clean
-# ---------------------------------------------------------------------------
-
 
 class TestClean:
     def test_strips_whitespace(self):
@@ -131,10 +119,6 @@ class TestClean:
         assert _clean(46192.0) == "46192.0"
 
 
-# ---------------------------------------------------------------------------
-# _escape_tag
-# ---------------------------------------------------------------------------
-
 
 class TestEscapeTag:
     def test_plain_unchanged(self):
@@ -143,10 +127,6 @@ class TestEscapeTag:
     def test_hyphen_escaped(self):
         assert _escape_tag("LZ-ABC") == r"LZ\-ABC"
 
-
-# ---------------------------------------------------------------------------
-# _discover_xlsx_url
-# ---------------------------------------------------------------------------
 
 
 class TestDiscoverXlsxUrl:
@@ -188,10 +168,6 @@ class TestDiscoverXlsxUrl:
         with pytest.raises(RuntimeError, match="No Aircraft_Register xlsx link found"):
             _discover_xlsx_url(session)
 
-
-# ---------------------------------------------------------------------------
-# download_and_parse
-# ---------------------------------------------------------------------------
 
 
 class TestDownloadAndParse:
@@ -277,10 +253,6 @@ class TestDownloadAndParse:
         assert rows[0]["serial"] == "12345"
 
 
-# ---------------------------------------------------------------------------
-# _build_record
-# ---------------------------------------------------------------------------
-
 
 class TestBuildRecord:
     def test_basic_fields(self):
@@ -356,10 +328,6 @@ class TestBuildRecord:
         assert "registrant" not in record
 
 
-# ---------------------------------------------------------------------------
-# _build_registration_map
-# ---------------------------------------------------------------------------
-
 
 class TestBuildRegistrationMap:
     def _make_redis(self, docs):
@@ -402,10 +370,6 @@ class TestBuildRegistrationMap:
         _build_registration_map(regs, r)
         assert r.ft.return_value.search.call_count == 2
 
-
-# ---------------------------------------------------------------------------
-# write_to_redis
-# ---------------------------------------------------------------------------
 
 
 class TestWriteToRedis:
@@ -470,10 +434,6 @@ class TestWriteToRedis:
         assert "model" not in written["aircraft"]
         assert "type" not in written["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# publish_completion_stats
-# ---------------------------------------------------------------------------
 
 
 class TestPublishCompletionStats:

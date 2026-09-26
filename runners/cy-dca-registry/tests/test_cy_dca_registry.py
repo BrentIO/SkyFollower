@@ -9,10 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -45,10 +41,6 @@ write_to_redis = _mod.write_to_redis
 _PDF_URL = _mod._PDF_URL
 publish_completion_stats = _mod.publish_completion_stats
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _make_row(
     registration="5B-ABC",
@@ -77,10 +69,6 @@ def _make_pdf_table(rows=None):
     return rows
 
 
-# ---------------------------------------------------------------------------
-# _clean
-# ---------------------------------------------------------------------------
-
 
 class TestClean:
     def test_strips_leading_trailing_whitespace(self):
@@ -98,10 +86,6 @@ class TestClean:
     def test_newlines_collapsed(self):
         assert _clean("hello\nworld") == "hello world"
 
-
-# ---------------------------------------------------------------------------
-# _clean_owner_part
-# ---------------------------------------------------------------------------
 
 
 class TestCleanOwnerPart:
@@ -130,10 +114,6 @@ class TestCleanOwnerPart:
         assert _clean_owner_part(None) == ""
 
 
-# ---------------------------------------------------------------------------
-# _escape_tag
-# ---------------------------------------------------------------------------
-
 
 class TestEscapeTag:
     def test_plain_registration_unchanged(self):
@@ -147,10 +127,6 @@ class TestEscapeTag:
         result = _escape_tag("A.B-C")
         assert result == r"A\.B\-C"
 
-
-# ---------------------------------------------------------------------------
-# download_and_parse
-# ---------------------------------------------------------------------------
 
 
 class TestDownloadAndParse:
@@ -258,10 +234,6 @@ class TestDownloadAndParse:
         mock_logger.info.assert_any_call("Parsed %d 5B- records.", 2)
 
 
-# ---------------------------------------------------------------------------
-# _build_record
-# ---------------------------------------------------------------------------
-
 
 class TestBuildRecord:
     def test_basic_fields(self):
@@ -356,10 +328,6 @@ class TestBuildRecord:
         assert record["source"] == "cy-dca-registry"
 
 
-# ---------------------------------------------------------------------------
-# _build_registration_map
-# ---------------------------------------------------------------------------
-
 
 class TestBuildRegistrationMap:
     def _make_redis(self, docs):
@@ -402,10 +370,6 @@ class TestBuildRegistrationMap:
         _build_registration_map(regs, r)
         assert r.ft.return_value.search.call_count == 2  # ceil(150/100) = 2
 
-
-# ---------------------------------------------------------------------------
-# write_to_redis
-# ---------------------------------------------------------------------------
 
 
 class TestWriteToRedis:
@@ -485,10 +449,6 @@ class TestWriteToRedis:
         assert "serial_number" not in written["aircraft"]
         assert "registrant" not in written
 
-
-# ---------------------------------------------------------------------------
-# publish_completion_stats
-# ---------------------------------------------------------------------------
 
 
 class TestPublishCompletionStats:

@@ -91,10 +91,6 @@ _ENGINE_TYPE_MAP = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Download + parse
-# ---------------------------------------------------------------------------
-
 def _fetch_active_ids(session: requests.Session) -> list[int]:
     """Fetch the aircraft list and return IDs of active (non-deleted) records."""
     logger.info("Downloading Czech CAA aircraft list from %s", _LIST_URL)
@@ -207,10 +203,6 @@ def _all_display_names(entries) -> list[str]:
     return names
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(row: dict) -> dict:
     """Build a Redis detail record from a parsed row."""
     icao_hex = row["icao_hex"]
@@ -229,10 +221,8 @@ def _build_record(row: dict) -> dict:
     if model:
         aircraft_fields["model"] = model
 
-    # Deduced ICAO type designator (#1888) -- set by main() before this
-    # record is built, when the registry's own manufacturer/model matched
-    # a qualifying consensus group. Not present on rows main() didn't
-    # attempt deduction for (no mictronics/consensus module involved here).
+    # Filled in by apply_type_designator_consensus() before this record is
+    # built; absent when no consensus group qualified for this row.
     type_designator = (row.get("type_designator") or "").strip()
     if type_designator:
         aircraft_fields["type_designator"] = type_designator
@@ -284,18 +274,12 @@ def _build_record(row: dict) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# Type-designator consensus (#1888)
-# ---------------------------------------------------------------------------
-
 def apply_type_designator_consensus(rows: list[dict], r: redis_lib.Redis) -> None:
-    """Mutate `rows` in place: this register writes manufacturer/model but
-    never an ICAO type_designator. Hexes Mictronics already labels are free
-    training data -- for each row whose hex Mictronics has no designator
-    for, fill in a consensus-deduced type_designator/description_code when
-    one qualifies (>= 3 labelled examples, >= 90% agreement). Requires every
-    row up front, since the consensus groups aren't known until all of this
-    run's rows are in hand. See shared/type_designator_consensus.py."""
+    """Mutate `rows` in place: this register has no ICAO type_designator of
+    its own, so for each row whose hex Mictronics hasn't already labelled,
+    fill in a consensus-deduced type_designator/description_code when one
+    qualifies (>= 3 examples, >= 90% agreement). Needs every row up front,
+    since consensus groups aren't known until all rows are in hand."""
     mictronics_designators = fetch_mictronics_type_designators(r, (row["icao_hex"] for row in rows))
     consensus_table = build_consensus_table(
         (row.get("manufacturer"), row.get("model"), mictronics_designators.get(row["icao_hex"]))
@@ -321,10 +305,6 @@ def apply_type_designator_consensus(rows: list[dict], r: redis_lib.Redis) -> Non
                     row["description_code"] = description_code
 
 
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
-
 def write_to_redis(row: dict, r: redis_lib.Redis, ttl: int) -> bool:
     """Write a single Czech CAA record to Redis. Returns True on success."""
     icao_hex = row.get("icao_hex", "").strip()
@@ -340,10 +320,6 @@ def write_to_redis(row: dict, r: redis_lib.Redis, ttl: int) -> bool:
         logger.warning("Redis write failed for %s: %s", icao_hex, exc)
         return False
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -429,10 +405,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

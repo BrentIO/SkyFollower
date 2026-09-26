@@ -9,10 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -46,10 +42,6 @@ MQTT_ROOT = _mod.MQTT_ROOT
 SOURCE_URL = _mod.SOURCE_URL
 TABLE_ID = _mod.TABLE_ID
 
-
-# ---------------------------------------------------------------------------
-# Fixtures / helpers
-# ---------------------------------------------------------------------------
 
 def _make_page(rows: list[tuple[str, str, str, str, str]]) -> str:
     """Build a minimal TablePress-shaped HTML page from (country, airline,
@@ -103,10 +95,6 @@ def _make_redis_no_match():
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: _derive_special_livery
-# ---------------------------------------------------------------------------
-
 class TestDeriveSpecialLivery:
     def test_simple_no_annotation(self):
         assert _derive_special_livery("SkyTeam") == "SkyTeam"
@@ -132,8 +120,7 @@ class TestDeriveSpecialLivery:
         ) == "2026 NZ v SA rugby tour"
 
     def test_slash_inside_sticker_annotation_not_treated_as_separator(self):
-        # Real row (FedEx): the annotation itself contains a "/" — must not
-        # be misread as an extra compound-description segment.
+        # Real row (FedEx): annotation itself contains a "/".
         assert _derive_special_livery(
             "FedEx founder F W Smith (sticker; underside/belly)"
         ) == "FedEx founder F W Smith"
@@ -154,10 +141,6 @@ class TestDeriveSpecialLivery:
         assert _derive_special_livery("Foo   Bar") == "Foo Bar"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
-
 class TestBuildRecord:
     def test_record_shape(self):
         record = _build_record("AA7C64", "N775JB", "America250")
@@ -169,10 +152,6 @@ class TestBuildRecord:
         }
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("N775JB") == "N775JB"
@@ -180,10 +159,6 @@ class TestEscapeTag:
     def test_hyphen_escaped(self):
         assert "\\-" in _escape_tag("LX-VCC")
 
-
-# ---------------------------------------------------------------------------
-# Tests: download_and_parse
-# ---------------------------------------------------------------------------
 
 class TestDownloadAndParse:
     def test_parses_rows(self):
@@ -225,10 +200,6 @@ class TestDownloadAndParse:
         assert len(rows) == 1
         assert rows[0]["registration"] == "N775JB"
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_matched_record_written(self):
@@ -297,10 +268,6 @@ class TestWriteToRedis:
         count = write_to_redis([], r, REDIS_TTL)
         assert count == 0
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):
