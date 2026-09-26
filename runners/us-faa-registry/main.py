@@ -485,11 +485,10 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     rows = cur.fetchall()
     logger.info("Writing %d registration records to Redis.", len(rows))
 
-    # Type-designator consensus (#1888): FAA writes manufacturer/model but
-    # never an ICAO type_designator. Hexes Mictronics already labels are
-    # free training data -- group by normalized (manufacturer, model) and
-    # apply the majority Mictronics designator to that group's other,
-    # unlabelled tails. See shared/type_designator_consensus.py.
+    # FAA writes manufacturer/model but never an ICAO type_designator;
+    # group by normalized (manufacturer, model) and apply the majority
+    # Mictronics designator to that group's other unlabelled tails.
+    # See shared/type_designator_consensus.py.
     mictronics_designators = fetch_mictronics_type_designators(r, (row["icao_hex"] for row in rows))
     consensus_table = build_consensus_table(
         (row["manufacturer"], row["model"], mictronics_designators.get(row["icao_hex"]))

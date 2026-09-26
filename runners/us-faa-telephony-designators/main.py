@@ -2,60 +2,29 @@
 """
 SkyFollower US FAA Telephony Designators Data Runner
 
-Backfills operator:{designator} records (operator/airline name, country,
-radio telephony callsign) for designators FAA Order 7340.2 assigns that
-Mictronics' operators.json does not cover -- e.g. KM Malta Airlines (KMM),
-AJet (TKJ), Bermudair (BMA), or a purely US special-use callsign like NASA
-or FEMA. Mictronics stays the primary/preferred source (better name
-capitalization, actively maintained); this runner only ever fills a gap,
-never corrects or overrides an existing entry.
+Backfills operator:{designator} records (name, country, radio telephony
+callsign) for designators FAA Order 7340.2 assigns that Mictronics'
+operators.json misses (e.g. KMM, TKJ, BMA, or a US-only callsign like NASA
+or FEMA). Additive-only: writes use Redis JSON.SET's NX option, so this
+runner never overwrites an existing entry. Schedule after mictronics, which
+overwrites unconditionally and so always wins if it later covers the same
+designator.
 
-Two independent FAA sources, both a single fixed-URL HTML page (no
-discovery step, no pagination):
+Parses two fixed-URL FAA HTML pages (no discovery, no pagination):
 
-  Section 3 -- "Three-Letter Designator/Aircraft Company/Telephony
-  Decode": the standard ICAO 3-letter airline company designator table.
-  The page paginates this table into ~26 separate <table> elements (same
-  repeated header row), not one -- every matching table must be parsed and
-  combined, not just the first found.
+  Section 3 -- the ICAO 3-letter designator table, paginated across ~26
+  <table> elements with a repeated header row; every matching table must
+  be parsed and combined, not just the first.
 
-  Section 4 -- "U.S. Special Telephony/Call Signs": government/agency/
-  special-use callsigns. The "Identifier" column (the actual callsign
-  prefix a flight files under) is NOT always 3 letters (e.g. ARSIX, NASA,
-  FEMA) -- message-processor's _enrich_operator() already extracts the
-  ident prefix as "letters before the first digit" with no fixed-length
-  assumption, so this needs no downstream change. Not a column on this
-  table: country -- every entry is by definition US-issued, so it's
-  defaulted to "United States" here. Some rows carry a real Expiration
-  Date; a row whose expiration has already passed is skipped at runtime
-  (checked against the actual date each run, not a hardcoded cutoff).
+  Section 4 -- US special-use callsigns. The Identifier column is not
+  always 3 letters (e.g. ARSIX, NASA, FEMA); there is no country column
+  (defaulted to "United States" here); rows past their Expiration Date are
+  skipped.
 
-Additive-only, enforced by Redis itself: every write uses
-shared.redis_json.set_json(..., nx=True), i.e. Redis JSON.SET's native NX
-option -- "set only if the key does not already exist" as a single atomic
-command, not a check-then-set race. This runner never updates or removes
-an existing operator:{designator} record, regardless of which runner (or
-a prior run of this one) wrote it. Schedule this runner AFTER mictronics
-(same dependency convention as bz-bdca-registry/is-samgongustofa-registry)
--- correctness falls out of ordering, not a merge script: mictronics
-already overwrites operator:{designator} unconditionally on every run, so
-if it ever gains a designator this runner backfilled, mictronics' own
-next scheduled run simply replaces it.
-
-Uses the standard ENRICHMENT_TTL_SECONDS (14 days), same as every other
-enrichment key -- but refreshed independently of the NX content write.
-Content is written at most once ever (NX skips every run after the
-first), so if the TTL were only ever set at write time, it would expire
-and the record would vanish from Redis between runs, then reappear on
-the next run -- a real, avoidable gap. Instead, every designator this
-runner processes -- written or not, including ones it never wrote the
-content of (e.g. an existing mictronics-sourced entry) -- gets its TTL
-refreshed on every run. This makes the runner a second, independent
-keep-alive heartbeat for the whole operator:{designator} keyspace: a
-record only expires if every runner that touches its key stops running
-for 14 days, the same failure mode every other enrichment key already
-has, rather than a no-TTL design's single point of failure (a bad/wrong
-designator staying in Redis forever with nothing to ever clear it).
+TTL (ENRICHMENT_TTL_SECONDS) is refreshed on every designator this runner
+processes, on every run, independent of whether the NX write actually
+happened -- since content is written at most once, a write-time-only TTL
+would let the record expire and vanish between runs.
 
 Data sources:
   https://www.faa.gov/air_traffic/publications/atpubs/cnt_html/chap3_section_3.html
@@ -238,23 +207,9 @@ def build_record(row: dict, *, default_country: Optional[str] = None) -> dict:
 # ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis) -> int:
-    """Write operator:{designator} for every row, only when that key does
-    not already exist -- content is strictly additive, per the module
-    docstring. The TTL is a separate concern from the content write: this
-    runner refreshes ENRICHMENT_TTL_SECONDS on every designator it
-    processes, on every run, regardless of whether the NX write above
-    actually happened -- including designators this runner has never
-    written the content of (e.g. an existing mictronics-sourced entry).
-    That makes this runner a second, independent keep-alive heartbeat for
-    the whole operator:{designator} keyspace, not just for its own
-    backfilled entries -- a designator's TTL clock only ever stops
-    getting refreshed if BOTH mictronics and this runner stop running,
-    same failure mode as every other enrichment key, rather than the
-    single-point-of-failure a no-TTL design would otherwise trade for.
-
-    Returns the count of designators actually newly written (not the
-    count attempted -- a row whose key already existed doesn't count,
-    even though its TTL was still refreshed)."""
+    """Write operator:{designator} for each row via NX (skips existing keys),
+    refreshing TTL on every row regardless of whether the write happened.
+    Returns the count actually written, not the count attempted."""
     written = 0
     skipped_existing = 0
     for row in rows:

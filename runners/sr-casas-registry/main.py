@@ -14,12 +14,10 @@ Xlsx columns (named header row 0; data from row 1):
   MAKE                                → aircraft.manufacturer
   MODEL                               → aircraft.model (+ SERIES appended if present)
   SERIES                              → appended to aircraft.model; may be absent
-  MANUFACTURER                        (not stored -- licensed-builder detail,
-                                       distinct from MAKE for ~half of rows,
-                                       e.g. Grumman G164 built by Schweizer;
-                                       AircraftRecord has only one
-                                       manufacturer field, so MAKE -- the
-                                       type's brand -- wins)
+  MANUFACTURER                        (not stored -- licensed-builder detail
+                                       distinct from MAKE, e.g. Grumman G164
+                                       built by Schweizer; AircraftRecord has
+                                       only one manufacturer field, so MAKE wins)
   SERIAL_NUMBER                       → aircraft.serial_number (mixed int/str
                                        in source, cast to str)
   NATIONALITY MARK OR COMMON MARK     → registration prefix (always "PZ" seen,
@@ -28,16 +26,9 @@ Xlsx columns (named header row 0; data from row 1):
                                        with the nationality mark as the
                                        lookup key, e.g. "PZ" + "UBD" → "PZ-UBD"
   OWNER_NAME                          → registrant.names
-  OPERATOR (*)                        (not stored -- matches the established
-                                       convention across every other runner
-                                       in this repo with both an owner and an
-                                       operator column, e.g. lu-dac-registry,
-                                       sk-nsat-registry: only owner becomes
-                                       registrant.names, operator is present
-                                       in source but intentionally not read.
-                                       No runner in this codebase writes
-                                       AircraftRecord's top-level `operator`
-                                       field)
+  OPERATOR (*)                        (not stored -- only owner becomes
+                                       registrant.names, per this repo's
+                                       convention for owner+operator sources)
 
 Data source: https://www.casas.sr/registry/
 """

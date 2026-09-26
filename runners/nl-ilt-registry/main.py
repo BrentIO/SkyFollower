@@ -258,16 +258,10 @@ def _build_record(row: dict) -> Optional[dict]:
 
 
 def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
-    """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
-    and set aircraft.manufacturer_model and aircraft.description_code when found.
-
-    Unconditional: this runner's own type_designator is sourced directly from the
-    ILT register and is authoritative, so the lookup happens regardless of whether
-    Mictronics also has data for the same hex — merge_aircraft.lua's "registry wins
-    over mictronics" precedence rule already guarantees this value takes priority at
-    read time. The reference table is not a hard dependency: a lookup failure or a
-    missing entry leaves the record exactly as _build_record produced it.
-    """
+    """Fill aircraft.manufacturer_model/description_code from aircraft:type:{type_designator}
+    when found. Runs unconditionally since this runner's type_designator is
+    authoritative regardless of Mictronics data; a failed or missing lookup leaves
+    the record unchanged."""
     aircraft = record.get("aircraft")
     if not aircraft:
         return

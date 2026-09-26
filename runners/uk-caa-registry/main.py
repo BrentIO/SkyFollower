@@ -221,10 +221,8 @@ def _build_record(details: dict) -> Optional[dict]:
 
     aircraft: Optional[dict] = {k: v for k, v in aircraft_fields.items() if v is not None} or None
 
-    # registrant sub-object — use first registered owner. The details payload
-    # also includes AircraftOperatedByAocHolder (the commercial operator flying
-    # under an Air Operator Certificate, which can differ from the owner) —
-    # intentionally not captured; only the registered owner is tracked.
+    # Uses the first registered owner only; AircraftOperatedByAocHolder (the
+    # commercial AOC operator, which can differ from the owner) is not captured.
     owners = details.get("RegisteredAircraftOwners") or []
     registrant: Optional[dict] = None
     if owners:
@@ -253,16 +251,10 @@ def _build_record(details: dict) -> Optional[dict]:
 
 
 def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
-    """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
-    and set aircraft.manufacturer_model and aircraft.description_code when found.
-
-    Unconditional: this runner's own type_designator is sourced directly from the
-    CAA and is authoritative, so the lookup happens regardless of whether Mictronics
-    also has data for the same hex — merge_aircraft.lua's "registry wins over
-    mictronics" precedence rule already guarantees this value takes priority at read
-    time. The reference table is not a hard dependency: a lookup failure or a missing
-    entry leaves the record exactly as _build_record produced it.
-    """
+    """Fill aircraft.manufacturer_model/description_code from aircraft:type:{type_designator}
+    when found. Runs unconditionally since this runner's type_designator is
+    authoritative regardless of Mictronics data; a failed or missing lookup leaves
+    the record unchanged."""
     aircraft = record.get("aircraft")
     if not aircraft:
         return
@@ -342,13 +334,9 @@ def run_pipeline(
     request_interval: float,
 ) -> int:
     """Enumerate all G-registered aircraft via AA-ZZ search and write to Redis.
-
-    For each prefix, immediately fetches details and writes records — no
-    intermediate accumulation.  The search calls are not rate-limited; only
-    details calls sleep for request_interval to be polite to the API.
-
-    Returns the count of records successfully written.
-    """
+    Fetches and writes each prefix's details immediately, no accumulation.
+    Only details calls are rate-limited via request_interval. Returns the
+    count of records successfully written."""
     count = 0
     skipped = 0
     errors = 0

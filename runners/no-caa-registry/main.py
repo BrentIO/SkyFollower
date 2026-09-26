@@ -253,9 +253,9 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Build records from registry rows and write to Redis. Returns count of records written."""
     records = [rec for rec in (_build_record(row) for row in rows) if rec is not None]
 
-    # Type-designator consensus (#1888): this register writes manufacturer/
-    # model but never an ICAO type_designator. Hexes Mictronics already
-    # labels are free training data -- see shared/type_designator_consensus.py.
+    # This register writes manufacturer/model but never an ICAO
+    # type_designator; derive one via consensus from hexes Mictronics
+    # already labels (see shared/type_designator_consensus.py).
     mictronics_designators = fetch_mictronics_type_designators(r, (rec["icao_hex"] for rec in records))
     consensus_table = build_consensus_table(
         (

@@ -72,24 +72,13 @@ CREATE TABLE airports (
 # Phonic name computation
 # ---------------------------------------------------------------------------
 
-# Optional host-provided JSON file that maps ICAO codes to exact phonic
-# strings. If a code is present, its value is returned verbatim by
-# compute_phonic() — no "International"/"Airport" stripping or any other
-# processing is applied. Format:
-#
-#   {
-#       "KXXX": "Spoken name exactly as desired",
-#       ...
-#   }
-#
-# Lives in the host's config/runners directory (mounted as a directory,
-# not a single file -- a single-file bind mount fails to even start the
-# container if the host file is later deleted without recreating the
-# container; a directory mount degrades gracefully to a plain
-# FileNotFoundError instead). Path defaults to /app/config/phonic_overrides.json
-# and can be overridden with the OVERRIDES_PATH environment variable. Loaded
-# once at startup; a container restart is required to pick up changes.
-# Missing file is silently ignored (empty overrides).
+# Optional host-provided JSON file mapping ICAO codes to exact phonic
+# strings, returned verbatim by compute_phonic() with no further processing:
+#   {"KXXX": "Spoken name exactly as desired", ...}
+# Mounted as a directory rather than a single file, so a host file deleted
+# later degrades to FileNotFoundError instead of failing container startup.
+# Defaults to /app/config/phonic_overrides.json (override via
+# OVERRIDES_PATH); loaded once at startup, missing file -> empty overrides.
 _OVERRIDES_PATH = os.environ.get("OVERRIDES_PATH", "/app/config/phonic_overrides.json")
 
 
@@ -113,15 +102,9 @@ def _remove_international_airport(text: str) -> str:
 
 
 def compute_phonic(icao_code: str, name: str, city: str) -> str:
-    """
-    Return a voice-friendly spoken name for an airport.
-
-    If the ICAO code has an entry in phonics_overrides.json, that value is
-    returned verbatim with no further processing.
-
-    Otherwise the general algorithm applies, and "International" / "Airport"
-    are stripped from the result as a final step on every path.
-    """
+    """Return a voice-friendly spoken name for an airport. Honors a
+    phonics_overrides.json entry verbatim; otherwise applies the heuristics
+    below, then strips "International"/"Airport" as a final step."""
     if not name:
         return ""
 
