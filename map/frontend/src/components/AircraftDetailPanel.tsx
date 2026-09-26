@@ -123,16 +123,15 @@ export function AircraftDetailPanel({
   const hasBadges = data.military || data.specialLivery != null;
 
   return (
-    // w-80 is now a *preferred* width, not a fixed one: max-w-[20vw] caps it
-    // (#2003) whenever 20% of the viewport is narrower than 320px, i.e.
-    // below a ~1600px-wide viewport -- above that, max-width never binds and
-    // the panel looks exactly as it did before this cap existed. No
-    // min-width floor is added on top of that: the issue's acceptance
-    // criteria requires the panel to *never* exceed 20vw, and a floor wide
-    // enough to matter on a narrow viewport would necessarily fight that
-    // cap (min-width wins over max-width in a conflict) -- w-80 already
-    // serves as the "don't shrink unless the viewport actually can't spare
-    // it" floor for every realistic desktop width.
+    // w-80 is the preferred width. max-w-[calc(100vw-2rem)] (#2010) is a
+    // pure overflow safety net, not a viewport-percentage cap: it only binds
+    // once the viewport itself is narrower than 320px + 2rem (~336px), so on
+    // any normal phone/tablet/desktop width the panel renders at its full
+    // preferred 320px. The calc() accounts for the panel's left-4 (1rem)
+    // offset plus a matching 1rem margin on the right, so the panel can
+    // never overflow off-screen horizontally even on an unusually narrow
+    // viewport. (A prior version of this cap used max-w-[20vw], which
+    // crushed the panel to ~75-85px on phone-width viewports -- see #2010.)
     // max-h-[80vh] + overflow-y-auto scrolls a fully-populated panel instead
     // of letting it grow past 80% viewport height or clipping content
     // (previously plain overflow-hidden, with no cap at all). Only the y
@@ -143,7 +142,7 @@ export function AircraftDetailPanel({
     // still makes the x axis behave as "auto", so it would scroll rather
     // than clip in the rare case some content doesn't wrap.
     <div
-      className="absolute top-4 left-4 max-h-[80vh] w-80 max-w-[20vw] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
+      className="absolute top-4 left-4 max-h-[80vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
       style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       <div className="flex items-start justify-between gap-3 p-3">

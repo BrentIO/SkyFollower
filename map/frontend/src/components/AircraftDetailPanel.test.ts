@@ -130,21 +130,33 @@ describe("action row -- Isolate/Zoom To/Follow/Trace Points buttons", () => {
 // and lives in, and is tested by, IconButton.test.ts -- see that file's
 // own note.
 
-describe("panel size cap and scroll (#2003)", () => {
-  it("caps width at 20vw and height at 80vh on the outer panel div", () => {
+describe("panel size cap and scroll (#2003, width fix #2010)", () => {
+  it("caps width with a viewport-overflow safety net and height at 80vh on the outer panel div", () => {
     const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
     expect(outerDivIndex).toBeGreaterThan(-1);
     const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
-    expect(outerDivClassName).toContain("max-w-[20vw]");
+    expect(outerDivClassName).toContain("max-w-[calc(100vw-2rem)]");
     expect(outerDivClassName).toContain("max-h-[80vh]");
   });
 
-  it("keeps w-80 as the preferred (pre-cap) width rather than dropping it", () => {
-    // w-80 only binds below a ~1600px viewport where max-w-[20vw] takes
-    // over -- above that, the panel should look identical to before #2003.
+  it("keeps w-80 as the preferred width rather than dropping it", () => {
+    // w-80 is the preferred width; max-w-[calc(100vw-2rem)] only binds once
+    // the viewport itself is narrower than ~336px, so on any normal
+    // viewport the panel renders at its full preferred 320px.
     const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
     const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
     expect(outerDivClassName).toContain("w-80");
+  });
+
+  it("does not use a raw viewport-percentage width cap that could crush the panel on a narrow screen (#2010 regression guard)", () => {
+    // max-w-[20vw] (the #2003 original) shrinks to ~75-86px on a
+    // ~375-430px-wide phone viewport -- far narrower than the panel's
+    // content. The replacement must be an offset-based calc(), not any
+    // vw-percentage max-width, so it can never scale below a usable size.
+    const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
+    const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
+    expect(outerDivClassName).not.toMatch(/max-w-\[\d+vw\]/);
+    expect(outerDivClassName).toContain("max-w-[calc(100vw-2rem)]");
   });
 
   it("scrolls overflowing content on the panel itself instead of clipping it (overflow-hidden removed)", () => {
@@ -154,10 +166,10 @@ describe("panel size cap and scroll (#2003)", () => {
     expect(outerDivClassName).not.toContain("overflow-hidden");
   });
 
-  it("does not add a competing min-width floor that would fight the 20vw cap", () => {
+  it("does not add a competing min-width floor that would fight the max-width safety net", () => {
     // A min-width wide enough to matter on a narrow viewport would win over
-    // max-width in a conflict, breaking the "never exceeds 20vw" guarantee
-    // -- see the rationale comment above the outer div.
+    // max-width in a conflict, breaking the "never overflows off-screen"
+    // guarantee -- see the rationale comment above the outer div.
     expect(panelSource).not.toMatch(/min-w-(?!0\b)\S/);
   });
 });
