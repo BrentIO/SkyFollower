@@ -32,6 +32,7 @@ const ALL_ON = {
   labelsAll: true,
   mapLabelsOn: true,
   rangeOutlineVisible: true,
+  rangeRingsVisible: true,
   radarOn: true,
   radarOpacity: 0.8,
   displayScale: 1.2,
@@ -42,6 +43,7 @@ const DEFAULTS = {
   labelsAll: false,
   mapLabelsOn: false,
   rangeOutlineVisible: false,
+  rangeRingsVisible: true,
   radarOn: false,
   radarOpacity: 0.5,
   displayScale: 1,
@@ -71,6 +73,7 @@ describe("loadPersistedControls/savePersistedControls -- round-trip", () => {
       labelsAll: false,
       mapLabelsOn: true,
       rangeOutlineVisible: false,
+      rangeRingsVisible: false,
       radarOn: true,
       radarOpacity: 0.5,
       displayScale: 0.75,
@@ -132,7 +135,7 @@ describe("loadPersistedControls -- malformed/corrupted stored value", () => {
   });
 
   it("falls back to defaults when controls is missing entirely", () => {
-    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 3 }));
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 4 }));
 
     expect(loadPersistedControls()).toEqual(DEFAULTS);
   });
@@ -140,7 +143,7 @@ describe("loadPersistedControls -- malformed/corrupted stored value", () => {
   it("falls back to defaults when a field has the wrong type", () => {
     storage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ version: 3, controls: { ...ALL_ON, historyAll: "yes" } }),
+      JSON.stringify({ version: 4, controls: { ...ALL_ON, historyAll: "yes" } }),
     );
 
     expect(loadPersistedControls()).toEqual(DEFAULTS);
@@ -149,7 +152,7 @@ describe("loadPersistedControls -- malformed/corrupted stored value", () => {
   it("falls back to defaults when radarOn has the wrong type", () => {
     storage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ version: 3, controls: { ...ALL_ON, radarOn: "on" } }),
+      JSON.stringify({ version: 4, controls: { ...ALL_ON, radarOn: "on" } }),
     );
 
     expect(loadPersistedControls()).toEqual(DEFAULTS);
@@ -159,7 +162,7 @@ describe("loadPersistedControls -- malformed/corrupted stored value", () => {
     for (const badOpacity of ["0.5", null]) {
       storage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ version: 3, controls: { ...ALL_ON, radarOpacity: badOpacity } }),
+        JSON.stringify({ version: 4, controls: { ...ALL_ON, radarOpacity: badOpacity } }),
       );
 
       expect(loadPersistedControls()).toEqual(DEFAULTS);
@@ -170,11 +173,20 @@ describe("loadPersistedControls -- malformed/corrupted stored value", () => {
     for (const badScale of ["1", null]) {
       storage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ version: 3, controls: { ...ALL_ON, displayScale: badScale } }),
+        JSON.stringify({ version: 4, controls: { ...ALL_ON, displayScale: badScale } }),
       );
 
       expect(loadPersistedControls()).toEqual(DEFAULTS);
     }
+  });
+
+  it("falls back to defaults when rangeRingsVisible has the wrong type", () => {
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ version: 4, controls: { ...ALL_ON, rangeRingsVisible: "yes" } }),
+    );
+
+    expect(loadPersistedControls()).toEqual(DEFAULTS);
   });
 
 
@@ -251,8 +263,28 @@ describe("loadPersistedControls -- version mismatch", () => {
     expect(loadPersistedControls()).toEqual(DEFAULTS);
   });
 
+  it("treats a pre-#2012 v3 payload (no rangeRingsVisible field) as absent and falls back to defaults, not a partial merge", () => {
+    storage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        controls: {
+          historyAll: true,
+          labelsAll: true,
+          mapLabelsOn: true,
+          rangeOutlineVisible: true,
+          radarOn: true,
+          radarOpacity: 0.8,
+          displayScale: 1.2,
+        },
+      }),
+    );
+
+    expect(loadPersistedControls()).toEqual(DEFAULTS);
+  });
+
   it("treats a different version as absent and falls back to defaults", () => {
-    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 4, controls: ALL_ON }));
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 5, controls: ALL_ON }));
 
     expect(loadPersistedControls()).toEqual(DEFAULTS);
   });
