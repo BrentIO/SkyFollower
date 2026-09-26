@@ -1,16 +1,11 @@
 """
-Integration tests for map/state_store.py, run against a live Redis (same
-pattern as shared/tests/test_route_airports_lua.py -- these exercise the
-actual merge/TTL/keyspace-notification behavior, not mocks, since that's
-exactly the part most likely to have a subtle bug).
+Integration tests for map/state_store.py, run against a live Redis --
+exercises the actual merge/TTL/keyspace-notification behavior, not mocks.
 
 Requires a reachable Redis at REDIS_TEST_HOST:REDIS_TEST_PORT (defaults to
-localhost:6379, matching .github/workflows/run-tests.yaml's redis-stack
-service). If none is reachable, every test in this module is skipped.
-
-Uses Redis db 15 (SELECT), not db 0, so this module's FLUSHDB-heavy setup
-never touches whatever any other component's test suite has seeded on db 0
-of the same live server.
+localhost:6379). If none is reachable, every test in this module is
+skipped. Uses db 15, not db 0, so this module's FLUSHDB-heavy setup never
+touches another component's data on the same live server.
 """
 
 from __future__ import annotations
@@ -56,8 +51,6 @@ def _clean_db(redis_client):
 
 
 def _hex() -> str:
-    """A fresh, unique-looking ICAO hex per test -- avoids any chance of
-    cross-test key collision even without the autouse flushdb above."""
     return uuid.uuid4().hex[:6].upper()
 
 
@@ -241,23 +234,15 @@ def test_metadata_packets_do_not_append_to_trail(redis_client):
 
 
 def test_max_trail_points_value():
-    """Pins the current trail-line cap so a future accidental change (in
-    either direction) is caught -- see MAX_TRAIL_POINTS's docstring in
-    map/state_store.py for the memory/rendering reasoning behind 25,000."""
+    """Pins the trail-line cap so an accidental change is caught -- see
+    MAX_TRAIL_POINTS in map/state_store.py."""
     assert MAX_TRAIL_POINTS == 25000
 
 
 def test_trail_is_capped_at_max_trail_points(redis_client):
-    """A long-loitering aircraft can't grow flight:trail without bound --
-    the Lua LTRIMs it to the most recent MAX_TRAIL_POINTS after each append,
-    keeping the newest points and dropping the oldest.
-
-    Most of the trail is pre-seeded directly (bypassing apply_update) so
-    this test isn't paying MAX_TRAIL_POINTS separate round trips to a live
-    Redis just to reach the cap boundary -- only the handful of points
-    that actually straddle the boundary go through the real apply_update/
-    Lua path being tested.
-    """
+    """Most of the trail is pre-seeded directly (bypassing apply_update) so
+    this test isn't paying MAX_TRAIL_POINTS round trips to reach the cap
+    boundary -- only the points straddling it go through the real path."""
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
@@ -301,11 +286,8 @@ def test_get_flight_returns_none_for_unknown_aircraft(redis_client):
 
 
 # ---------------------------------------------------------------------------
-# Round-trip counts -- the whole point of the Lua collapse / pipelined
-# list_flights (#1566). Each test wraps a real, live-Redis client method
-# with a counter and delegates to the original, so these prove the actual
-# number of client<->server exchanges, not just that the right data comes
-# back (already covered above).
+# Round-trip counts -- each test wraps a real, live-Redis client method with
+# a counter to prove the actual number of client<->server exchanges.
 # ---------------------------------------------------------------------------
 
 def _count_calls(monkeypatch, obj, name):
@@ -323,12 +305,9 @@ def _count_calls(monkeypatch, obj, name):
 
 
 def test_apply_update_issues_exactly_one_round_trip(redis_client, monkeypatch):
-    """The old implementation issued an HGET, a pipeline (HSET+EXPIRE+SET),
-    a get_flight() HGETALL, and (for position packets) a second pipeline
-    (RPUSH+EXPIRE) -- 3-4 round trips. The EVALSHA-based implementation
-    must issue exactly one evalsha call and zero direct HGET/HSET/EXPIRE/
-    SET/RPUSH/pipeline calls -- every one of those now happens inside the
-    Lua script, invisible at the client-command level."""
+    """Must issue exactly one evalsha call and zero direct HGET/HSET/
+    EXPIRE/SET/RPUSH/pipeline calls -- all of that happens inside the Lua
+    script, invisible at the client-command level."""
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     icao_hex = _hex()
 
@@ -345,11 +324,8 @@ def test_apply_update_issues_exactly_one_round_trip(redis_client, monkeypatch):
 
 
 def test_list_flights_issues_one_pipelined_round_trip_not_n_plus_one(redis_client, monkeypatch):
-    """The old implementation issued one SCAN (itself possibly more than
-    one round trip on a large keyspace) plus one HGETALL per tracked
-    aircraft -- N+1. The pipelined implementation must still issue exactly
-    one execute() (one round trip for every aircraft's HGETALL combined),
-    and never call HGETALL directly (outside a pipeline) at all."""
+    """Must issue exactly one execute() for every aircraft's HGETALL
+    combined, and never call HGETALL directly outside the pipeline."""
     store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
     hexes = [_hex() for _ in range(5)]
     for i, icao_hex in enumerate(hexes):
@@ -599,16 +575,9 @@ def test_get_processor_statuses_defaults_now_to_current_time(redis_client):
 
 
 def test_processor_roster_resets_on_fresh_redis_state():
-    """Simulates a full map + map-redis container restart: this
-    no-persistence Redis instance loses all data on its own restart (see
-    map/README.md), which this module's autouse _clean_db fixture's
-    flushdb() reproduces exactly -- a fresh FlightStateStore against that
-    flushed Redis must report an empty roster, never a stale one."""
-    # _clean_db's autouse flushdb() already ran before this test via the
-    # module-scoped redis_client fixture; asserting against a brand-new
-    # store instance (not just the same one reused) confirms there's no
-    # in-memory roster state anywhere that could survive independently of
-    # Redis.
+    """Simulates a full map + map-redis restart (flushdb): a fresh
+    FlightStateStore against the flushed Redis must report an empty
+    roster, confirming no in-memory roster state survives independently."""
     import redis as redis_module
 
     client = redis_module.Redis(
