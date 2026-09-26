@@ -50,11 +50,6 @@ CoreHealth = _mod.CoreHealth
 _queue_target = _mod._queue_target
 _sanitize_id = _mod._sanitize_id
 _mp_counter_key = _mod._mp_counter_key
-# operator_misses/total_messages_processed/receiver key builders are all
-# the real shared/redis_keys.py functions now (reconciled once the
-# message-processor's own counter-writing side, and later the receiver's
-# own identity/registration side, landed) -- no more provisional local
-# shims left in core-health/main.py at all.
 metrics_operator_misses_key = _mod.metrics_operator_misses_key
 metrics_total_messages_processed_key = _mod.metrics_total_messages_processed_key
 receiver_registry_index_key = _mod.receiver_registry_index_key
@@ -495,8 +490,7 @@ class TestPublishArchiveQueueMissing:
 
 class TestPublishMessageProcessorCounters:
     def test_missing_keys_publish_zero(self):
-        """Before #1044 lands, none of these Redis keys exist yet --
-        every field must still publish 0, not be skipped."""
+        """A missing Redis key must still publish 0, not be skipped."""
         app = _wired_app()
         app._redis.get.return_value = None
         app._publish_message_processor_counters("mp-1")
@@ -538,9 +532,7 @@ class TestPollReceivers:
         app = _wired_app()
         app._redis.smembers.return_value = {"attic"}
         # receiver_registration_key()'s value is a bare JSON array of
-        # {host, port, source} triples -- not wrapped in {"sources": [...]}
-        # -- matching what receiver/main.py's _register_with_core_health()
-        # actually writes (json.dumps(self._cfg.get("sources", []))).
+        # {host, port, source} triples, not wrapped in {"sources": [...]}.
         registration = [{"host": "192.168.10.5", "port": 30002, "source": "1090"}]
         app._redis.get.side_effect = lambda key: (
             json.dumps(registration) if key == receiver_registration_key("attic") else "5"
@@ -847,11 +839,9 @@ class TestPollRabbitmqOnce:
         assert published[f"{MQTT_ROOT}/statistic/rabbitmq_connected"] == "False"
 
     def test_http_failure_publishes_no_queue_or_broker_stats(self):
-        """Equivalent of message-processor's #981 regression on this
-        component: a failed poll must never publish a queue/broker stat at
-        all (stale or sentinel) -- retained state simply doesn't update,
-        and expire_after is what surfaces "unavailable" in HA, not a
-        published garbage value."""
+        """A failed poll must never publish a queue/broker stat at all --
+        retained state simply doesn't update, and expire_after is what
+        surfaces "unavailable" in HA, not a published garbage value."""
         app = _wired_app()
         app._session.get.side_effect = Exception("connection refused")
         app._publish_queue_stats = MagicMock()
@@ -909,13 +899,11 @@ class TestPollRabbitmqOnce:
         assert published[f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing"] == "False"
 
     def test_raw_frames_queue_matches_pattern_but_gets_no_ha_sensors(self):
-        """skyfollower-archive-raw-frames must match
-        SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN (is_skyfollower_queue()) for
-        RabbitMQ ACL purposes, but core-health deliberately excludes it from
-        _publish_queue_stats() -- it's a short-lived, manually-drained
-        forensic queue with no consumer service of its own and shouldn't
-        get a full HA sensor suite just because it shares SkyFollower's
-        naming convention. See #1842."""
+        """skyfollower-archive-raw-frames matches is_skyfollower_queue()
+        for RabbitMQ ACL purposes, but core-health deliberately excludes
+        it from _publish_queue_stats() -- it's a short-lived,
+        manually-drained forensic queue with no consumer service of its
+        own."""
         app = _wired_app()
 
         def _get(url, auth, timeout):
@@ -1009,14 +997,14 @@ class TestPollRabbitmqOnce:
 
 
 # ---------------------------------------------------------------------------
-# RabbitMQ HTTP timeout / hang watchdog / session recreation (#1967)
+# RabbitMQ HTTP timeout / hang watchdog / session recreation
 # ---------------------------------------------------------------------------
 
 class TestRmqGetTimeoutTuple:
     def test_uses_an_explicit_connect_read_timeout_tuple(self):
-        """A single float timeout (the pre-#1967 behavior) doesn't
-        reliably bound a connection left half-open by a RabbitMQ restart --
-        the fix passes requests an explicit (connect, read) tuple instead."""
+        """A single float timeout doesn't reliably bound a connection
+        left half-open by a RabbitMQ restart -- requests needs an
+        explicit (connect, read) tuple instead."""
         app = _wired_app()
         response = MagicMock()
         response.json.return_value = {"ok": True}
@@ -1051,9 +1039,9 @@ class TestRecreateSession:
         assert app._session is not None
 
     def test_poll_failure_recreates_the_session(self):
-        """Proposed fix #1 in #1967: recreate self._session whenever a poll
-        fails, not just on a detected hang -- an outright connection error
-        can leave the pool holding a connection just as unusable."""
+        """Recreate self._session whenever a poll fails, not just on a
+        detected hang -- an outright connection error can leave the pool
+        holding a connection just as unusable."""
         app = _wired_app()
         old_session = app._session
         app._session.get.side_effect = Exception("connection refused")
@@ -1077,13 +1065,11 @@ class TestRecreateSession:
 
 
 class TestRmqGetHangWatchdog:
-    """Simulates the confirmed-live #1967 scenario -- a GET that never
-    returns because the (connect, read) timeout tuple itself failed to
-    fire (a connection left half-open by a RabbitMQ restart). A true
-    half-open TCP hang can't be reproduced in a unit test, so these instead
-    make the mocked session.get() block past a (monkeypatched, tiny)
-    watchdog deadline, which is exactly the condition
-    RABBITMQ_POLL_HANG_TIMEOUT_SECONDS exists to detect."""
+    """Simulates a GET that never returns because the (connect, read)
+    timeout tuple itself failed to fire (a connection left half-open by a
+    RabbitMQ restart). A true half-open TCP hang can't be reproduced in a
+    unit test, so these instead make the mocked session.get() block past a
+    (monkeypatched, tiny) watchdog deadline."""
 
     def test_hung_get_raises_timeout_and_recreates_the_session(self, monkeypatch):
         monkeypatch.setattr(_mod, "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS", 0.05)
@@ -1102,8 +1088,8 @@ class TestRmqGetHangWatchdog:
         assert app._session is not old_session
 
     def test_hang_is_logged_as_its_own_warning(self, monkeypatch, caplog):
-        """Acceptance criterion: a hang must produce log output of its own
-        -- before #1967, a wedged poll thread produced total silence."""
+        """A hang must produce log output of its own, not the total
+        silence a wedged poll thread would otherwise leave."""
         monkeypatch.setattr(_mod, "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS", 0.05)
         app = _wired_app()
 
@@ -1134,10 +1120,8 @@ class TestRmqGetHangWatchdog:
         assert published[f"{MQTT_ROOT}/statistic/rabbitmq_connected"] == "False"
 
     def test_next_poll_after_a_hang_uses_the_recreated_session(self, monkeypatch):
-        """Confirms the recovery path: once the wedged session is
-        discarded, a subsequent GET goes through the fresh session and can
-        succeed again -- this is what "polling resumes within a bounded
-        time" means in the absence of a live RabbitMQ to restart."""
+        """Once the wedged session is discarded, a subsequent GET goes
+        through the fresh session and can succeed again."""
         monkeypatch.setattr(_mod, "RABBITMQ_POLL_HANG_TIMEOUT_SECONDS", 0.05)
         app = _wired_app()
 
@@ -1162,14 +1146,13 @@ class TestRmqGetHangWatchdog:
 
 
 # ---------------------------------------------------------------------------
-# Broker-level discovery expire_after (#1967)
+# Broker-level discovery expire_after
 # ---------------------------------------------------------------------------
 
 class TestCoreDiscoveryExpireAfter:
-    """Before #1967, _publish_core_discovery's payloads had no expire_after
-    at all, unlike _ensure_queue_discovery's per-queue sensors -- a fully-
-    hung poll loop left them showing their last retained value forever with
-    no staleness signal in Home Assistant."""
+    """_publish_core_discovery's payloads need expire_after too, matching
+    _ensure_queue_discovery's per-queue sensors, so a hung poll loop ages
+    them out instead of showing a stale value forever."""
 
     def test_general_sensor_gets_expire_after(self):
         app = _wired_app()
@@ -1297,8 +1280,7 @@ class TestPollRedisOnce:
 
 
 # ---------------------------------------------------------------------------
-# Message-processor and receiver counter keys -- all reconciled
-# shared/redis_keys.py builders, no provisional local shims remain.
+# Message-processor and receiver counter keys
 # ---------------------------------------------------------------------------
 
 class TestReconciledMessageProcessorCounterKeys:
@@ -1314,8 +1296,7 @@ class TestReconciledMessageProcessorCounterKeys:
 
     def test_mp_counter_key_uses_the_real_shared_builders(self):
         # _mp_counter_key must resolve to the exact key message-processor's
-        # own code writes -- shared/redis_keys.py's builders, not a local
-        # provisional shim -- for every counter "kind" it supports.
+        # own code writes, for every counter "kind" it supports.
         assert _mp_counter_key("mp-1", "registration", "hour") == (
             "metrics:message_processor:mp-1:registration_misses:hour"
         )
@@ -1332,15 +1313,10 @@ class TestReconciledReceiverKeys:
         assert receiver_registry_index_key() == "receiver:index"
 
     def test_receiver_registration_key_shape(self):
-        # Real shape: "receiver:registration:{id}" -- the old provisional
-        # helper had these two segments swapped ("receiver:{id}:registration").
         assert receiver_registration_key("attic") == "receiver:registration:attic"
 
     def test_receiver_message_count_key_shape(self):
-        # Real shape: "metrics:receiver:{id}:{connection_id}:messages:{period}",
-        # connection_id = sanitized "{host}_{port}" -- entirely different
-        # from the old provisional
-        # "metrics:receiver:{name}:messages_{host}_{port}_total:{period}".
+        # connection_id is the sanitized "{host}_{port}".
         assert receiver_message_count_key("attic", "192-168-10-5_30002", "hour") == (
             "metrics:receiver:attic:192-168-10-5_30002:messages:hour"
         )
@@ -1351,10 +1327,6 @@ class TestReconciledReceiverKeys:
         with pytest.raises(ValueError):
             receiver_message_count_key("attic", "192-168-10-5_30002", "lifetime")
 
-
-# ---------------------------------------------------------------------------
-# Shutdown
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Component "update available" entities
