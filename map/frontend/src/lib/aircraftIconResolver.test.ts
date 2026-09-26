@@ -42,6 +42,10 @@ describe("resolveAircraftShape", () => {
     expect(resolveAircraftShape({ icao_hex: "A", type_designator: "EA50" })).toBe("C25B"); // Eclipse 550
   });
 
+  it("aliases the Cirrus SF50 Vision Jet to the light-jet shape instead of falling through to the fighter-jet fallback (#2014)", () => {
+    expect(resolveAircraftShape({ icao_hex: "A", type_designator: "SF50" })).toBe("LJ35");
+  });
+
   it("aliases large-cabin Gulfstreams and Falcons missed from their existing groups (#1914)", () => {
     expect(resolveAircraftShape({ icao_hex: "A", type_designator: "GA6C" })).toBe("GLF6"); // G600
     expect(resolveAircraftShape({ icao_hex: "A", type_designator: "GA8C" })).toBe("GLF6"); // G800

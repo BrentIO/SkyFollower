@@ -75,6 +75,11 @@ export const TYPE_ALIASES: Record<string, string> = {
   E50P: "C25B", E55P: "C25B", E545: "C25B", E550: "C25B",
   LJ31: "LJ35", LJ35: "LJ35", LJ40: "LJ35", LJ45: "LJ35", LJ55: "LJ35",
   LJ60: "LJ35", LJ70: "LJ35", LJ75: "LJ35",
+  // SF50 (Cirrus Vision Jet, 11.63m span) -- closer size match to LJ35
+  // (12.04m) than C25B (14.33m); no dedicated single-dorsal-engine shape
+  // exists, so this only prevents falling through to the L1J->F16 fallback
+  // (#2014).
+  SF50: "LJ35",
   // LJ23/24/25/28: older Learjet variants, same family as the LJ3x/4x/5x/
   //6x/7x group above, missed originally. BE40/BE4W (Beechjet 400/400XT),
   // MU30 (Mitsubishi MU-300 Diamond -- literally the airframe Beechjet 400
