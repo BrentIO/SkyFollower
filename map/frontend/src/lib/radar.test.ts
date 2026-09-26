@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  nextRadarState,
   planRadarPlaybackFrames,
   RADAR_AMBIENT_CACHE_CAPACITY,
   RADAR_AMBIENT_MATCH_TOLERANCE_MS,
+  RADAR_FETCH_RETRY_COOLDOWN_MS,
   RADAR_MAX_ZOOM,
   RADAR_MIN_ZOOM,
   RADAR_PLAYBACK_OFFSETS_MINUTES,
   radarAmbientFrameId,
+  radarFetchAction,
   radarFrameTileUrl,
   radarPlaybackFrameId,
   type RadarAmbientCacheEntry,
+  type RadarFetchCacheEntry,
 } from "./radar";
 
 describe("radarFrameTileUrl", () => {
@@ -144,5 +148,54 @@ describe("planRadarPlaybackFrames", () => {
     }));
     const plan = planRadarPlaybackFrames(entries, NOW);
     plan.forEach((step) => expect(step.source.kind).toBe("ambient"));
+  });
+});
+
+// #2015
+describe("nextRadarState", () => {
+  it("cycles off -> on -> animate -> off", () => {
+    expect(nextRadarState("off")).toBe("on");
+    expect(nextRadarState("on")).toBe("animate");
+    expect(nextRadarState("animate")).toBe("off");
+  });
+
+  it("is a closed three-cycle -- three clicks from any state return to it", () => {
+    for (const start of ["off", "on", "animate"] as const) {
+      const afterThree = nextRadarState(nextRadarState(nextRadarState(start)));
+      expect(afterThree).toBe(start);
+    }
+  });
+});
+
+describe("radarFetchAction", () => {
+  const NOW = Date.parse("2026-01-01T00:30:00.000Z");
+
+  it("issues a fresh fetch when there's no prior cache entry at all", () => {
+    expect(radarFetchAction(undefined, NOW)).toBe("issue");
+  });
+
+  it("reuses a loaded entry outright, no matter how old", () => {
+    const entry: RadarFetchCacheEntry = { attemptedAtMs: NOW - 999 * 60 * 1000, loaded: true };
+    expect(radarFetchAction(entry, NOW)).toBe("reuse");
+  });
+
+  it("waits on an unresolved entry still within the retry cooldown", () => {
+    const entry: RadarFetchCacheEntry = { attemptedAtMs: NOW - (RADAR_FETCH_RETRY_COOLDOWN_MS - 1), loaded: false };
+    expect(radarFetchAction(entry, NOW)).toBe("wait");
+  });
+
+  it("issues a retry once an unresolved entry's cooldown has fully elapsed", () => {
+    const entry: RadarFetchCacheEntry = { attemptedAtMs: NOW - RADAR_FETCH_RETRY_COOLDOWN_MS, loaded: false };
+    expect(radarFetchAction(entry, NOW)).toBe("issue");
+  });
+
+  it("issues a retry well past the cooldown, not just at the boundary", () => {
+    const entry: RadarFetchCacheEntry = { attemptedAtMs: NOW - RADAR_FETCH_RETRY_COOLDOWN_MS * 10, loaded: false };
+    expect(radarFetchAction(entry, NOW)).toBe("issue");
+  });
+
+  it("an unresolved entry attempted just now waits", () => {
+    const entry: RadarFetchCacheEntry = { attemptedAtMs: NOW, loaded: false };
+    expect(radarFetchAction(entry, NOW)).toBe("wait");
   });
 });

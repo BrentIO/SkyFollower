@@ -23,12 +23,21 @@ export interface IconButtonProps {
    * toggle row matches the recenter button's own h-9 w-9 square instead of
    * bumping every caller of this shared component. */
   size?: "sm" | "md";
-  /** #1910: when true, renders a spinning ring in place of `icon` and
-   * forces the button disabled -- for an action whose effect isn't ready
-   * yet (radar playback's frame-prefetch phase), so the pause reads as
-   * "loading," not a stalled click. Every other existing caller omits
-   * this and renders exactly as before. */
+  /** #1910: when true, renders a spinning ring in place of `icon` -- for an
+   * action whose effect isn't ready yet (radar playback's frame-prefetch
+   * phase), so the pause reads as "loading," not a stalled click. Whether
+   * this also forces the button disabled is `loadingDisabled` below;
+   * every existing caller before #2015 left that at its default (true),
+   * so this alone changes nothing for them. */
   loading?: boolean;
+  /** #2015: when `loading` is true, this controls whether it also disables
+   * the button. Defaults true (the original #1910 behavior, preserved for
+   * every caller that doesn't pass this) -- pass false for a control that
+   * must stay clickable through its own async phase, e.g. the tri-state
+   * Radar button, which needs to transition state immediately on click
+   * even mid-prefetch rather than waiting out the spinner. The spinner
+   * still renders either way; only the disabled coupling changes. */
+  loadingDisabled?: boolean;
 }
 
 const SIZE_CLASSES: Record<"sm" | "md", string> = {
@@ -44,12 +53,13 @@ export function IconButton({
   disabled = false,
   size = "sm",
   loading = false,
+  loadingDisabled = true,
 }: IconButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled || loading}
+      disabled={disabled || (loading && loadingDisabled)}
       title={label}
       aria-label={label}
       aria-pressed={active}

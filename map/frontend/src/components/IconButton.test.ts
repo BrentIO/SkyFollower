@@ -18,14 +18,19 @@ describe("IconButton / ActionIcon -- shared icon-only button used by both Aircra
 
   it("supports an optional disabled prop, defaulting to false", () => {
     expect(iconButtonSource).toContain("disabled = false");
-    // #1910: the button is disabled by either `disabled` or `loading`.
-    expect(iconButtonSource).toContain("disabled={disabled || loading}");
+    // #1910: the button is disabled by `disabled`, or by `loading` unless
+    // #2015's loadingDisabled opts out of that coupling.
+    expect(iconButtonSource).toContain("disabled={disabled || (loading && loadingDisabled)}");
   });
 
-  it("#1910: supports an optional loading prop, defaulting to false, that forces disabled and swaps in a spinner", () => {
+  it("#1910: supports an optional loading prop, defaulting to false, that swaps in a spinner", () => {
     expect(iconButtonSource).toContain("loading = false");
     expect(iconButtonSource).toContain("aria-busy={loading}");
     expect(iconButtonSource).toContain("{loading ? <LoadingSpinner /> : <ActionIcon spec={icon} />}");
+  });
+
+  it("#2015: supports an optional loadingDisabled prop, defaulting to true (preserving #1910's original behavior for every existing caller)", () => {
+    expect(iconButtonSource).toContain("loadingDisabled = true");
   });
 
   it("#1910: LoadingSpinner is a currentColor stroke SVG with an animate-spin class", () => {
