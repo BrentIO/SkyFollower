@@ -672,6 +672,67 @@ describe('map "click" handler -- background click deselects (#1792)', () => {
   });
 });
 
+// Extracts the body of the center-on-select effect (#2011) -- the
+// useEffect immediately following centeredForIcaoHexRef's declaration --
+// as plain source text. Same rationale as handleRecenterBody above: this
+// effect closes over mapRef/handleZoomTo/aircraft state, so there's no
+// jsdom/component-render setup to mount it through; reading the real
+// source instead of a hand-copied duplicate means these tests can't drift
+// from what the component actually does.
+function centerOnSelectEffectBody(): string {
+  const refMarker = "const centeredForIcaoHexRef = useRef<string | null>(null);";
+  const refIndex = mapViewSource.indexOf(refMarker);
+  if (refIndex === -1) throw new Error("Could not find centeredForIcaoHexRef declaration");
+
+  const effectMarker = "useEffect(() => {";
+  const effectIndex = mapViewSource.indexOf(effectMarker, refIndex);
+  if (effectIndex === -1) throw new Error("Could not find center-on-select useEffect");
+
+  const bodyOpenIndex = effectIndex + effectMarker.length - 1;
+  const bodyCloseIndex = findMatchingBrace(mapViewSource, bodyOpenIndex);
+  return mapViewSource.slice(bodyOpenIndex + 1, bodyCloseIndex);
+}
+
+describe("Center-on-select effect -- one-shot recenter on a fresh selection (#2011)", () => {
+  const body = centerOnSelectEffectBody();
+
+  it(
+    "is keyed on selectedIcaoHex (plus aircraft/mapLoaded to know when position is ready) -- both the map " +
+      "click handler and handleSelectFromList funnel into selectedIcaoHex via the same nextSelection/setSelected " +
+      "mechanism, so a single effect covers both selection paths without duplicating logic",
+    () => {
+      expect(mapViewSource).toContain("}, [selectedIcaoHex, aircraft, mapLoaded]);");
+    },
+  );
+
+  it("waits for the newly selected aircraft's position to be known, via the same precondition the deep-link effect uses", () => {
+    expect(body).toContain("if (!deepLinkReadyToZoom(aircraft, selectedIcaoHex, mapLoaded)) return;");
+  });
+
+  it("recenters by calling handleZoomTo() -- reuses the panel's own Zoom To mechanism rather than a duplicate easeTo", () => {
+    expect(body).toContain("handleZoomTo();");
+    expect(body).not.toContain("easeTo");
+  });
+
+  it("records the icao_hex it has centered for, so re-running on the next `aircraft` update for the *same* selection is a no-op", () => {
+    const guardIndex = body.indexOf("if (centeredForIcaoHexRef.current === selectedIcaoHex) return;");
+    const zoomIndex = body.indexOf("handleZoomTo();");
+    const recordIndex = body.indexOf("centeredForIcaoHexRef.current = selectedIcaoHex;");
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(zoomIndex).toBeGreaterThan(guardIndex);
+    expect(recordIndex).toBeGreaterThan(zoomIndex);
+  });
+
+  it("resets its recorded selection back to null on deselect, so a later reselect of the same aircraft recenters again", () => {
+    expect(body).toContain("if (selectedIcaoHex === null) {\n      centeredForIcaoHexRef.current = null;\n      return;\n    }");
+  });
+
+  it("never turns on Follow -- purely a one-shot recenter, not the persistent tracking setFollowId/handleToggleFollow provide", () => {
+    expect(body).not.toContain("setFollowId");
+    expect(body).not.toContain("handleToggleFollow");
+  });
+});
+
 describe("Trace Points circle layer -- inserted below the trail line (#1794)", () => {
   it("passes TRAIL_LAYER_ID as addLayer's beforeId, so the trail always paints on top of the dots", () => {
     const idIndex = mapViewSource.indexOf("id: TRACE_POINTS_CIRCLE_LAYER_ID");
