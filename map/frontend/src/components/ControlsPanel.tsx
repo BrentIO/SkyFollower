@@ -1,19 +1,11 @@
 import { useState } from "react";
-import {
-  DISPLAY_SCALE_ICON,
-  PAUSE_ICON,
-  PLAY_ICON,
-  RADAR_ICON,
-  ROUTE_ICON,
-  TAGS_ICON,
-  TYPE_ICON,
-  WEATHER_RADAR_ICON,
-} from "../lib/actionIcons";
+import { PAUSE_ICON, PLAY_ICON, ROUTE_ICON, SETTINGS_ICON, TAGS_ICON, WEATHER_RADAR_ICON } from "../lib/actionIcons";
 import { crosshairSvgMarkup } from "../lib/crosshairIcon";
 import { fullscreenIcon } from "../lib/fullscreen";
 import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
 import { toggleButtonClass } from "../lib/toggleButtonStyle";
 import { IconButton } from "./IconButton";
+import { SettingsPanel } from "./SettingsPanel";
 
 export interface ControlsPanelProps {
   historyAll: boolean;
@@ -23,17 +15,30 @@ export interface ControlsPanelProps {
   /** Basemap's own text labels (place names, road names/shields, water
    * names, airport labels) -- distinct from `labelsAll`, which is about
    * aircraft info boxes. Defaults on (basemap unchanged out of the box);
-   * turning it off is what hides the basemap's text. */
+   * turning it off is what hides the basemap's text. #2012 moved this from
+   * its own standalone icon button into a phone-style switch inside the new
+   * Settings panel -- the prop itself is unchanged. */
   mapLabelsOn: boolean;
   onToggleMapLabels: () => void;
   /** Daily reception range outline overlay (envelope band only, see
    * lib/mapLayerIds.ts's RANGE_OUTLINE_* ids). Disabled -- not just
    * unchecked -- when no center is configured, matching `recenterDisabled`:
    * the backend always returns an empty FeatureCollection in that case, so
-   * there's nothing to show. */
+   * there's nothing to show. #2012 moved this from its own standalone icon
+   * button into a switch inside the Settings panel, under its "Range"
+   * heading -- the prop itself is unchanged. */
   rangeOutlineVisible: boolean;
   onToggleRangeOutline: () => void;
   rangeOutlineDisabled: boolean;
+  /** #2012: the static 100/150/200nmi rings (lib/rangeRings.ts) -- rendered
+   * unconditionally whenever a center was configured before this issue, with
+   * no on/off control anywhere. New prop, new persisted key
+   * (lib/controlsPersistence.ts), same disabled-when-no-center convention as
+   * rangeOutlineDisabled. Lives in the Settings panel's "Range" heading,
+   * alongside rangeOutlineVisible above. */
+  rangeRingsVisible: boolean;
+  onToggleRangeRings: () => void;
+  rangeRingsDisabled: boolean;
   onRecenter: () => void;
   recenterDisabled: boolean;
   /** True whenever the camera is currently centered on the configured
@@ -65,7 +70,10 @@ export interface ControlsPanelProps {
   radarOn: boolean;
   onToggleRadar: () => void;
   /** 0-1, applied live via `raster-opacity` -- see lib/controlsPersistence.ts
-   * for why 0.2 is the default. */
+   * for why 0.2 is the default. #2012 moved the slider itself into the
+   * Settings panel's "Radar" heading; the on/off switch and Play/Pause
+   * button below stay in this popover for now (see the separate
+   * radar-button issue this panel's docstring points at). */
   radarOpacity: number;
   onRadarOpacityChange: (value: number) => void;
   /** Whether the last-30-minutes playback loop is currently animating.
@@ -85,7 +93,9 @@ export interface ControlsPanelProps {
    * CSS-pixel defaults render too large. A display's true physical pixel
    * density can't be read from the browser (see the issue's own research),
    * so this is a manual control rather than an automatic one, persisted
-   * per-browser the same way radarOpacity is. 1 is the no-op default. */
+   * per-browser the same way radarOpacity is. 1 is the no-op default. #2012
+   * moved this from its own standalone popover into the Settings panel,
+   * relabeled "Text & Icon Size" -- same range/behavior, prop unchanged. */
   displayScale: number;
   onDisplayScaleChange: (value: number) => void;
 }
@@ -95,17 +105,25 @@ export interface ControlsPanelProps {
 // one-shot action, not an on/off toggle -- but its *appearance* now follows
 // this panel's shared toggle-button convention, reflecting whether the
 // camera happens to already be centered; see `recenterActive`, #1847) with
-// the icon buttons for the "Fullscreen", "Labels", "Trails", "Range
-// Outline", and "Map Labels" toggles, in that top-to-bottom order. Icon
-// buttons share the exact rendering mechanism (IconButton, toggleButtonClass
-// coloring) as AircraftDetailPanel's action row, sized via IconButton's "md"
-// size prop to match the recenter button's own h-9 w-9 -- AircraftDetailPanel's
-// row keeps IconButton's default size and its own horizontal layout,
-// unrelated to this column. The recenter button can't use IconButton
-// itself -- its crosshair icon is rendered via `dangerouslySetInnerHTML`
+// the icon buttons for the "Fullscreen", "Labels", "Trails", "Radar", and
+// "Settings" toggles, in that top-to-bottom order. Icon buttons share the
+// exact rendering mechanism (IconButton, toggleButtonClass coloring) as
+// AircraftDetailPanel's action row, sized via IconButton's "md" size prop to
+// match the recenter button's own h-9 w-9 -- AircraftDetailPanel's row keeps
+// IconButton's default size and its own horizontal layout, unrelated to
+// this column. The recenter button can't use IconButton itself -- its
+// crosshair icon is rendered via `dangerouslySetInnerHTML`
 // (lib/crosshairIcon.ts's dashed-circle markup, not expressible as an
 // IconButton `IconSpec`) -- so it imports `toggleButtonClass()` directly
 // instead, applying the exact same active/inactive classes IconButton does.
+//
+// #2012: Range Outline, Map Labels, and Display Scale used to each be their
+// own standalone button (the latter two behind small popovers) -- all three
+// moved into the new Settings panel below (components/SettingsPanel.tsx),
+// along with a brand-new Range Rings toggle and Radar's opacity slider. This
+// column now ends in Radar (its on/off switch + opacity + Play/Pause popover
+// left as-is for this issue -- see the separate radar-button issue for that
+// rework) followed by the new Settings button.
 //
 // The connection-status dot that used to float here (its own top-2/right-2
 // wrapper, independent of this column's top-4/right-4 inset) has moved into
@@ -122,6 +140,9 @@ export function ControlsPanel({
   rangeOutlineVisible,
   onToggleRangeOutline,
   rangeOutlineDisabled,
+  rangeRingsVisible,
+  onToggleRangeRings,
+  rangeRingsDisabled,
   onRecenter,
   recenterDisabled,
   recenterActive,
@@ -144,10 +165,10 @@ export function ControlsPanel({
   // AircraftListPanel's own open/closed drawer state, which also resets
   // fresh each load).
   const [radarExpanded, setRadarExpanded] = useState(false);
-  // Same rationale as radarExpanded above -- only whether the popover is
-  // open is transient/local; displayScale itself is lifted to MapView and
-  // persisted there (#2000).
-  const [scaleExpanded, setScaleExpanded] = useState(false);
+  // Same rationale as radarExpanded above -- only whether the Settings panel
+  // is open is transient/local; every value it shows/edits is itself already
+  // lifted to MapView and persisted there.
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
 
   return (
     <div
@@ -195,15 +216,6 @@ export function ControlsPanel({
           onClick={onToggleHistoryAll}
           size="md"
         />
-        <IconButton
-          label="Range Outline"
-          icon={RADAR_ICON}
-          active={rangeOutlineVisible}
-          onClick={onToggleRangeOutline}
-          disabled={rangeOutlineDisabled}
-          size="md"
-        />
-        <IconButton label="Map Labels" icon={TYPE_ICON} active={mapLabelsOn} onClick={onToggleMapLabels} size="md" />
         <div className="relative">
           <IconButton
             label="Radar"
@@ -248,20 +260,10 @@ export function ControlsPanel({
                   />
                 </button>
               </div>
-              <label className="flex flex-col gap-1 text-xs text-slate-700 dark:text-slate-200">
-                <span>Opacity</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={radarOpacity}
-                  disabled={!radarOn}
-                  onChange={(e) => onRadarOpacityChange(Number(e.target.value))}
-                  aria-label="Radar opacity"
-                  className="disabled:opacity-50"
-                />
-              </label>
+              {/* #2012: the opacity slider that used to live here moved into
+                  the Settings panel's "Radar" heading -- this popover now
+                  holds only the on/off switch above and the Play/Pause
+                  button below. */}
               <IconButton
                 label={radarPlaybackLoading ? "Loading radar frames" : radarPlaying ? "Pause" : "Play"}
                 icon={radarPlaying ? PAUSE_ICON : PLAY_ICON}
@@ -274,39 +276,38 @@ export function ControlsPanel({
             </div>
           )}
         </div>
-        {/* #2000: display-scale multiplier -- a wall/panel-mounted display's
-            true physical pixel density can't be read from the browser (a
-            devicePixelRatio-only auto-scale would miss the "same DPR,
-            different physical screen size" case entirely, per the issue's
-            own research), so this is a manual, persisted control rather
-            than an automatic one -- same popover-behind-an-icon-button
-            shape as the Radar control above, since there's no natural
-            on/off state to gate it on. The icon reads "active" whenever the
-            operator has moved off the 1.0 no-op default, purely as a
-            visual reminder that a non-default scale is in effect. */}
+        {/* #2012: consolidates Map Labels, Text & Icon Size, Range Outline,
+            the new Range Rings toggle, and Radar's opacity slider into one
+            panel -- same popover-behind-an-icon-button shape as Radar
+            above, just styled/sized like AircraftDetailPanel instead of a
+            small popover (see SettingsPanel.tsx). The icon reads "active"
+            while the panel is open, matching a disclosure button rather
+            than an on/off feature (Settings itself has no on/off state of
+            its own -- everything it holds is its own independent toggle). */}
         <div className="relative">
           <IconButton
-            label="Display Scale"
-            icon={DISPLAY_SCALE_ICON}
-            active={displayScale !== 1}
-            onClick={() => setScaleExpanded((prev) => !prev)}
+            label="Settings"
+            icon={SETTINGS_ICON}
+            active={settingsExpanded}
+            onClick={() => setSettingsExpanded((prev) => !prev)}
             size="md"
           />
-          {scaleExpanded && (
-            <div className="absolute top-0 right-full mr-2 flex w-48 flex-col gap-3 rounded-md border border-slate-200 bg-white p-3 shadow-md dark:border-slate-700 dark:bg-slate-900">
-              <label className="flex flex-col gap-1 text-xs text-slate-700 dark:text-slate-200">
-                <span>Display Scale ({Math.round(displayScale * 100)}%)</span>
-                <input
-                  type="range"
-                  min={0.5}
-                  max={1.5}
-                  step={0.05}
-                  value={displayScale}
-                  onChange={(e) => onDisplayScaleChange(Number(e.target.value))}
-                  aria-label="Display scale"
-                />
-              </label>
-            </div>
+          {settingsExpanded && (
+            <SettingsPanel
+              onClose={() => setSettingsExpanded(false)}
+              mapLabelsOn={mapLabelsOn}
+              onToggleMapLabels={onToggleMapLabels}
+              displayScale={displayScale}
+              onDisplayScaleChange={onDisplayScaleChange}
+              rangeOutlineVisible={rangeOutlineVisible}
+              onToggleRangeOutline={onToggleRangeOutline}
+              rangeOutlineDisabled={rangeOutlineDisabled}
+              rangeRingsVisible={rangeRingsVisible}
+              onToggleRangeRings={onToggleRangeRings}
+              rangeRingsDisabled={rangeRingsDisabled}
+              radarOpacity={radarOpacity}
+              onRadarOpacityChange={onRadarOpacityChange}
+            />
           )}
         </div>
       </div>

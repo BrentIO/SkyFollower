@@ -49,14 +49,14 @@ describe("status box -- removed entirely; aircraft count and connection dot both
   });
 });
 
-describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outline, Map Labels", () => {
-  it("stacks all six controls vertically in a single column", () => {
+describe("unified icon column -- Fullscreen, Center, Labels, Trails, Radar, Settings (#2012)", () => {
+  it("stacks all controls vertically in a single column", () => {
     expect(controlsPanelSource).toContain('<div className="pointer-events-auto flex flex-col gap-2">');
     expect(controlsPanelSource).not.toContain('<div className="pointer-events-auto flex gap-2">');
   });
 
   it("sizes each IconButton-based control to h-9 w-9 via the size prop", () => {
-    const labels = ["Labels", "Trails", "Range Outline", "Map Labels"];
+    const labels = ["Labels", "Trails", "Radar", "Settings"];
     for (const label of labels) {
       const index = controlsPanelSource.indexOf(`label="${label}"`);
       const callSite = controlsPanelSource.slice(index, index + 250);
@@ -64,15 +64,15 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outli
     }
   });
 
-  it("renders the controls in the required top-to-bottom order: Full screen, Center, Labels, Trails, Range outline, Map labels", () => {
+  it("renders the controls in the required top-to-bottom order: Fullscreen, Center, Labels, Trails, Radar, Settings", () => {
     const fullscreenIndex = controlsPanelSource.indexOf("onClick={onToggleFullscreen}");
     const recenterIndex = controlsPanelSource.indexOf('title="Return to center"');
     const labelsIndex = controlsPanelSource.indexOf('label="Labels"');
     const trailsIndex = controlsPanelSource.indexOf('label="Trails"');
-    const rangeOutlineIndex = controlsPanelSource.indexOf('label="Range Outline"');
-    const mapLabelsIndex = controlsPanelSource.indexOf('label="Map Labels"');
+    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
+    const settingsIndex = controlsPanelSource.indexOf('label="Settings"');
 
-    const indices = [fullscreenIndex, recenterIndex, labelsIndex, trailsIndex, rangeOutlineIndex, mapLabelsIndex];
+    const indices = [fullscreenIndex, recenterIndex, labelsIndex, trailsIndex, radarIndex, settingsIndex];
     for (const index of indices) expect(index).toBeGreaterThan(-1);
     // Strictly increasing -- proves the ordering, not just presence.
     for (let i = 1; i < indices.length; i++) {
@@ -80,7 +80,7 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outli
     }
   });
 
-  it("wires each toggle button to its own icon spec and existing toggle state/handler", () => {
+  it("wires the always-visible toggle buttons to their own icon spec and existing toggle state/handler", () => {
     expect(controlsPanelSource).toContain("icon={ROUTE_ICON}");
     expect(controlsPanelSource).toContain("active={historyAll}");
     expect(controlsPanelSource).toContain("onClick={onToggleHistoryAll}");
@@ -88,24 +88,53 @@ describe("unified icon column -- Fullscreen, Center, Labels, Trails, Range Outli
     expect(controlsPanelSource).toContain("icon={TAGS_ICON}");
     expect(controlsPanelSource).toContain("active={labelsAll}");
     expect(controlsPanelSource).toContain("onClick={onToggleLabelsAll}");
-
-    expect(controlsPanelSource).toContain("icon={TYPE_ICON}");
-    expect(controlsPanelSource).toContain("active={mapLabelsOn}");
-    expect(controlsPanelSource).toContain("onClick={onToggleMapLabels}");
-
-    expect(controlsPanelSource).toContain("icon={RADAR_ICON}");
-    expect(controlsPanelSource).toContain("active={rangeOutlineVisible}");
-    expect(controlsPanelSource).toContain("onClick={onToggleRangeOutline}");
   });
 
-  it("Range Outline keeps its existing disabled-when-no-center logic", () => {
-    const rangeOutlineIndex = controlsPanelSource.indexOf('label="Range Outline"');
-    const callSite = controlsPanelSource.slice(rangeOutlineIndex, rangeOutlineIndex + 200);
-    expect(callSite).toContain("disabled={rangeOutlineDisabled}");
+  // #2012: Range Outline, Map Labels, and Display Scale (and its icon) no
+  // longer render as their own standalone IconButtons here -- they moved
+  // into the new Settings panel (see SettingsPanel.test.ts). ControlsPanel
+  // still accepts/forwards their props (checked below), just doesn't render
+  // an IconButton wired to RADAR_ICON/TYPE_ICON/DISPLAY_SCALE_ICON anymore.
+  it("no longer renders Range Outline, Map Labels, or Display Scale as their own IconButtons", () => {
+    expect(controlsPanelSource).not.toContain('label="Range Outline"');
+    expect(controlsPanelSource).not.toContain('label="Map Labels"');
+    expect(controlsPanelSource).not.toContain('label="Display Scale"');
+    expect(controlsPanelSource).not.toContain("icon={RADAR_ICON}");
+    expect(controlsPanelSource).not.toContain("icon={TYPE_ICON}");
+    expect(controlsPanelSource).not.toContain("icon={DISPLAY_SCALE_ICON}");
   });
 
-  it("no other IconButton-based toggle passes a disabled prop", () => {
-    const labels = ["Trails", "Labels", "Map Labels"];
+  it("still accepts and forwards the relocated props to SettingsPanel unchanged", () => {
+    expect(controlsPanelSource).toContain("mapLabelsOn: boolean;");
+    expect(controlsPanelSource).toContain("onToggleMapLabels: () => void;");
+    expect(controlsPanelSource).toContain("rangeOutlineVisible: boolean;");
+    expect(controlsPanelSource).toContain("onToggleRangeOutline: () => void;");
+    expect(controlsPanelSource).toContain("rangeOutlineDisabled: boolean;");
+    expect(controlsPanelSource).toContain("displayScale: number;");
+    expect(controlsPanelSource).toContain("onDisplayScaleChange: (value: number) => void;");
+
+    expect(controlsPanelSource).toContain("mapLabelsOn={mapLabelsOn}");
+    expect(controlsPanelSource).toContain("onToggleMapLabels={onToggleMapLabels}");
+    expect(controlsPanelSource).toContain("rangeOutlineVisible={rangeOutlineVisible}");
+    expect(controlsPanelSource).toContain("onToggleRangeOutline={onToggleRangeOutline}");
+    expect(controlsPanelSource).toContain("rangeOutlineDisabled={rangeOutlineDisabled}");
+    expect(controlsPanelSource).toContain("displayScale={displayScale}");
+    expect(controlsPanelSource).toContain("onDisplayScaleChange={onDisplayScaleChange}");
+  });
+
+  // New in #2012 -- the static range rings had no on/off control at all
+  // before this issue.
+  it("accepts and forwards the new rangeRingsVisible/onToggleRangeRings/rangeRingsDisabled props to SettingsPanel", () => {
+    expect(controlsPanelSource).toContain("rangeRingsVisible: boolean;");
+    expect(controlsPanelSource).toContain("onToggleRangeRings: () => void;");
+    expect(controlsPanelSource).toContain("rangeRingsDisabled: boolean;");
+    expect(controlsPanelSource).toContain("rangeRingsVisible={rangeRingsVisible}");
+    expect(controlsPanelSource).toContain("onToggleRangeRings={onToggleRangeRings}");
+    expect(controlsPanelSource).toContain("rangeRingsDisabled={rangeRingsDisabled}");
+  });
+
+  it("no always-visible IconButton-based toggle (Trails/Labels) passes a disabled prop", () => {
+    const labels = ["Trails", "Labels"];
     for (const label of labels) {
       const index = controlsPanelSource.indexOf(`label="${label}"`);
       const callSite = controlsPanelSource.slice(index, index + 150);
@@ -232,22 +261,16 @@ describe("Fullscreen toggle button", () => {
   });
 });
 
-describe("Map Labels button -- last in the column", () => {
-  it("renders after Range Outline, as the last control in the column", () => {
-    const rangeOutlineIndex = controlsPanelSource.indexOf('label="Range Outline"');
-    const mapLabelsIndex = controlsPanelSource.indexOf('label="Map Labels"');
-    expect(mapLabelsIndex).toBeGreaterThan(rangeOutlineIndex);
-  });
-});
-
-describe("Radar control (#1896) -- last in the column, after Map Labels", () => {
-  it("renders after Map Labels", () => {
-    const mapLabelsIndex = controlsPanelSource.indexOf('label="Map Labels"');
+describe("Radar control (#1896) -- last standalone button in the column, before Settings", () => {
+  it("renders after Trails and before Settings", () => {
+    const trailsIndex = controlsPanelSource.indexOf('label="Trails"');
     const radarIndex = controlsPanelSource.indexOf('label="Radar"');
-    expect(radarIndex).toBeGreaterThan(mapLabelsIndex);
+    const settingsIndex = controlsPanelSource.indexOf('label="Settings"');
+    expect(radarIndex).toBeGreaterThan(trailsIndex);
+    expect(settingsIndex).toBeGreaterThan(radarIndex);
   });
 
-  it("uses WEATHER_RADAR_ICON, not RADAR_ICON (already Range Outline's icon in this panel)", () => {
+  it("uses WEATHER_RADAR_ICON", () => {
     const radarIndex = controlsPanelSource.indexOf('label="Radar"');
     const callSite = controlsPanelSource.slice(radarIndex, radarIndex + 150);
     expect(callSite).toContain("icon={WEATHER_RADAR_ICON}");
@@ -291,15 +314,18 @@ describe("Radar control (#1896) -- last in the column, after Map Labels", () => 
     expect(callSite).toContain('radarOn ? "translate-x-4" : "translate-x-0.5"');
   });
 
-  it("the opacity slider is a 0-1 range input wired to onRadarOpacityChange, disabled when radar is off", () => {
-    const sliderIndex = controlsPanelSource.indexOf('type="range"');
-    expect(sliderIndex).toBeGreaterThan(-1);
-    const callSite = controlsPanelSource.slice(sliderIndex - 50, sliderIndex + 300);
-    expect(callSite).toContain("min={0}");
-    expect(callSite).toContain("max={1}");
-    expect(callSite).toContain("value={radarOpacity}");
-    expect(callSite).toContain("disabled={!radarOn}");
-    expect(callSite).toContain("onRadarOpacityChange");
+  // #2012: the opacity slider that used to live in this popover moved into
+  // the Settings panel's "Radar" heading -- the popover now holds only the
+  // on/off switch and the Play/Pause button.
+  it("no longer renders an opacity slider in this popover -- it moved to SettingsPanel", () => {
+    const popoverIndex = controlsPanelSource.indexOf("{radarExpanded && (");
+    const nextDivIndex = controlsPanelSource.indexOf("</div>\n        </div>\n        {/* #2012", popoverIndex);
+    const callSite =
+      nextDivIndex > -1
+        ? controlsPanelSource.slice(popoverIndex, nextDivIndex)
+        : controlsPanelSource.slice(popoverIndex, popoverIndex + 1200);
+    expect(callSite).not.toContain('type="range"');
+    expect(callSite).not.toContain("onRadarOpacityChange");
   });
 
   it("the play/pause control swaps icon and label by radarPlaying, and is disabled when radar is off", () => {
@@ -331,58 +357,55 @@ describe("Radar control (#1896) -- last in the column, after Map Labels", () => 
   });
 });
 
-describe("Display Scale control (#2000) -- last in the column, after Radar", () => {
-  it("renders after Radar", () => {
-    const radarIndex = controlsPanelSource.indexOf('label="Radar"');
-    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
-    expect(scaleIndex).toBeGreaterThan(radarIndex);
+describe("Settings button (#2012) -- last in the column, after Radar", () => {
+  it("uses SETTINGS_ICON", () => {
+    const settingsIndex = controlsPanelSource.indexOf('label="Settings"');
+    const callSite = controlsPanelSource.slice(settingsIndex, settingsIndex + 200);
+    expect(callSite).toContain("icon={SETTINGS_ICON}");
   });
 
-  it("uses DISPLAY_SCALE_ICON", () => {
-    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
-    const callSite = controlsPanelSource.slice(scaleIndex, scaleIndex + 200);
-    expect(callSite).toContain("icon={DISPLAY_SCALE_ICON}");
+  it("the icon's active state reflects whether the panel is expanded", () => {
+    const settingsIndex = controlsPanelSource.indexOf('label="Settings"');
+    const callSite = controlsPanelSource.slice(settingsIndex, settingsIndex + 200);
+    expect(callSite).toContain("active={settingsExpanded}");
   });
 
-  it("the icon's active state reflects whether displayScale differs from the 1.0 no-op default, not whether the popover is expanded", () => {
-    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
-    const callSite = controlsPanelSource.slice(scaleIndex, scaleIndex + 200);
-    expect(callSite).toContain("active={displayScale !== 1}");
+  it("the icon's onClick toggles local expand state", () => {
+    const settingsIndex = controlsPanelSource.indexOf('label="Settings"');
+    const callSite = controlsPanelSource.slice(settingsIndex, settingsIndex + 200);
+    expect(callSite).toContain("setSettingsExpanded");
   });
 
-  it("the icon's onClick toggles local expand state, not onDisplayScaleChange directly", () => {
-    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
-    const callSite = controlsPanelSource.slice(scaleIndex, scaleIndex + 200);
-    expect(callSite).toContain("setScaleExpanded");
-    expect(callSite).not.toContain("onClick={onDisplayScaleChange}");
-  });
-
-  it("declares local scaleExpanded state via useState, not lifted/persisted", () => {
+  it("declares local settingsExpanded state via useState, not lifted/persisted", () => {
     expect(controlsPanelSource).toContain("useState(false)");
-    expect(controlsPanelSource).toContain("setScaleExpanded");
+    expect(controlsPanelSource).toContain("setSettingsExpanded");
   });
 
-  it("only renders the popover's controls when scaleExpanded is true", () => {
-    expect(controlsPanelSource).toContain("{scaleExpanded && (");
+  it("only renders SettingsPanel when settingsExpanded is true", () => {
+    expect(controlsPanelSource).toContain("{settingsExpanded && (");
+    expect(controlsPanelSource).toContain("<SettingsPanel");
   });
 
-  it("the slider spans 0.5-1.5 in 0.05 steps and is wired to onDisplayScaleChange", () => {
-    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
-    const sliderIndex = controlsPanelSource.indexOf('type="range"', scaleIndex);
-    expect(sliderIndex).toBeGreaterThan(-1);
-    const callSite = controlsPanelSource.slice(sliderIndex - 50, sliderIndex + 300);
-    expect(callSite).toContain("min={0.5}");
-    expect(callSite).toContain("max={1.5}");
-    expect(callSite).toContain("step={0.05}");
-    expect(callSite).toContain("value={displayScale}");
-    expect(callSite).toContain("onDisplayScaleChange");
+  it("imports SettingsPanel from its own file", () => {
+    expect(controlsPanelSource).toContain('import { SettingsPanel } from "./SettingsPanel"');
   });
 
-  it("is never disabled -- unlike Radar's opacity slider, there's no on/off state gating this control", () => {
-    const scaleIndex = controlsPanelSource.indexOf('label="Display Scale"');
-    const sliderIndex = controlsPanelSource.indexOf('type="range"', scaleIndex);
-    const callSite = controlsPanelSource.slice(sliderIndex, sliderIndex + 300);
-    expect(callSite).not.toContain("disabled=");
+  it("wires onClose to collapse the panel, and forwards every relocated + new prop to SettingsPanel", () => {
+    const settingsPanelIndex = controlsPanelSource.indexOf("<SettingsPanel");
+    const callSite = controlsPanelSource.slice(settingsPanelIndex, settingsPanelIndex + 700);
+    expect(callSite).toContain("onClose={() => setSettingsExpanded(false)}");
+    expect(callSite).toContain("mapLabelsOn={mapLabelsOn}");
+    expect(callSite).toContain("onToggleMapLabels={onToggleMapLabels}");
+    expect(callSite).toContain("displayScale={displayScale}");
+    expect(callSite).toContain("onDisplayScaleChange={onDisplayScaleChange}");
+    expect(callSite).toContain("rangeOutlineVisible={rangeOutlineVisible}");
+    expect(callSite).toContain("onToggleRangeOutline={onToggleRangeOutline}");
+    expect(callSite).toContain("rangeOutlineDisabled={rangeOutlineDisabled}");
+    expect(callSite).toContain("rangeRingsVisible={rangeRingsVisible}");
+    expect(callSite).toContain("onToggleRangeRings={onToggleRangeRings}");
+    expect(callSite).toContain("rangeRingsDisabled={rangeRingsDisabled}");
+    expect(callSite).toContain("radarOpacity={radarOpacity}");
+    expect(callSite).toContain("onRadarOpacityChange={onRadarOpacityChange}");
   });
 });
 

@@ -194,6 +194,14 @@ function MapViewInner({ config }: { config: AppConfig }) {
     () => loadPersistedControls().rangeOutlineVisible,
   );
   const rangeOutline = useRangeOutline(config.apiBaseUrl, rangeOutlineVisible && !!config.center);
+  // #2012: the static 100/150/200nmi rings (lib/rangeRings.ts) used to
+  // render unconditionally whenever config.center was set, with no on/off
+  // control anywhere. Defaults true (see controlsPersistence.ts's DEFAULTS)
+  // so an operator who never touches the new Settings-panel toggle sees no
+  // change from that always-on behavior.
+  const [rangeRingsVisible, setRangeRingsVisible] = useState(
+    () => loadPersistedControls().rangeRingsVisible,
+  );
   // Basemap's own text labels (place names, road names/shields, water
   // names, airport labels) -- defaults on so the basemap is unchanged out
   // of the box; turning it off is what hides the basemap's text. Distinct
@@ -220,11 +228,21 @@ function MapViewInner({ config }: { config: AppConfig }) {
       labelsAll,
       mapLabelsOn,
       rangeOutlineVisible,
+      rangeRingsVisible,
       radarOn,
       radarOpacity,
       displayScale,
     });
-  }, [historyAll, labelsAll, mapLabelsOn, rangeOutlineVisible, radarOn, radarOpacity, displayScale]);
+  }, [
+    historyAll,
+    labelsAll,
+    mapLabelsOn,
+    rangeOutlineVisible,
+    rangeRingsVisible,
+    radarOn,
+    radarOpacity,
+    displayScale,
+  ]);
 
   // Whether the last-30-minutes playback loop is animating -- transient UI
   // state, not persisted (a reload always starts paused on the current
@@ -1145,6 +1163,20 @@ function MapViewInner({ config }: { config: AppConfig }) {
     );
   }, [rangeOutline, rangeOutlineVisible, mapLoaded]);
 
+  // #2012: "Range Rings" toggle -- unlike Range Outline above, this
+  // geometry is static (computed once from config.center on load, see the
+  // mount effect) rather than polled, so there's nothing to swap in/out of
+  // the source; toggling `visibility` via setLayoutProperty is the more
+  // direct primitive here, same convention as the "Map Labels" toggle
+  // effect above.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    const visibility = rangeRingsVisible ? "visible" : "none";
+    map.setLayoutProperty(RANGE_RING_LAYER_ID, "visibility", visibility);
+    map.setLayoutProperty(RANGE_RING_LABEL_LAYER_ID, "visibility", visibility);
+  }, [rangeRingsVisible, mapLoaded]);
+
   // Radar attribution (#1896) -- swaps in a fresh AttributionControl with
   // the IEM/NOAA credit appended while radar is on, and back to the base
   // credit alone once it's off. removeControl()/addControl() with a new
@@ -1761,6 +1793,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
           rangeOutlineVisible={rangeOutlineVisible}
           onToggleRangeOutline={() => setRangeOutlineVisible((prev) => !prev)}
           rangeOutlineDisabled={!config.center}
+          rangeRingsVisible={rangeRingsVisible}
+          onToggleRangeRings={() => setRangeRingsVisible((prev) => !prev)}
+          rangeRingsDisabled={!config.center}
           onRecenter={handleRecenter}
           recenterDisabled={!config.center}
           recenterActive={isCentered}

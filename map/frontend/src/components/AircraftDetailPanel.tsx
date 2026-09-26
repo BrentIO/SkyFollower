@@ -39,9 +39,12 @@ export const SQUAWK_EMERGENCY_TEXT = "text-red-800 dark:text-red-200";
 export const TAG_PILL =
   "rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300";
 
-const SECTION_BAR =
+// Exported so components/SettingsPanel.tsx (#2012) can reuse the exact same
+// headed-section/divider look rather than a second, driftable copy of the
+// same Tailwind classes.
+export const SECTION_BAR =
   "bg-slate-100 px-4 py-1 text-[10px] font-bold tracking-wider text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300";
-const DIVIDER = "border-t border-slate-200 dark:border-slate-700";
+export const DIVIDER = "border-t border-slate-200 dark:border-slate-700";
 const ROW = "flex items-baseline justify-between gap-3 px-4 py-1.5";
 const ROW_LABEL = "text-xs text-slate-500 dark:text-slate-400";
 const ROW_VALUE = "text-sm text-slate-900 dark:text-slate-100";

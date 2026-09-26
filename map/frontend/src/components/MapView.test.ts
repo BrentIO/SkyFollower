@@ -1108,7 +1108,7 @@ describe("radar overlay (#1896, #1965)", () => {
     expect(body).toContain("radarPlaybackLoading={radarPlaybackLoading}");
   });
 
-  it("radarOn/radarOpacity/displayScale are persisted; radarPlaying is not", () => {
+  it("radarOn/radarOpacity/displayScale/rangeRingsVisible are persisted; radarPlaying is not", () => {
     const callIndex = mapViewSource.indexOf("savePersistedControls({");
     expect(callIndex).toBeGreaterThan(-1);
     const call = mapViewSource.slice(callIndex, mapViewSource.indexOf("});", callIndex) + 3);
@@ -1116,6 +1116,7 @@ describe("radar overlay (#1896, #1965)", () => {
     expect(call).toContain("labelsAll,");
     expect(call).toContain("mapLabelsOn,");
     expect(call).toContain("rangeOutlineVisible,");
+    expect(call).toContain("rangeRingsVisible,");
     expect(call).toContain("radarOn,");
     expect(call).toContain("radarOpacity,");
     expect(call).toContain("displayScale,");
@@ -1133,5 +1134,34 @@ describe("radar overlay (#1896, #1965)", () => {
     const call = mapViewSource.slice(swapIndex, swapIndex + 200);
     expect(call).toContain("[BASE_CUSTOM_ATTRIBUTION, RADAR_CUSTOM_ATTRIBUTION]");
     expect(call).toContain("BASE_CUSTOM_ATTRIBUTION");
+  });
+});
+
+describe("Range Rings toggle (#2012) -- new persisted on/off control for the static 100/150/200nmi rings", () => {
+  it("initializes from loadPersistedControls().rangeRingsVisible, the same lazy-initializer convention every other persisted control uses", () => {
+    expect(mapViewSource).toContain(
+      "const [rangeRingsVisible, setRangeRingsVisible] = useState(",
+    );
+    expect(mapViewSource).toContain("loadPersistedControls().rangeRingsVisible");
+  });
+
+  it("drives RANGE_RING_LAYER_ID/RANGE_RING_LABEL_LAYER_ID visibility via setLayoutProperty, gated on mapLoaded, rather than swapping source data", () => {
+    const effectIndex = mapViewSource.indexOf(
+      'const visibility = rangeRingsVisible ? "visible" : "none";',
+    );
+    expect(effectIndex).toBeGreaterThan(-1);
+    const depsIndex = mapViewSource.indexOf("}, [rangeRingsVisible, mapLoaded]);", effectIndex);
+    expect(depsIndex).toBeGreaterThan(effectIndex);
+    const effectBody = mapViewSource.slice(effectIndex, depsIndex);
+    expect(effectBody).toContain('map.setLayoutProperty(RANGE_RING_LAYER_ID, "visibility", visibility);');
+    expect(effectBody).toContain('map.setLayoutProperty(RANGE_RING_LABEL_LAYER_ID, "visibility", visibility);');
+  });
+
+  it("is passed through to ControlsPanel alongside a new disabled-when-no-center prop, mirroring rangeOutline's own convention", () => {
+    const propsIndex = mapViewSource.indexOf("rangeRingsVisible={rangeRingsVisible}");
+    expect(propsIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(propsIndex, propsIndex + 200);
+    expect(body).toContain("onToggleRangeRings={() => setRangeRingsVisible((prev) => !prev)}");
+    expect(body).toContain("rangeRingsDisabled={!config.center}");
   });
 });

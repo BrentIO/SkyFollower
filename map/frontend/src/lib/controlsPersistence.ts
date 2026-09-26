@@ -12,18 +12,25 @@
 
 const STORAGE_KEY = "skyfollower-map:controls:v1";
 // Bumped 1 -> 2 for #1896's radarOn/radarOpacity addition, 2 -> 3 for
-// #2000's displayScale addition -- a stored payload from before either
-// shape existed fails isPersistedControls below (missing fields) even
-// without the version check, but bumping the version is this file's own
-// documented mechanism for a shape change and costs nothing extra, so
-// it's done on principle rather than relying on the shape check alone.
-const STORAGE_VERSION = 3;
+// #2000's displayScale addition, 3 -> 4 for #2012's rangeRingsVisible
+// addition -- a stored payload from before any of these shapes existed
+// fails isPersistedControls below (missing fields) even without the
+// version check, but bumping the version is this file's own documented
+// mechanism for a shape change and costs nothing extra, so it's done on
+// principle rather than relying on the shape check alone.
+const STORAGE_VERSION = 4;
 
 export interface PersistedControls {
   historyAll: boolean;
   labelsAll: boolean;
   mapLabelsOn: boolean;
   rangeOutlineVisible: boolean;
+  /** #2012: the static 100/150/200nmi rings (lib/rangeRings.ts), previously
+   * rendered unconditionally whenever a center was configured with no on/off
+   * control at all -- defaults true so an operator who never touches the
+   * new Settings-panel toggle sees no change from today's always-on
+   * behavior. */
+  rangeRingsVisible: boolean;
   radarOn: boolean;
   radarOpacity: number;
   /** #2000: multiplies the aircraft icon-size expression and the info
@@ -47,6 +54,7 @@ const DEFAULTS: PersistedControls = {
   labelsAll: false,
   mapLabelsOn: false,
   rangeOutlineVisible: false,
+  rangeRingsVisible: true,
   radarOn: false,
   radarOpacity: 0.5,
   displayScale: 1,
@@ -73,6 +81,7 @@ function isPersistedControls(value: unknown): value is PersistedControls {
     isBoolean(v.labelsAll) &&
     isBoolean(v.mapLabelsOn) &&
     isBoolean(v.rangeOutlineVisible) &&
+    isBoolean(v.rangeRingsVisible) &&
     isBoolean(v.radarOn) &&
     isFiniteNumber(v.radarOpacity) &&
     isFiniteNumber(v.displayScale)

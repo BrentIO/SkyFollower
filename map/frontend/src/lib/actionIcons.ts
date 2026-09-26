@@ -211,3 +211,17 @@ export const DISPLAY_SCALE_ICON: IconSpec = {
     { d: "M21 3 9 15" },
   ],
 };
+
+// #2012: Lucide's "Settings" glyph (fetched byte-for-byte from
+// lucide-icons/lucide's icons/settings.svg, same convention as above) -- a
+// gear, reading as "open the settings panel," for ControlsPanel's new
+// Settings button (which consolidates Map Labels, Text & Icon Size, Range,
+// and Radar's opacity slider into one panel, see components/SettingsPanel.tsx).
+export const SETTINGS_ICON: IconSpec = {
+  paths: [
+    {
+      d: "M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915",
+    },
+  ],
+  circles: [{ cx: 12, cy: 12, r: 3 }],
+};
