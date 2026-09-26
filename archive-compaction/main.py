@@ -5,31 +5,22 @@ SkyFollower Archive Compaction
 Daily job that consolidates each day's small per-flight Parquet index files
 (index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet, written one per
 flight by archive-processor) into one file per partition, so Athena/Glue
-partition projection isn't scanning thousands of tiny files per day
-indefinitely.
+isn't scanning thousands of tiny files per day indefinitely.
 
 Tracks a `_compaction_state/watermark.json` "last compacted date" in S3 and
-walks forward one date at a time from watermark+1 up to today-2 (UTC) --
-absorbing flight_ttl_seconds archival delay and any lag from the archive
-processor's offline s3.db fallback draining late -- so a single run can
-clear a multi-day backlog once whatever stalled it is fixed, rather than
-advancing one day per scheduled run regardless of how far behind it is.
+walks forward one date at a time from watermark+1 up to today-2 (UTC),
+absorbing archival delay so a single run can clear a multi-day backlog
+once whatever stalled it is fixed.
 
-Before compacting each date, verifies every flight object under that date's
-flights/ prefix has a matching Parquet index row under its index/ prefix.
-A mismatch stops the loop at that date (nothing later is attempted either)
-and leaves the watermark exactly where it was, rather than silently
-compacting an index that's missing rows. The same state object also tracks
-how many consecutive runs have been blocked on that date, published over
-MQTT so a stuck compactor is visible without reading container logs, and
-the process exits with a distinct status code so exit-status monitoring can
-tell a parity mismatch apart from a genuine failure.
+Before compacting each date, verifies every flight object has a matching
+Parquet index row; a mismatch stops the loop there, leaves the watermark
+unchanged, tracks consecutive blocked runs (published over MQTT), and
+exits with a distinct status code so it's distinguishable from a genuine
+failure.
 
-Each per-flight row is read from the shared local index cache (see
-shared/index_cache.py) archive-processor populates on the same host,
-falling back to a real S3 GetObject only when the local copy is missing --
-see read_parquet_table(). Once a row's S3 object is confirmed deleted after
-compaction, its local cache copy is removed too (see compact_partition()).
+Each per-flight row is read from the shared local index cache archive-
+processor populates (see read_parquet_table()), falling back to S3 only
+when the local copy is missing.
 """
 
 from __future__ import annotations
@@ -79,11 +70,9 @@ _PARQUET_INDEX_SCHEMA = pa.schema([
     pa.field("s3_key", pa.string()),
 ])
 
-# Per-flight files are named "{uuid}.parquet" (a bare UUID-v7, no other
-# prefix -- see archive-processor's build_index_s3_key()). Consolidated
-# output from this job always uses this prefix instead, so a later run
-# never mistakes a previous run's output for a per-flight file and re-reads
-# rows that have already been compacted and had their sources deleted.
+# Per-flight files are named "{uuid}.parquet" with no other prefix.
+# Consolidated output always uses this prefix instead, so a later run never
+# mistakes it for a per-flight file and re-reads already-compacted rows.
 _COMPACTED_PREFIX = "compacted-"
 
 # Sibling to flights/ and index/, not nested inside either -- so Glue's
@@ -101,13 +90,10 @@ def _utc_today(now: datetime | None = None) -> date:
 
 
 def _cutoff_date(now: datetime | None = None) -> date:
-    """
-    Latest date this job will ever compact: today - 2, UTC. Not yesterday
-    -- this absorbs flight_ttl_seconds archival delay and any lag from the
-    archive processor's local s3.db offline-fallback queue draining late,
-    so a flight that logically belongs to that day but was archived a bit
-    late is still present before compaction runs.
-    """
+    """Latest date this job will ever compact: today - 2, UTC. Not
+    yesterday -- absorbs flight_ttl_seconds archival delay and fallback-
+    drain lag, so a late-archived flight is still present before
+    compaction runs."""
     return _utc_today(now) - timedelta(days=2)
 
 
@@ -124,13 +110,8 @@ def flights_prefix_for_date(d: date) -> str:
 
 
 def target_partition_prefix(now: datetime | None = None) -> str:
-    """
-    The index/ prefix for the cutoff date (today - 2, UTC) -- the single
-    date this job used to always target before the watermark-driven
-    catch-up loop (run_compaction) existed. Kept as a thin wrapper around
-    index_prefix_for_date/_cutoff_date since it's still the right prefix
-    for "the latest date we'd ever compact right now."
-    """
+    """The index/ prefix for the cutoff date (today - 2, UTC) -- the
+    latest date this job would ever compact right now."""
     return index_prefix_for_date(_cutoff_date(now))
 
 
@@ -164,14 +145,10 @@ def list_partition_objects(s3_client, bucket: str, prefix: str) -> list[str]:
 def read_parquet_table(
     s3_client, bucket: str, key: str, local_dir: str = INDEX_CACHE_DIR
 ) -> pa.Table:
-    """
-    Read a per-flight Parquet index row, preferring the local copy
-    archive-processor already wrote to the shared index cache on this same
-    host (see shared/index_cache.py) -- avoiding a GetObject call for bytes
-    already on local disk. Falls back to a real S3 read only when the
-    local copy is missing (a partial/failed local write on
-    archive-processor's side, or a row written before the cache existed).
-    """
+    """Read a per-flight Parquet index row, preferring the local copy
+    archive-processor already wrote to the shared index cache, to avoid
+    a GetObject call for bytes already on local disk. Falls back to S3
+    only when the local copy is missing."""
     local_path = local_index_path(key, local_dir)
     try:
         with open(local_path, "rb") as f:
@@ -187,12 +164,10 @@ def build_compacted_key(prefix: str) -> str:
 
 
 def delete_keys(s3_client, bucket: str, keys: list[str]) -> tuple[int, list[str]]:
-    """Batch-delete `keys` (up to 1000 per API call, the S3 limit). Returns
-    the count of individual failures reported in the response's Errors
-    list (plus every key in a chunk whose whole request call raised), and
-    the list of keys actually confirmed deleted -- the caller uses that
-    list to know which local index-cache copies are now safe to remove
-    too."""
+    """Batch-delete `keys` (up to 1000 per API call, the S3 limit).
+    Returns the failure count and the list of keys actually confirmed
+    deleted, so the caller knows which local index-cache copies are safe
+    to remove too."""
     failed = 0
     deleted: list[str] = []
     for i in range(0, len(keys), 1000):
@@ -220,11 +195,9 @@ def delete_keys(s3_client, bucket: str, keys: list[str]) -> tuple[int, list[str]
 # ---------------------------------------------------------------------------
 
 def _uuid_from_flight_key(key: str) -> str | None:
-    """
-    Extract the flight UUID from a flights/ object key
-    (flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz). Returns None for a key
-    that doesn't match this shape.
-    """
+    """Extract the flight UUID from a flights/ object key
+    (flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz), or None if it doesn't
+    match this shape."""
     basename = key.rsplit("/", 1)[-1]
     if not basename.endswith(".json.gz"):
         return None
@@ -235,12 +208,9 @@ def _uuid_from_flight_key(key: str) -> str | None:
 
 
 def _uuid_from_index_key(key: str) -> str | None:
-    """
-    Extract the flight UUID from a per-flight index/ object key
-    (index/year=/month=/day=/{uuid}.parquet). Returns None for an
-    already-compacted file (compacted-* basename) or a key that otherwise
-    doesn't match this shape.
-    """
+    """Extract the flight UUID from a per-flight index/ object key
+    (index/year=/month=/day=/{uuid}.parquet), or None for an
+    already-compacted file or otherwise non-matching key."""
     if not is_per_flight_file(key):
         return None
     basename = key.rsplit("/", 1)[-1]
@@ -250,16 +220,11 @@ def _uuid_from_index_key(key: str) -> str | None:
 
 
 def check_date_parity(s3_client, bucket: str, d: date) -> set[str]:
-    """
-    Return the set of flight UUIDs present under `d`'s flights/ prefix with
-    no matching Parquet index row under its index/ prefix -- exactly the
-    flights that would be missing from the index forever if this date were
-    compacted as-is. An empty set means a clean match (safe to compact).
-
-    Not checked in the other direction: an index row with no matching
-    flight object doesn't lose any data when compacted, so it isn't a
-    reason to block compaction here.
-    """
+    """Return the set of flight UUIDs present under `d`'s flights/ prefix
+    with no matching Parquet index row -- flights that would be missing
+    from the index forever if this date were compacted as-is. An empty
+    set means safe to compact. Not checked the other direction: an index
+    row with no matching flight object loses no data when compacted."""
     flight_keys = list_partition_objects(s3_client, bucket, flights_prefix_for_date(d))
     index_keys = list_partition_objects(s3_client, bucket, index_prefix_for_date(d))
 
@@ -279,23 +244,17 @@ def _parse_date_field(data: dict, key: str) -> date | None:
 
 
 def read_watermark(s3_client, bucket: str) -> dict | None:
-    """
-    Read compaction state (watermark plus mismatch tracking) from
+    """Read compaction state (watermark plus mismatch tracking) from
     _compaction_state/watermark.json.
 
-    Returns None only when the object genuinely doesn't exist yet -- a real
-    first run, detected via S3's NoSuchKey/404 response on get_object. Any
-    other failure (permissions, a corrupt/unparseable object, an S3 outage,
-    ...) is deliberately NOT treated the same as "absent": it re-raises so
-    the caller fails loudly instead of silently treating an unreadable
-    object as "nothing compacted yet" and skipping every date before the
-    cutoff.
+    Returns None only when the object genuinely doesn't exist yet (a real
+    first run, via S3's NoSuchKey/404). Any other failure re-raises rather
+    than being treated as "absent" -- silently skipping every date before
+    the cutoff would be worse than failing loudly.
 
-    On success, returns a dict with `last_compacted_date` (date | None),
-    `mismatch_date` (date | None), and `mismatch_runs` (int) -- the state
-    written by write_watermark(). Missing keys (a watermark object written
-    by a version of this job before mismatch tracking existed) default to
-    None / 0 so an old object still parses cleanly.
+    On success, returns a dict with `last_compacted_date`, `mismatch_date`,
+    and `mismatch_runs`. Missing keys (a pre-mismatch-tracking watermark
+    object) default to None / 0.
     """
     try:
         response = s3_client.get_object(Bucket=bucket, Key=_WATERMARK_KEY)
@@ -342,24 +301,19 @@ def write_watermark(
 def compact_partition(
     s3_client, bucket: str, prefix: str, local_dir: str = INDEX_CACHE_DIR
 ) -> dict:
-    """
-    Compact one day's partition: read every per-flight Parquet file under
-    `prefix`, write one consolidated file, then delete only the source
-    files that were actually read into it.
+    """Compact one day's partition: read every per-flight Parquet file
+    under `prefix`, write one consolidated file, then delete only the
+    source files that were actually read into it.
 
-    Write-then-delete, and only ever delete a key that was successfully
-    read into the compacted output -- a file that fails to read is left in
-    place (absent from the compacted output, so deleting it would lose
-    data), and a file that lands under this prefix after the initial
-    listing (a late straggler) is simply never seen by this run. Both
-    cases are the same accepted, self-healing shape: an extra small file
-    left in the partition, queryable on its own, no duplication risk.
+    Write-then-delete, and only delete a key successfully read into the
+    output -- an unreadable file is left in place (deleting it would lose
+    data) and a late straggler that lands after the initial listing is
+    simply never seen by this run. Both are the same self-healing shape:
+    an extra small file left in the partition, queryable on its own.
 
-    Each per-flight read prefers the local index cache over S3 (see
-    read_parquet_table) -- once a source key's S3 object is confirmed
-    deleted, its local cache copy is removed too, so the shared volume
-    only ever holds the not-yet-compacted backlog rather than growing
-    without bound.
+    Each read prefers the local index cache over S3 (see
+    read_parquet_table); once a source key's S3 object is confirmed
+    deleted, its local cache copy is removed too.
     """
     all_keys = list_partition_objects(s3_client, bucket, prefix)
     source_keys = [k for k in all_keys if is_per_flight_file(k)]
@@ -410,29 +364,19 @@ def compact_partition(
 def run_compaction(
     s3_client, bucket: str, now: datetime | None = None, local_dir: str = INDEX_CACHE_DIR
 ) -> dict:
-    """
-    Catch-up loop: starting the day after the watermark (or cutoff - 1 day
-    if no watermark exists yet, matching the old fixed single-date
-    behavior on a first run), compact one date at a time up to the cutoff
-    (today - 2, UTC). Each date is gated by check_date_parity first -- a
-    mismatch stops the loop immediately, leaving that date and every later
-    one uncompacted and the watermark exactly where it was, so a later run
-    resumes at the same stuck date once whatever caused the mismatch
-    resolves (the row lands late, or drains from index_queue) instead of
-    silently skipping past it.
+    """Catch-up loop: starting the day after the watermark (or
+    cutoff - 1 day on a first run), compact one date at a time up to the
+    cutoff (today - 2, UTC). Each date is gated by check_date_parity
+    first -- a mismatch stops the loop immediately, leaving that date and
+    every later one uncompacted and the watermark unchanged, so a later
+    run resumes at the same stuck date once the mismatch resolves.
 
     A mismatch on the same date across consecutive runs increments
-    `mismatch_runs` (persisted alongside the watermark) so a stuck
-    compactor is visible as a climbing number rather than only a daily
-    ERROR log line. The count resets to 1 whenever the blocked date
-    changes, and to 0 once a run gets past it.
+    `mismatch_runs` (persisted alongside the watermark), resetting to 1
+    when the blocked date changes and to 0 once a run gets past it.
 
-    `local_dir` is the shared index-cache root (see shared/index_cache.py)
-    each compacted date's per-flight reads and post-delete local cleanup
-    use -- one directory tree, organized the same year=/month=/day= way as
-    the S3 index/ prefix, so a multi-day catch-up run naturally reads and
-    cleans up whichever dates it actually touches without any extra
-    bookkeeping for "how many days are outstanding."
+    `local_dir` is the shared index-cache root each date's reads and
+    post-delete cleanup use.
     """
     cutoff = _cutoff_date(now)
     state = read_watermark(s3_client, bucket)
@@ -691,11 +635,8 @@ def main() -> None:
             logger.warning("Failed to publish MQTT stats: %s", exc)
 
     if status == "mismatch":
-        # Distinct from a genuine failure so anything watching exit status
-        # (Ofelia, an external monitor) can tell "blocked on a parity
-        # mismatch" apart from "the job actually errored" -- both are
-        # non-zero, neither is ever 0, since a compactor stuck for weeks
-        # must never look healthy to something watching exit status alone.
+        # Distinct non-zero code so exit-status monitoring can tell a
+        # parity mismatch apart from a genuine failure.
         sys.exit(2)
     if status != "success":
         sys.exit(1)
