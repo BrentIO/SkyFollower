@@ -13,19 +13,13 @@ import time
 
 def parse_978_line(line: str) -> tuple[str, str, float] | None:
     """
-    Parse a dump978-fa output line.
+    Parse a dump978-fa output line into (raw_hex, icao_hex, received_at),
+    or None if the line should be skipped (!-preambles, blank lines,
+    unrecognised format).
 
-    Returns (raw_hex, icao_hex, received_at) or None if the line should be
-    skipped (!-preambles, blank lines, unrecognised format).
-
-    raw_hex preserves the leading - (downlink) or + (uplink) symbol so
-    downstream processors can distinguish frame direction.
-
-    ICAO address is at bytes 1-3 of the UAT payload. In raw_hex that is
-    chars [3:9] — one char for the symbol, two chars for byte 0, then the
-    three ICAO bytes.
-
-    Timestamp is taken from the t= field in the metadata.
+    raw_hex preserves the leading - (downlink) or + (uplink) symbol.
+    ICAO address is at bytes 1-3 of the UAT payload -- chars [3:9] of
+    raw_hex once the symbol and byte-0 are accounted for.
     """
     line = line.strip()
     if not line or line.startswith("!"):

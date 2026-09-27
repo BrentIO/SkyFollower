@@ -2,10 +2,9 @@
 Tests for shared/timing.py -- the single definition point for every timing
 value in SkyFollower.
 
-Two things are enforced here: the cross-file invariants the module asserts
-at import (re-checked explicitly so a regression names the broken pair),
-and the naming convention, so a future addition that does not follow it
-fails CI rather than quietly reintroducing the drift this module removed.
+Enforces two things: the cross-file invariants the module asserts at
+import (re-checked here so a regression names the broken pair), and the
+naming convention, so a future addition that doesn't follow it fails CI.
 """
 
 from __future__ import annotations

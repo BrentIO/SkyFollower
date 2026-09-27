@@ -1,49 +1,25 @@
 """
-Shared SQLite-backed fallback/retry queue with poison-message dead-lettering.
+Shared SQLite-backed fallback/retry queue with poison-message
+dead-lettering, used by the receiver, message processor, and archive
+processor when RabbitMQ/S3 is unreachable.
 
-Every component that talks to an external dependency (RabbitMQ, S3) queues
-locally when that dependency is unreachable, and drains oldest-first once it
-recovers. Before this module, `receiver`, `message-processor`, and
-`archive-processor` each hand-rolled a near-identical class with no way to
-tell "still down, keep retrying" apart from "this exact item will never
-succeed" -- a single permanently-failing item blocked everything queued
-behind it forever, since drain() stops the whole pass on the first
-exception and always re-selects the same oldest (still-failing) row next.
+Each row tracks a retry_count. Below `retry_threshold`, a failure just
+stops the pass so the same row is retried first next time. At the
+threshold, the row is dead-lettered -- written to
+`{dirname(db_path)}/dead_letters/{table_name}/` for out-of-band inspection
+-- and the pass continues past it, since it's been judged permanently
+unrecoverable rather than a dependency still down.
 
-`FallbackQueue` adds a per-row retry count: below `retry_threshold`, a
-failure behaves exactly as before (stop the pass, retry from the top next
-time). At the threshold, the row is dead-lettered -- written out as a
-standalone JSON file under `{dirname(db_path)}/dead_letters/{table_name}/`
-for an operator to inspect/discard out-of-band -- and the drain pass
-continues to whatever's queued behind it, instead of stopping.
+`min_retry_interval_seconds` bounds how often a single row can be
+re-attempted, independent of how often the caller invokes drain() -- so a
+rapidly-retriggering caller (e.g. a flapping reconnect) can't burn through
+`retry_threshold` and dead-letter a row that was never actually poison.
 
-A raw attempt count alone isn't enough: a caller can retry a row far more
-often than once per `retry_threshold`-worth-of-outage-time if its own
-retry trigger fires in rapid bursts (e.g. a flapping connection
-reconnecting every few seconds, each reconnect immediately re-attempting
-the head-of-queue row) -- which would dead-letter a perfectly recoverable
-row within seconds of real instability, not genuine unrecoverability.
-`min_retry_interval_seconds` bounds the *rate* of attempts against a
-single row, independent of how often the caller invokes drain(): the
-oldest row is skipped (the whole pass stops, to preserve strict
-oldest-first ordering) until at least that long has passed since its own
-last attempt.
-
-Some failures aren't poison and aren't a recoverable outage either: the
-dependency is simply not present in this environment on purpose (e.g. a
-message processor publishing completed flights with `mandatory=True`
-against an `archive` queue that no operator ever declared because this
-deployment runs no archive processor). Retrying such a row forever is correct --
-dead-lettering it throws away legitimate primary data. A caller passes
-the exception type(s) that mean "environmental, not poison" via
-`non_poison_exceptions`; a row failing only with those types behaves like
-a permanent below-threshold failure and is never written to
-`dead_letters/`. To keep that from growing the retryable table without
-bound, a caller can also opt into `retryable_max_bytes`: a ring-buffer
-cap on the plain `queue` table itself (same oldest-first eviction the
-dead-letter directory already has), so an environment that never stands
-up the dependency keeps roughly its most recent cap's worth of rows and
-drains them all automatically once the dependency finally appears.
+`non_poison_exceptions` marks failures caused by a dependency that is
+deliberately absent from this deployment, not a poison payload: those rows
+retry forever and are never dead-lettered. `retryable_max_bytes` caps the
+resulting unbounded growth with ring-buffer eviction on the plain queue
+table.
 """
 
 from __future__ import annotations
@@ -85,15 +61,11 @@ class FallbackQueue:
         self._retry_threshold = retry_threshold
         self._dead_letter_max_bytes = dead_letter_max_bytes
         self._min_retry_interval_seconds = min_retry_interval_seconds
-        # Exception types that mean "this dependency isn't present in this
-        # environment on purpose" -- kept broker-agnostic: the caller
-        # supplies the concrete types (e.g. pika.exceptions.UnroutableError).
-        # A row failing only with these is retried forever, never dead-lettered.
+        # Failures meaning "dependency deliberately absent here" -- retried
+        # forever, never dead-lettered.
         self._non_poison_exceptions = non_poison_exceptions
-        # Opt-in ring-buffer cap on the plain retryable table (bytes of
-        # payload text). Only meaningful for a caller whose queue can
-        # legitimately grow unbounded because a non-poison failure keeps
-        # rows retrying forever. None = no cap (the historical behaviour).
+        # Opt-in ring-buffer cap (bytes of payload text) on the plain
+        # retryable table. None = no cap.
         self._retryable_max_bytes = retryable_max_bytes
         self._dead_letter_dir = os.path.join(
             os.path.dirname(os.path.abspath(db_path)), "dead_letters", table_name
@@ -101,15 +73,11 @@ class FallbackQueue:
 
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        # WAL + NORMAL: a commit no longer fsyncs on every call, only at a
-        # checkpoint. A plain process crash (SIGKILL, OOM, container stop)
-        # still loses nothing -- the WAL is intact and replays on reopen;
-        # only a host power loss or kernel panic can drop the last few
-        # committed rows. That trade buys an order-of-magnitude cheaper
-        # put()/put_many(), which matters because these writes land on hot
-        # paths during an outage (the receiver's socket-read overflow, the
-        # archive processor's S3-down backlog). Same choice the message
-        # processor makes for its own WAL active store.
+        # WAL + NORMAL: commits no longer fsync every call, only at a
+        # checkpoint. A process crash still loses nothing (WAL replays on
+        # reopen); only a host power loss or kernel panic can drop the
+        # last few committed rows -- a trade worth it since these writes
+        # land on hot paths during an outage.
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(
             f"CREATE TABLE IF NOT EXISTS {self._table} "
@@ -125,13 +93,10 @@ class FallbackQueue:
         self._conn.commit()
 
         self._lock = threading.Lock()
-        # Single-flight guard: drain() only locks around each individual
-        # SELECT/DELETE/UPDATE, not the whole fetch-process-delete cycle for
-        # a row, so two overlapping drain() calls (e.g. a reconnect trigger
-        # and a periodic telemetry-tick trigger firing close together)
-        # could each SELECT the same oldest row before either removes it.
-        # This lock ensures at most one drain runs at a time for *this*
-        # queue instance.
+        # Single-flight guard: `_lock` only covers each individual
+        # SELECT/DELETE/UPDATE, so two overlapping drain() calls could each
+        # select the same oldest row before either removes it. This lock
+        # ensures at most one drain runs at a time for this queue instance.
         self._drain_lock = threading.Lock()
 
     def put(self, payload: str) -> None:
@@ -165,12 +130,9 @@ class FallbackQueue:
 
     def _evict_retryable_over_cap_locked(self, incoming_bytes: int) -> None:
         """Ring-buffer eviction for the plain retryable table, mirroring
-        `_evict_oldest_if_over_cap()` for the dead-letter directory. Caller
-        must hold `self._lock`; the commit happens with the subsequent
-        INSERT in put(). Evicts oldest rows until the table plus the
-        incoming payload fits under the cap. This is a capacity eviction of
-        legitimate queued data, not a poison classification -- logged as
-        such, and never routed through `dead_letters/`."""
+        `_evict_oldest_if_over_cap()` for the dead-letter directory.
+        Caller must hold `self._lock`. This is capacity eviction of
+        legitimate queued data, never routed through `dead_letters/`."""
         total = self._conn.execute(
             f"SELECT COALESCE(SUM(LENGTH(payload)), 0) FROM {self._table}"
         ).fetchone()[0]
@@ -192,34 +154,15 @@ class FallbackQueue:
     def drain(self, process_fn: Callable[[str], None]) -> bool:
         """Drain queued items oldest-first via process_fn(payload).
 
-        Returns True if the queue was empty when this returned -- False in
-        every other case, including a row still sitting in its retry
-        cooldown, since the queue isn't actually empty either way. Callers
-        that gate other state on "the backlog is fully clear" need this
-        distinction, not just to call this and move on.
+        Returns True only if the queue was empty when this returned --
+        False for every other case, including a row still in its retry
+        cooldown, since the queue isn't actually empty either way.
 
-        A row that reaches `retry_threshold` is dead-lettered and skipped;
-        the pass continues to whatever's queued behind it rather than
-        stopping, since that failure has already been judged permanent
-        rather than a dependency that might still recover.
-
-        A row whose failure is an instance of `non_poison_exceptions` is
-        never dead-lettered no matter how many times it's attempted -- that
-        failure means the dependency isn't deployed in this environment,
-        which is a permanent config choice, not a property of the row. It
-        keeps behaving like a below-threshold failure (stop the pass, retry
-        next time); disk growth for this case is bounded by
-        `retryable_max_bytes` instead.
-
-        A row attempted less than `min_retry_interval_seconds` ago is left
-        alone this pass -- this caps how fast a row can accumulate retries
-        regardless of how often the caller invokes drain(), so a caller
-        whose own retry trigger fires in rapid bursts (e.g. a flapping
-        connection reconnecting every few seconds, each reconnect
-        immediately re-draining) can't burn through retry_threshold in
-        well under a real recovery window and dead-letter a row that was
-        never actually poison. The whole pass stops rather than skipping
-        ahead to a newer row, to preserve strict oldest-first ordering.
+        A row is left in place (pass stops) on a below-threshold failure,
+        a non-poison failure, or an active retry cooldown; it's removed
+        (pass continues) on success or once it's dead-lettered at
+        `retry_threshold`. See module docstring for the non-poison and
+        cooldown rationale.
         """
         while True:
             step = self.drain_one(process_fn)
@@ -230,21 +173,11 @@ class FallbackQueue:
             # DRAIN_PROGRESSED -- keep going to whatever's queued behind it.
 
     def drain_one(self, process_fn: Callable[[str], None]) -> str:
-        """Process at most one row -- the oldest -- and return one of:
-
-        * ``DRAIN_EMPTY``      -- the queue is empty, nothing was attempted.
-        * ``DRAIN_PROGRESSED`` -- the oldest row was published (or judged
-          poison and dead-lettered) and removed; there may be more behind it.
-        * ``DRAIN_STOP``       -- the oldest row failed a below-threshold
-          attempt, hit a non-poison failure, or is still inside its
-          retry cooldown; it stays queued and the caller should back off
-          before retrying.
-
-        Same per-row semantics as ``drain()`` -- retry counting,
-        dead-lettering, the non-poison carve-out, strict oldest-first
-        ordering -- exposed one row at a time so a caller can interleave
-        higher-priority work between rows instead of running the whole
-        backlog in one uninterruptible pass. ``drain()`` is this in a loop.
+        """Process at most one row -- the oldest -- and return
+        ``DRAIN_EMPTY``, ``DRAIN_PROGRESSED``, or ``DRAIN_STOP`` (see
+        module-level constants). Same per-row semantics as ``drain()``,
+        exposed one row at a time so a caller can interleave
+        higher-priority work between rows. ``drain()`` is this in a loop.
         """
         with self._lock:
             cur = self._conn.execute(
@@ -272,34 +205,12 @@ class FallbackQueue:
             return self._record_failure(row_id, payload, retry_count, exc)
 
     def drain_batch(self, process_fn: Callable[[str], None], max_batch: int) -> str:
-        """Process up to ``max_batch`` oldest rows in one pass, with the
-        same outcome codes and per-row semantics as ``drain_one()``:
-
-        * ``DRAIN_EMPTY``      -- the queue was empty; nothing attempted.
-        * ``DRAIN_PROGRESSED`` -- at least one row published (or judged
-          poison and dead-lettered) and removed; there may be more behind.
-        * ``DRAIN_STOP``       -- the first not-yet-processed row failed a
-          below-threshold / non-poison attempt, or is still inside its
-          retry cooldown, and nothing before it succeeded either.
-
-        Batched form of ``drain_one()`` -- for a caller that has decided a
-        bounded amount of extra latency on its higher-priority work is an
-        acceptable price for draining a large backlog far faster than one
-        commit per row. Every rule ``drain_one()`` enforces still holds:
-
-        - Strict oldest-first, within the batch and across passes.
-        - Selection **stops at the first row still inside its retry
-          cooldown** -- the pass never skips past it to fresher rows
-          (``drain_one``'s stop-rather-than-reorder rule). If that is the
-          very first row, nothing is attempted.
-        - ``process_fn`` is called per selected row in id order, stopping
-          at the first failure.
-        - Every row whose ``process_fn`` returned without raising is
-          removed in a single ``DELETE ... WHERE id IN (...)`` + one
-          commit.
-        - A row that raised gets the unchanged per-row
-          retry_count / non-poison / dead-letter handling, applied to that
-          one row; rows selected after it wait for a later pass.
+        """Batched form of ``drain_one()``: process up to ``max_batch``
+        oldest rows in one pass (one commit for all successes), with the
+        same outcome codes and per-row semantics -- strict oldest-first,
+        stopping selection at the first row still in its retry cooldown,
+        and applying normal retry/dead-letter handling to the first row
+        that raises.
         """
         if max_batch < 1:
             raise ValueError("max_batch must be >= 1")
@@ -357,13 +268,8 @@ class FallbackQueue:
         Shared verbatim by ``drain_one()`` and ``drain_batch()``."""
         new_count = retry_count + 1
         if isinstance(exc, self._non_poison_exceptions):
-            # Environmental, not poison: the dependency simply isn't
-            # present in this deployment. Behave exactly like a
-            # below-threshold failure forever -- stop the pass, retry
-            # from the top next drain, respect the cooldown -- and
-            # never dead-letter. retry_count/last_attempted_at still
-            # advance, purely so an operator can see how long the row
-            # has been stuck.
+            # Environmental, not poison -- never dead-letter; counters
+            # still advance so an operator can see how long it's stuck.
             with self._lock:
                 self._conn.execute(
                     f"UPDATE {self._table} SET retry_count=?, last_attempted_at=? WHERE id=?",
@@ -409,10 +315,8 @@ class FallbackQueue:
             return cur.fetchone()[0]
 
     def dead_letter_depth(self) -> int:
-        """Live count of files in the dead-letter directory -- not a
-        separately-tracked number that could drift. An operator manually
-        deleting a file has the same effect as the code deleting one: the
-        next call just recounts."""
+        """Live count of files in the dead-letter directory rather than a
+        separately-tracked number, so it can't drift from reality."""
         if not os.path.isdir(self._dead_letter_dir):
             return 0
         return sum(
@@ -439,9 +343,8 @@ class FallbackQueue:
             "error": str(exc),
             "dead_lettered_at": datetime.now(timezone.utc).isoformat(),
         }
-        # Filename sorts oldest-first lexically (fixed-width epoch seconds)
-        # and is collision-free even for two dead-letters in the same
-        # queue instance at the same microsecond, since row_id is unique.
+        # Fixed-width epoch seconds sort oldest-first lexically; row_id
+        # keeps two same-microsecond dead-letters collision-free.
         filename = f"{time.time():016.6f}_{row_id}.json"
         path = os.path.join(self._dead_letter_dir, filename)
         with open(path, "w") as f:
@@ -453,12 +356,11 @@ class FallbackQueue:
         )
 
     def _evict_oldest_if_over_cap(self) -> None:
-        """Approximate ring-buffer eviction: if the directory is already at
-        or over the cap, delete the single oldest file before this write.
-        Not a precise pre-check against the incoming file's exact size --
-        individual dead-letter files are small JSON payloads, so a
-        one-out-one-in swap is sufficient in the normal case and
-        self-corrects on the next write if it isn't."""
+        """Approximate ring-buffer eviction: if the directory is already
+        at or over the cap, delete the single oldest file before this
+        write. Not a precise pre-check against the incoming file's exact
+        size -- a one-out-one-in swap is sufficient given small JSON
+        payloads, and self-corrects on the next write otherwise."""
         try:
             names = os.listdir(self._dead_letter_dir)
         except OSError:

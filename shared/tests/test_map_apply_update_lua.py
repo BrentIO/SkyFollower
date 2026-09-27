@@ -1,25 +1,18 @@
 """
 Integration tests for shared/lua/map_apply_update.lua, run against a live
-Redis (Lua scripting required -- a redis-stack instance, same as
-test_merge_aircraft_lua.py/test_route_airports_lua.py in this directory).
+Redis (Lua scripting required -- a redis-stack instance).
 
-These exercise the actual script via EVALSHA, the same way map/state_store.py's
-FlightStateStore.apply_update calls it, rather than mocking the TTL behavior --
-there's no way to verify Lua semantics (e.g. which SET/EXPIRE calls actually
-run for a given msg_type) by testing Python code alone.
+Exercises the actual script via EVALSHA rather than mocking the TTL
+behavior, since Lua semantics (e.g. which SET/EXPIRE calls run for a
+given msg_type) can't be verified by testing Python code alone.
 
-Focus: #1966's fix -- flight:live:{icao_hex}'s TTL (the "stale"/"live"
-signal) must only be refreshed by `position` packets, never by `metadata`
-(including message-processor's unconditional 60s metadata resend, which
-carries the same frozen last_message timestamp as before and would
-otherwise make an idle aircraft cycle stale/live forever). flight:detail
-and flight:visible must keep refreshing on *both* packet types -- that
-resync/keep-on-screen behavior is unrelated to the stale/live distinction
-and must not regress.
+Focus: #1966's fix -- flight:live:{icao_hex}'s TTL must only be refreshed
+by `position` packets, never by `metadata` (including the unconditional
+60s metadata resend). flight:detail and flight:visible must keep
+refreshing on both packet types.
 
 Requires a reachable Redis at REDIS_TEST_HOST:REDIS_TEST_PORT (defaults to
-localhost:6379). If none is reachable, every test in this module is skipped
-rather than failed, since CI does not run a Redis service for this workflow.
+localhost:6379); skipped, not failed, when none is reachable.
 """
 
 from __future__ import annotations
@@ -105,9 +98,8 @@ def _detail_key(hex_):
 
 
 class TestLiveTtlRefreshByMsgType:
-    """#1966 -- flight:live's TTL is the "stale" signal
-    (map/state_store.py's module docstring); it must move only on real
-    `position` data, never on a `metadata` resend."""
+    """#1966 -- flight:live's TTL is the "stale" signal; it must move
+    only on real `position` data, never on a `metadata` resend."""
 
     def test_position_packet_sets_live_ttl(self, redis_client, apply_update_sha, icao_hex):
         _apply_update(redis_client, apply_update_sha, icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})
@@ -115,45 +107,36 @@ class TestLiveTtlRefreshByMsgType:
         assert 0 < ttl <= _STALE_SECONDS
 
     def test_metadata_only_packet_never_creates_live_key(self, redis_client, apply_update_sha, icao_hex):
-        """An aircraft whose first-ever packet is `metadata` (no position
-        yet) must not get a flight:live key at all -- there's no real
-        position data yet for "stale" to be measured against."""
+        """An aircraft whose first-ever packet is `metadata` must not get
+        a flight:live key at all."""
         _apply_update(redis_client, apply_update_sha, icao_hex, "metadata", 1000.0, {"ident": "TST1"})
         assert redis_client.exists(_live_key(icao_hex)) == 0
 
     def test_metadata_packet_does_not_refresh_an_existing_live_ttl(self, redis_client, apply_update_sha, icao_hex):
-        """The core regression case: a `position` packet establishes
-        flight:live, time passes (simulated here via a direct EXPIRE rather
-        than a real sleep, for a fast/deterministic test) so the TTL is
-        already low, and a `metadata` packet arrives (e.g. the 60s resend)
-        with the *same* timestamp -- the out-of-order guard accepts it
-        (equal timestamps aren't dropped), but it must leave flight:live's
-        TTL untouched. Before the fix, this SET...EX call ran unconditionally
-        and would have reset the TTL back to the full stale_seconds here."""
+        """Core regression case: a `metadata` packet with the same
+        timestamp as the position that established flight:live (e.g. the
+        60s resend) must leave its TTL untouched."""
         _apply_update(redis_client, apply_update_sha, icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})
         assert redis_client.ttl(_live_key(icao_hex)) <= _STALE_SECONDS
 
-        redis_client.expire(_live_key(icao_hex), 3)  # Simulate most of stale_seconds having elapsed.
+        redis_client.expire(_live_key(icao_hex), 3)  # simulate most of stale_seconds elapsed
 
         _apply_update(redis_client, apply_update_sha, icao_hex, "metadata", 1000.0, {"ident": "TST1"})
         ttl_after_metadata = redis_client.ttl(_live_key(icao_hex))
         assert 0 < ttl_after_metadata <= 3
 
     def test_metadata_packet_does_not_resurrect_an_expired_live_key(self, redis_client, apply_update_sha, icao_hex):
-        """Once flight:live has actually expired (the aircraft has already
-        dimmed), a later metadata resend must not bring it back -- the
-        literal "dims once and stays dimmed" acceptance criterion."""
+        """Once flight:live has actually expired, a later metadata resend
+        must not bring it back."""
         _apply_update(redis_client, apply_update_sha, icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})
-        redis_client.delete(_live_key(icao_hex))  # Simulate the key having already expired.
+        redis_client.delete(_live_key(icao_hex))  # simulate the key having already expired
 
         _apply_update(redis_client, apply_update_sha, icao_hex, "metadata", 1000.0, {"ident": "TST1"})
         assert redis_client.exists(_live_key(icao_hex)) == 0
 
     def test_position_packet_refreshes_an_aged_live_ttl_back_to_full(self, redis_client, apply_update_sha, icao_hex):
-        """Positive control: unlike metadata, a real `position` packet must
-        still refresh flight:live's TTL back up, even if it had already
-        partially counted down -- this is the legitimate "aircraft is
-        genuinely still transmitting" case #1966 must not break."""
+        """Positive control: a real `position` packet must still refresh
+        flight:live's TTL back up even if it had partially counted down."""
         _apply_update(redis_client, apply_update_sha, icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})
         redis_client.expire(_live_key(icao_hex), 2)
 
@@ -164,8 +147,8 @@ class TestLiveTtlRefreshByMsgType:
 
 class TestOtherTtlsStayUnconditional:
     """flight:detail/flight:visible's refresh-on-every-accepted-packet
-    behavior is the legitimate resync/keep-on-screen mechanism the metadata
-    resend loop depends on -- #1966 must not touch it."""
+    behavior is the resync/keep-on-screen mechanism the metadata resend
+    loop depends on -- #1966 must not touch it."""
 
     def test_metadata_packet_refreshes_visible_ttl(self, redis_client, apply_update_sha, icao_hex):
         _apply_update(redis_client, apply_update_sha, icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})
@@ -182,10 +165,9 @@ class TestOtherTtlsStayUnconditional:
         assert redis_client.ttl(_detail_key(icao_hex)) > 3
 
     def test_metadata_only_packet_still_creates_detail_and_visible_keys(self, redis_client, apply_update_sha, icao_hex):
-        """Restart-recovery relies on this: even a metadata-only resend for
-        a brand-new-to-this-Redis-instance aircraft must still populate
-        detail/visible (just not live) -- see map map-service-restart
-        acceptance criterion in #1966."""
+        """Restart-recovery relies on this: even a metadata-only resend
+        for a brand-new-to-this-Redis-instance aircraft must still
+        populate detail/visible (just not live)."""
         merged = _apply_update(redis_client, apply_update_sha, icao_hex, "metadata", 1000.0, {"ident": "TST1"})
         assert merged is not None
         assert redis_client.exists(_detail_key(icao_hex))
@@ -194,11 +176,9 @@ class TestOtherTtlsStayUnconditional:
 
 
 class TestPositionBehaviorUnaffected:
-    """Regression guard: the merge/out-of-order/trail behavior this script
-    already had must be completely unaffected by the msg_type-conditional
-    live-TTL change -- covered more fully by test_merge_aircraft_lua.py's
-    sibling suites and map/tests/test_state_store.py, just pinned here too
-    since this is the file that actually changed."""
+    """Regression guard: the merge/out-of-order/trail behavior this
+    script already had must be unaffected by the msg_type-conditional
+    live-TTL change."""
 
     def test_merge_still_returns_both_position_and_metadata_fields(self, redis_client, apply_update_sha, icao_hex):
         _apply_update(redis_client, apply_update_sha, icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})

@@ -46,13 +46,10 @@ class TestPutAndDepth:
             assert row[0] == "wal"
 
     def test_synchronous_is_normal(self):
-        """WAL + synchronous=NORMAL: commits stop fsyncing per call (much
-        cheaper put()/put_many()), while a plain process crash still
-        replays the WAL intact on reopen. PRAGMA synchronous reports 1 for
-        NORMAL."""
+        """PRAGMA synchronous reports 1 for NORMAL."""
         with tempfile.TemporaryDirectory() as td:
-            # synchronous is a per-connection setting, not persisted in the
-            # file -- so it has to be read on the queue's own connection.
+            # A per-connection setting, not persisted in the file -- must
+            # be read on the queue's own connection.
             q = _make_queue(td)
             assert q._conn.execute("PRAGMA synchronous").fetchone()[0] == 1
 
@@ -112,9 +109,7 @@ class TestPutAndDepth:
 
     def test_migrates_pre_existing_table_missing_retry_count(self):
         """A queue.db created before retry_count existed has no such
-        column -- CREATE TABLE IF NOT EXISTS alone won't add it to an
-        existing file, so __init__ must ALTER TABLE it in, same pattern as
-        message-processor's _migrate_schema."""
+        column; __init__ must ALTER TABLE it in."""
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "queue.db")
             conn = sqlite3.connect(path)
@@ -136,9 +131,8 @@ class TestPutAndDepth:
             assert row[0] == 0
 
     def test_migrates_pre_existing_table_missing_last_attempted_at(self):
-        """A queue.db created with retry_count but before last_attempted_at
-        existed (e.g. an earlier build of this same PR) needs the same
-        ALTER TABLE treatment, independently of the retry_count migration."""
+        """A queue.db created with retry_count but before
+        last_attempted_at existed needs the same ALTER TABLE treatment."""
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "queue.db")
             conn = sqlite3.connect(path)
@@ -222,9 +216,8 @@ class TestDrainOrderingAndBackoff:
 
 
 class TestDrainOne:
-    """drain_one() exposes drain()'s per-row step so a caller can
-    interleave higher-priority work between rows. Same retry / dead-letter
-    / cooldown / oldest-first semantics, one row at a time."""
+    """drain_one() exposes drain()'s per-row step, one row at a time,
+    with the same retry/dead-letter/cooldown/oldest-first semantics."""
 
     def test_empty_queue_returns_drain_empty(self):
         with tempfile.TemporaryDirectory() as td:
@@ -274,10 +267,8 @@ class TestDrainOne:
 
 
 class TestDrainBatch:
-    """drain_batch() is drain_one() extended to a bounded batch: same
-    outcome codes, same per-row retry / dead-letter / cooldown / strict
-    oldest-first semantics, one DELETE+commit for the whole succeeded
-    prefix."""
+    """drain_batch() is drain_one() extended to a bounded batch, with one
+    DELETE+commit for the whole succeeded prefix."""
 
     def test_empty_queue_returns_drain_empty(self):
         with tempfile.TemporaryDirectory() as td:
@@ -412,12 +403,9 @@ class TestDrainBatch:
 
 
 class TestMinRetryInterval:
-    """Covers a false-positive dead-lettering risk: a caller whose
-    own retry trigger fires in rapid bursts (e.g. a flapping RabbitMQ
-    connection reconnecting every few seconds, each reconnect immediately
-    re-draining) could otherwise burn through retry_threshold in well
-    under a real recovery window, dead-lettering a row that was never
-    actually poison -- just unlucky timing during a brief instability."""
+    """Covers a false-positive dead-lettering risk: a rapidly-retriggering
+    caller (e.g. a flapping connection) could otherwise burn through
+    retry_threshold well under a real recovery window."""
 
     def test_default_min_retry_interval_is_thirty_seconds(self):
         assert FALLBACK_RETRY_BACKOFF_SECONDS == 30
@@ -444,16 +432,16 @@ class TestMinRetryInterval:
                 raise RuntimeError("still broken")
 
             first = q.drain(fail)
-            second = q.drain(fail)  # immediately after -- should be skipped
+            second = q.drain(fail)  # immediately after: should be skipped
 
             assert first is False
             assert second is False
-            assert len(attempts) == 1  # the second drain() never actually called fail again
+            assert len(attempts) == 1
 
             conn = sqlite3.connect(os.path.join(td, "queue.db"))
             row = conn.execute("SELECT retry_count FROM queue").fetchone()
             conn.close()
-            assert row[0] == 1  # not incremented by the blocked second call
+            assert row[0] == 1
 
     def test_retry_allowed_again_once_the_interval_elapses(self):
         with tempfile.TemporaryDirectory() as td:
@@ -477,24 +465,14 @@ class TestMinRetryInterval:
             assert row[0] == 2
 
     def test_flapping_bursts_cannot_reach_threshold_faster_than_the_interval_allows(self):
-        """Simulates a flapping connection retrying every 10ms (far faster
-        than min_retry_interval_seconds) -- the row should still only
+        """Simulates a flapping connection retrying every 10ms, far faster
+        than min_retry_interval_seconds: the row should still only
         accumulate roughly one retry per interval, not one per call.
 
-        Uses a fake clock instead of real time.sleep(): a real-sleep
-        version of this test was flaky under CPU contention from parallel
-        pytest-xdist workers, where scheduling delays let more actual
-        wall-clock time elapse per loop iteration than the nominal 0.01s
-        sleep implied, pushing more calls through the 0.1s cooldown gate
-        than expected. A fake clock advanced by a fixed amount per
-        iteration is deterministic regardless of real scheduling."""
+        Uses a fake clock instead of real time.sleep(), since a real-sleep
+        version was flaky under CPU contention from parallel pytest-xdist
+        workers."""
         with tempfile.TemporaryDirectory() as td:
-            # retry_threshold set high enough that reaching it would require
-            # ~1s of simulated elapsed time at one attempt per 0.1s interval
-            # -- the 20-call burst below spans well under that (~0.2s
-            # simulated time), so if the cooldown weren't working it would
-            # dead-letter almost immediately (call 1 already reaches a low
-            # threshold).
             q = _make_queue(td, retry_threshold=10, min_retry_interval_seconds=0.1)
 
             def fail(_payload):
@@ -507,10 +485,6 @@ class TestMinRetryInterval:
                     q.drain(fail)
                     fake_now[0] += 0.01  # much shorter than the 0.1s interval
 
-            # 20 calls * 0.01s advance = ~0.2s of simulated elapsed time,
-            # which only allows a couple of real attempts through the
-            # cooldown gate -- nowhere near 20 calls' worth, and nowhere
-            # near retry_threshold.
             assert q.dead_letter_depth() == 0
             conn = sqlite3.connect(os.path.join(td, "queue.db"))
             row = conn.execute("SELECT retry_count FROM queue").fetchone()
@@ -519,8 +493,7 @@ class TestMinRetryInterval:
 
     def test_cooldown_stops_the_whole_pass_preserving_order(self):
         """A cooling-down oldest row must not be skipped in favor of a
-        newer row behind it -- strict oldest-first ordering matters (e.g.
-        archive-processor's split-flight stitching depends on it)."""
+        newer row behind it -- strict oldest-first ordering matters."""
         with tempfile.TemporaryDirectory() as td:
             q = _make_queue(td, retry_threshold=5, min_retry_interval_seconds=9999)
             q.put("first")

@@ -102,11 +102,8 @@ class TestBindAdsbQueue:
 
 class TestIsSkyfollowerQueue:
     def test_matches_pattern_used_by_install_sh(self):
-        """Guards against the two copies (this constant and
-        scripts/install.sh's provision_rabbitmq_users literal) drifting
-        apart -- bash can't import this constant directly, so this is the
-        one automated check that the value hasn't silently changed here
-        without a human also updating the shell script."""
+        """Guards this constant against drifting from
+        scripts/install.sh's mirrored provision_rabbitmq_users literal."""
         assert SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN == (
             r"^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|"
             r"skyfollower-archive-raw-frames|amq\.default)$"
@@ -123,18 +120,15 @@ class TestIsSkyfollowerQueue:
 
     def test_raw_frames_queue_matches(self):
         """Must match for RabbitMQ ACL purposes even though core-health
-        deliberately excludes it from HA sensor publishing -- see
-        core-health/main.py's _poll_rabbitmq_once()."""
+        deliberately excludes it from HA sensor publishing."""
         assert is_skyfollower_queue(RAW_FRAMES_QUEUE_NAME) is True
 
     def test_unrelated_queue_does_not_match(self):
         assert is_skyfollower_queue("some-other-teams-queue") is False
 
     def test_amq_default_never_actually_occurs_as_a_queue_name(self):
-        """amq.default is an exchange name pulled in from the same
-        permission regex this mirrors, not a queue that can ever really
-        exist -- included for parity with install.sh, not because a real
-        queue is expected to match it."""
+        """amq.default is an exchange name, not a queue that can ever
+        really exist -- included only for parity with install.sh."""
         assert is_skyfollower_queue("amq.default") is True
 
 
@@ -155,9 +149,7 @@ class TestDeclareRawFramesQueue:
         assert RAW_FRAMES_QUEUE_ARGUMENTS["x-message-ttl"] == 8 * 3600 * 1000
 
     def test_max_length_bytes_argument_matches_fallback_queue_dead_letter_cap(self):
-        """Same 100MB "bound disk growth for an ops/debug path" precedent
-        DEFAULT_DEAD_LETTER_MAX_BYTES already sets for FallbackQueue's own
-        dead-letter/retryable tables -- see shared/fallback_queue.py."""
+        """Reuses FallbackQueue's own DEFAULT_DEAD_LETTER_MAX_BYTES cap."""
         assert RAW_FRAMES_QUEUE_ARGUMENTS["x-max-length-bytes"] == DEFAULT_DEAD_LETTER_MAX_BYTES
 
     def test_is_idempotent_across_repeated_connects(self):
@@ -175,9 +167,8 @@ class TestMessageProcessorIdFromQueueName:
         ) == "mp-1"
 
     def test_id_containing_hyphens_round_trips(self):
-        """MESSAGE_PROCESSOR_ID is any unique string, not a contiguous
-        ordinal -- it may itself contain hyphens, so this must be a prefix
-        strip, not a split on "-"."""
+        """MESSAGE_PROCESSOR_ID may itself contain hyphens, so this must
+        be a prefix strip, not a split on "-"."""
         assert message_processor_id_from_queue_name(
             message_processor_queue_name("host-a-mp-2")
         ) == "host-a-mp-2"

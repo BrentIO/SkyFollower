@@ -24,18 +24,13 @@ def build_mqtt_client(
     """
     Build an mqtt.Client from a component's `mqtt` config block.
 
-    Returns None if mqtt_config has no host -- the mqtt block is optional
-    everywhere, and every caller already skips MQTT entirely in that case,
-    so this preserves today's anonymous/disabled-MQTT behavior unchanged.
-    shared/config.py's mqtt_config() always returns a populated dict (never
-    None or {}) even when MQTT is unconfigured, so `host` blank is the
-    actual "not configured" signal, not the dict's own truthiness.
+    Returns None if mqtt_config has no host: MQTT is optional everywhere,
+    and `host` blank is the "not configured" signal, since
+    shared/config.py's mqtt_config() always returns a populated dict.
 
-    Applies username_pw_set() when `username`/`password` are present in the
-    config. The caller still owns connect()/connect_async() and
-    loop_start()/loop_stop(), since long-lived services (receiver,
-    processor, archive-processor) and one-shot runners use different
-    connection lifecycles.
+    Applies username_pw_set() when `username`/`password` are present. The
+    caller still owns connect()/loop_start(), since long-lived services
+    and one-shot runners use different connection lifecycles.
     """
     if not mqtt_config or not mqtt_config.get("host"):
         return None

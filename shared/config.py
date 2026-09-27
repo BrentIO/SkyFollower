@@ -1,25 +1,17 @@
 """
 Environment-variable configuration for every SkyFollower component.
 
-`load_config()` returns the same nested dictionary shape the components
-have always consumed (`cfg["redis"]["host"]`, `cfg.get("log_level")`, ...),
-built from the per-host `.env` Compose interpolates into each service's
-`environment:` block rather than from a bind-mounted file. A host running
-several components therefore states each credential once, and the RabbitMQ
-broker's own username/password come from the same two variables its clients
-authenticate with.
-
-A component names the blocks it needs:
+`load_config()` returns a nested dict (`cfg["redis"]["host"]`,
+`cfg.get("log_level")`, ...) built from the environment. A component names
+the blocks it needs:
 
     from shared.config import load_config
 
     cfg = load_config("rabbitmq", "mqtt", "receiver")
 
-Naming them is what keeps a runner from being asked for RabbitMQ
-credentials it never opens a connection with, and what lets the loader
-report *every* missing variable that component actually needs in one
-error -- an operator filling in a fresh `.env` should learn the whole list
-on the first start, not one name per restart.
+This keeps a runner from being asked for credentials it never uses, and
+lets the loader report every missing variable in one error rather than
+one name per restart.
 """
 
 from __future__ import annotations
@@ -29,8 +21,7 @@ from typing import Callable, Optional
 
 from shared.timing import DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS
 
-# Fixed by every compose file's bind mount. It was only ever a path inside
-# the container, and no deployment has a reason to vary it.
+# Fixed by every compose file's bind mount; not meant to vary by deployment.
 DATA_DIR = "/app/data"
 
 RECEIVER_SOURCE_TAGS = ("1090", "978", "EXTERNAL")
@@ -104,23 +95,18 @@ class ConfigLoader:
             return 0.0
 
     def boolean(self, name: str, default: bool = False) -> bool:
-        """Case-insensitive "true"/"1"/"yes"/"on" (anything else -- including
-        unset -- is False). No component needs a required boolean today, so
-        unlike string()/integer()/number() there is no _REQUIRED sentinel
-        here."""
+        """Case-insensitive "true"/"1"/"yes"/"on" (anything else, including
+        unset, is False)."""
         raw = self._environ.get(name, "").strip().lower()
         if not raw:
             return default
         return raw in ("true", "1", "yes", "on")
 
     def present(self, name: str) -> None:
-        """Records a problem if `name` is unset, without returning its value.
-
-        Used for the AWS credential variables, which boto3 reads from the
-        environment itself. Checking them here turns "no credentials" into a
-        startup error naming the variable, rather than an opaque failure at
-        the first API call.
-        """
+        """Records a problem if `name` is unset, without returning its
+        value. Used for AWS credential variables that boto3 itself reads
+        from the environment, so a missing one fails at startup rather
+        than at the first API call."""
         if not self._environ.get(name, "").strip():
             self.problems.append(f"{name} is required but is not set")
 
@@ -137,8 +123,7 @@ def _own_loader(loader: Optional[ConfigLoader]) -> tuple[ConfigLoader, bool]:
 
 
 def mqtt_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """MQTT is optional everywhere -- host/username/password all default to
-    blank rather than being required, so a component with no MQTT_HOST set
+    """MQTT is optional everywhere; a component with no MQTT_HOST set
     still starts. build_mqtt_client() reads this block's `host` to decide
     whether to skip MQTT entirely."""
     loader, own = _own_loader(loader)
@@ -155,20 +140,13 @@ def mqtt_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 def map_udp_config(loader: Optional[ConfigLoader] = None) -> dict:
     """The message processor's live position/metadata/heartbeat feed
-    toward the `map` service -- a single unicast UDP destination. Optional
-    everywhere, same convention as mqtt_config() above: host defaults to
-    blank / port to 0, so a component with no MAP_UDP_HOST set simply
-    never creates the socket and never attempts a send, rather than
-    failing to start.
+    toward the `map` service. Optional, same as mqtt_config() above: an
+    unset MAP_UDP_HOST means no socket is ever created.
 
-    min_position_interval_seconds throttles only `position` sends (a
-    per-icao_hex minimum spacing -- see message-processor's
-    _MapUdpPublisher) -- sub-second position updates aren't perceptible on
-    a map, and this is the single biggest lever on the map service's UDP
-    volume / Redis write rate. `metadata` sends are already change-gated
-    and are never throttled by this value; `heartbeat` sends are governed
-    by MAP_HEARTBEAT_INTERVAL_SECONDS instead (shared/timing.py), not this
-    block."""
+    min_position_interval_seconds throttles only `position` sends (see
+    message-processor's _MapUdpPublisher); `metadata` sends are
+    change-gated and `heartbeat` sends use MAP_HEARTBEAT_INTERVAL_SECONDS
+    instead (shared/timing.py)."""
     loader, own = _own_loader(loader)
     block = {
         "host": loader.string("MAP_UDP_HOST", ""),
@@ -209,11 +187,9 @@ def redis_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 
 def rabbitmq_management_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """RabbitMQ's HTTP Management API, polled only by core-health -- a
-    separate port/credential pair from rabbitmq_config()'s AMQP block above,
-    since core-health authenticates as its own `monitoring`-tagged user
-    (broker-wide read-only), never as the scoped application user every
-    other component connects with."""
+    """RabbitMQ's HTTP Management API, polled only by core-health, which
+    authenticates as its own `monitoring`-tagged user rather than the
+    scoped application user rabbitmq_config() uses."""
     loader, own = _own_loader(loader)
     block = {
         "host": loader.string("RABBITMQ_HOST"),
@@ -227,16 +203,10 @@ def rabbitmq_management_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 
 def s3_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """The bucket name, plus a presence check on boto3's own credential
-    variables.
-
-    Only the bucket is returned: `AWS_DEFAULT_REGION`, `AWS_ACCESS_KEY_ID`
-    and `AWS_SECRET_ACCESS_KEY` are boto3's documented variable names, so
-    every client is constructed with no credential arguments at all and
-    picks them up from its default credential chain. That is also what
-    leaves room for an instance role or short-lived credentials later,
-    where an explicit key/secret pair could not be supplied.
-    """
+    """Only the bucket name is returned; `AWS_DEFAULT_REGION`,
+    `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are boto3's own
+    variable names, so every client picks them up from its default
+    credential chain instead of being passed explicit credentials."""
     loader, own = _own_loader(loader)
     block = {"bucket": loader.string("S3_BUCKET")}
     loader.present("AWS_DEFAULT_REGION")
@@ -262,12 +232,9 @@ def mongo_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 
 def legacy_migration_s3_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """Two buckets, not one -- unlike s3_config() (a single S3_BUCKET every
-    live component reads/writes), tools/legacy-migration copies objects
-    from the legacy flat-key bucket to the new dated-key bucket, so it
-    needs both names at once. AWS_DEFAULT_REGION/ACCESS_KEY_ID/
-    SECRET_ACCESS_KEY are still boto3's own variable names, checked the
-    same way s3_config() checks them."""
+    """Two buckets: tools/legacy-migration copies objects from the legacy
+    flat-key bucket to the new dated-key bucket, so it needs both names at
+    once."""
     loader, own = _own_loader(loader)
     block = {
         "source_bucket": loader.string("SOURCE_S3_BUCKET"),
@@ -347,13 +314,8 @@ def receiver_config(loader: Optional[ConfigLoader] = None) -> dict:
     else:
         block["sources"] = []
     # Unlike every other Redis-consuming component, the receiver's Redis
-    # dependency (identity claim + heartbeat + period counters) is
-    # entirely optional -- read directly here rather than requesting the
-    # shared "redis" nested block, whose redis_config() treats REDIS_HOST
-    # as required. An unset REDIS_HOST leaves block["redis"]["host"] == "",
-    # which Receiver.__init__ treats identically to "redis" being absent
-    # from config entirely (falls back to the original UUID identity
-    # scheme, no Redis-backed behavior at all).
+    # dependency is optional, so it's read directly here instead of via
+    # redis_config(), which treats REDIS_HOST as required.
     block["redis"] = {
         "host": loader.string("REDIS_HOST", ""),
         "port": loader.integer("REDIS_PORT", 6379),
@@ -365,14 +327,9 @@ def receiver_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 
 def message_processor_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """Never coerces `MESSAGE_PROCESSOR_ID` to an integer: the consistent-hash
-    exchange makes it any string unique across the deployment, not an ordinal.
-
-    `CAPTURE_RAW_FRAMES` (default off) is read once here, same as everything
-    else in this block -- not hot-reloaded, same as `flight_ttl_seconds`
-    (read from Redis, not the environment, but the same "restart to pick up
-    a change" contract). See message-processor/README.md's "Raw Frame
-    Capture" section for what it does."""
+    """`MESSAGE_PROCESSOR_ID` is never coerced to an integer: the
+    consistent-hash exchange treats it as an arbitrary unique string, not
+    an ordinal."""
     loader, own = _own_loader(loader)
     block = {
         "message_processor_id": loader.string("MESSAGE_PROCESSOR_ID"),
@@ -386,18 +343,11 @@ def message_processor_config(loader: Optional[ConfigLoader] = None) -> dict:
 
 
 def map_redis_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """The `map` service's own dedicated Redis instance -- separate from
-    core Redis (`redis_config()` above), holding only live/ephemeral
-    aircraft state (fully reconstructible from live UDP traffic, no
-    persistence) under its own `MAP_REDIS_*` variable names, since a host
-    may run both a core Redis and this one.
-
-    Unlike `redis_config()`, `MAP_REDIS_PASSWORD` is optional (defaults
-    blank, same "leave unset to disable" convention `mqtt_config()` uses)
-    rather than required: this instance holds no enrichment/config data,
-    only a live cache reconstructible from scratch within one eviction-TTL
-    window, so requiring auth here is a deployment choice, not a hard
-    requirement the way it is for core Redis."""
+    """The `map` service's own dedicated Redis instance, separate from
+    core Redis (`redis_config()` above) since a host may run both.
+    `MAP_REDIS_PASSWORD` is optional, unlike `redis_config()`'s, because
+    this instance holds only a live cache reconstructible from UDP
+    traffic, not enrichment/config data."""
     loader, own = _own_loader(loader)
     block = {
         "host": loader.string("MAP_REDIS_HOST"),
@@ -415,22 +365,14 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
     hide / evict -- see `map/README.md`).
 
     `MAP_LISTEN_HOST`/`MAP_LISTEN_PORT` are deliberately distinct names
-    from message-processor's `MAP_UDP_HOST`/`MAP_UDP_PORT` (`map_udp_config()`
-    above), even though `MAP_LISTEN_PORT` must operationally equal whatever
-    port a message processor's `MAP_UDP_PORT` sends datagrams to -- the two
-    values live in separate `.env` files for separate hosts/components, and
-    "bind address" and "send-to destination" are different concepts that
-    happening to share a variable name risked being misread as one setting
-    shared between two components' `.env` files instead of two independent
-    ones that must simply be kept in agreement operationally."""
+    from message-processor's `MAP_UDP_HOST`/`MAP_UDP_PORT`
+    (`map_udp_config()` above): they must operationally agree on the same
+    port, but live in separate `.env` files for separate components, so
+    a shared name would misread as one setting rather than two that must
+    be kept in agreement."""
     loader, own = _own_loader(loader)
-    # Optional -- unlike message_processor_config()'s LATITUDE/LONGITUDE
-    # (required there), a stock deployment with neither set is expected and
-    # supported: the frontend's center marker/recenter button are simply
-    # unavailable (see map/main.py's GET /api/config and
-    # map/frontend/src/lib/config.ts). Range-validated by hand rather than
-    # via a ConfigLoader helper -- no other block needs a bounded float
-    # today.
+    # Optional, unlike message_processor_config()'s required LATITUDE/
+    # LONGITUDE: unset simply disables the frontend's center marker.
     center_latitude = loader.number("MAP_CENTER_LATITUDE", None)
     if center_latitude is not None and not (-90 <= center_latitude <= 90):
         loader.problems.append(
@@ -447,11 +389,8 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
     map_hide_seconds = loader.integer("MAP_HIDE_SECONDS", 60)
     map_evict_seconds = loader.integer("MAP_EVICT_SECONDS", 300)
     # The three-stage lifecycle (see map/README.md) only makes sense in this
-    # order -- a briefly-lost aircraft must go grey before it disappears,
-    # and must disappear before its trail data is evicted. Checked here
-    # rather than left as an implicit assumption in map/state_store.py so a
-    # misconfigured .env fails loudly at startup instead of quietly
-    # producing an aircraft that, say, disappears before it ever goes grey.
+    # order; checked here so a misconfigured .env fails at startup instead
+    # of producing an aircraft that disappears before it ever goes grey.
     if not (map_stale_seconds < map_hide_seconds < map_evict_seconds):
         loader.problems.append(
             "MAP_STALE_SECONDS < MAP_HIDE_SECONDS < MAP_EVICT_SECONDS must hold "

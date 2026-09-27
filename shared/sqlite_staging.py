@@ -1,19 +1,14 @@
 """
 Shared open path for a runner's local SQLite staging database.
 
-Every runner that stages parsed data locally before writing to Redis uses
-the same fixed, unmounted path (`/app/data/staging.db`). Ofelia schedules
-runners in `container =` mode, which starts the *same* container on every
-scheduled run rather than a fresh one, so anything left on that path from a
-prior run is still there. A bare `CREATE TABLE ...` against a file that
-already has those tables raises `sqlite3.OperationalError: table ... already
-exists`, failing the run and leaving Redis's previous data to age out with
-no successful refresh ever landing again.
+Ofelia schedules runners in `container =` mode, starting the same
+container on every scheduled run, so a prior run's staging file at
+`/app/data/staging.db` is still there. A bare `CREATE TABLE ...` against
+it would raise `table ... already exists` and fail the run.
 
 `open_staging_db()` is the single choke point every runner opens its
-staging database through, so the delete-then-create invariant is enforced
-once here rather than needing to be re-implemented (or forgotten) in each
-runner.
+staging database through, so the delete-then-create invariant is
+enforced once here instead of in each runner.
 """
 
 from __future__ import annotations

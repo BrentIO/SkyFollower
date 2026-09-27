@@ -41,18 +41,15 @@ class Position(BaseModel):
     @field_validator("latitude", "longitude")
     @classmethod
     def _cap_coordinate_precision(cls, v: float) -> float:
-        # CPR-decoded lat/lon commonly carries 13+ significant digits; 5
-        # decimal places is ~1.1 m, far tighter than ADS-B accuracy itself.
-        # Capping here — the one construction site, right after pyModeS
-        # decode — means every downstream JSON representation inherits it.
+        # 5 decimal places is ~1.1 m, far tighter than ADS-B accuracy
+        # itself; caps the 13+ significant digits CPR decoding can emit.
         return round(v, 5)
 
     def to_dict(self) -> dict:
         """Return legacy-compatible dict with UTC datetime timestamp.
-
         Keys whose value is None are omitted rather than serialised as
-        explicit null — multiplied across every position row on every
-        flight, those nulls are a real contributor to payload size."""
+        explicit null, since those nulls add up across every position
+        row on every flight."""
         d = {
             "timestamp": datetime.fromtimestamp(self.timestamp, tz=timezone.utc),
             "latitude": self.latitude,
@@ -63,14 +60,11 @@ class Position(BaseModel):
 
 
 class RawFrame(BaseModel):
-    """Single captured Mode-S/UAT hex frame -- decoded or not -- recorded
-    only when message-processor's CAPTURE_RAW_FRAMES is enabled (see
-    message-processor/README.md's "Raw Frame Capture" section). Deliberately
-    forensic, not a permanent-archive field: CompletedFlight.raw_frames is
-    unconditionally stripped before anything reaches the S3-bound
-    `skyfollower-archive` queue (see message-processor's _archive()) and
-    only ever travels intact to the separate, short-lived
-    `skyfollower-archive-raw-frames` queue."""
+    """Single captured Mode-S/UAT hex frame, decoded or not, recorded only
+    when message-processor's CAPTURE_RAW_FRAMES is enabled. Forensic, not
+    part of the permanent archive: message-processor's _archive() strips
+    CompletedFlight.raw_frames before publishing to the S3-bound
+    `skyfollower-archive` queue."""
 
     timestamp: float                              # Unix timestamp (msg.received_at)
     source: Literal[RECEIVER_SOURCE_TAGS]
@@ -78,9 +72,8 @@ class RawFrame(BaseModel):
     decoded: bool                                  # True if this message produced usable `data`
 
     def to_dict(self) -> dict:
-        """Return legacy-compatible dict with UTC datetime timestamp, same
-        convention as Position.to_dict()/Velocity.to_dict() -- but every
-        field here is always present (no None-dropping needed)."""
+        """Same convention as Position.to_dict()/Velocity.to_dict(), but
+        every field here is always present (no None-dropping needed)."""
         return {
             "timestamp": datetime.fromtimestamp(self.timestamp, tz=timezone.utc),
             "source": self.source,
@@ -100,16 +93,13 @@ class Velocity(BaseModel):
     @field_validator("heading")
     @classmethod
     def _cap_heading_precision(cls, v: Optional[float]) -> Optional[float]:
-        # 1 decimal place on a 0-359° heading is already finer than any
-        # consumer needs; pyModeS emits far more. velocity (knots) and
-        # vertical_speed (int ft/min) have no fractional precision to cap.
+        # 1 decimal place on a 0-359° heading is finer than any consumer
+        # needs, capping what pyModeS can emit.
         return v if v is None else round(v, 1)
 
     def to_dict(self) -> dict:
-        """Return legacy-compatible dict with UTC datetime timestamp.
-
-        Keys whose value is None are omitted rather than serialised as
-        explicit null (e.g. a velocity report that carried no heading)."""
+        """Keys whose value is None are omitted rather than serialised
+        as explicit null (e.g. a velocity report with no heading)."""
         d = {
             "timestamp": datetime.fromtimestamp(self.timestamp, tz=timezone.utc),
             "velocity": self.velocity,
@@ -128,16 +118,11 @@ class PowerplantInfo(BaseModel):
 
 
 class AircraftRecord(BaseModel):
-    """
-    Aircraft registration and type enrichment.
-    Written across three Redis keys — aircraft:mictronics:{icao_hex}
-    (Mictronics), aircraft:registry:{icao_hex} (country registry runners),
-    and aircraft:livery:{icao_hex} (the airportwebcams-special-liveries runner) —
-    and deep-merged at read time by shared/lua/merge_aircraft.lua, with
-    later sources in that list winning on any field overlap. This shape is
-    the merged result. Field names match the AROI /registration/icao_hex/{hex}
-    response.
-    """
+    """Aircraft registration and type enrichment. Written across three
+    Redis keys (aircraft:mictronics/registry/livery:{icao_hex}) and
+    deep-merged at read time by shared/lua/merge_aircraft.lua, later
+    sources winning on overlap. Field names match the AROI
+    /registration/icao_hex/{hex} response."""
 
     icao_hex: str = Field(title="ICAO Hex")
     registration: Optional[str] = None
@@ -146,25 +131,23 @@ class AircraftRecord(BaseModel):
     category: Optional[str] = None          # landing-gear category, e.g. "Land"/"Sea"/"Amphibian"
     manufacturer: Optional[str] = None
     model: Optional[str] = None
-    manufacturer_model: Optional[str] = None  # combined manufacturer + model string, e.g. "BOEING 757-200"; synthesized by merge_aircraft.lua from manufacturer/model if absent
-    description_code: Optional[str] = None  # ICAO Doc 8643 aircraft description code, e.g. "L2J": char 1 = category (L/S/A/H/G/T = landplane/seaplane/amphibian/helicopter/gyrocopter/tilt-wing), digit = engine count, char 3 = engine type (P/T/J/E = piston/turboprop/jet/electric)
+    manufacturer_model: Optional[str] = None  # combined manufacturer + model, e.g. "BOEING 757-200"; synthesized by merge_aircraft.lua if absent
+    description_code: Optional[str] = None  # ICAO Doc 8643 code, e.g. "L2J": char 1 = category, digit = engine count, char 3 = engine type
     seats: Optional[int] = None
     powerplant: Optional[PowerplantInfo] = None
     military: Optional[bool] = None
     serial_number: Optional[str] = None
     manufactured_date: Optional[str] = None
-    special_livery: Optional[str] = None    # cleaned, TTS-ready livery name if wearing one — see airportwebcams-special-liveries/README.md; absent when not
-    country: Optional[str] = None           # resolved country-of-registration name, e.g. "United States" -- see country_code for the raw ISO 3166-1 alpha-2 code; mirrors AirportRecord's country/country_code pattern
-    country_code: Optional[str] = None      # ISO 3166-1 alpha-2 country-of-registration code, e.g. "US" -- a registry runner's own value wins when present, else resolved by merge_aircraft.lua from the ICAO hex-range allocation table (VRS code-blocks); absent if neither resolves
-    data_sources: Optional[list[str]] = None  # every data runner that contributed a field, mictronics -> registry -> livery order
+    special_livery: Optional[str] = None    # cleaned, TTS-ready livery name -- see airportwebcams-special-liveries/README.md
+    country: Optional[str] = None           # resolved country-of-registration name; see country_code for the raw ISO 3166-1 alpha-2 code
+    country_code: Optional[str] = None      # ISO 3166-1 alpha-2 code -- registry runner's value wins, else resolved from the ICAO hex-range allocation table
+    data_sources: Optional[list[str]] = None  # data runners that contributed a field, in mictronics -> registry -> livery order
 
 
 class OperatorRecord(BaseModel):
-    """
-    Airline operator enrichment.
-    Stored in Redis at operator:{designator}. Shape matches the AROI
-    /operator/{designator} response.
-    """
+    """Airline operator enrichment. Stored in Redis at
+    operator:{designator}. Shape matches the AROI /operator/{designator}
+    response."""
 
     airline_designator: str
     name: Optional[str] = None
@@ -181,9 +164,9 @@ class AirportRecord(BaseModel):
     iata_code: Optional[str] = None         # IATA 3-character code; absent if blank
     name: Optional[str] = None
     city: Optional[str] = None
-    region: Optional[str] = None            # resolved subdivision name, e.g. "Queensland" -- see region_code for the raw ISO 3166-2 code
+    region: Optional[str] = None            # resolved subdivision name; see region_code for the raw ISO 3166-2 code
     region_code: Optional[str] = None       # ISO 3166-2 subdivision code, e.g. "AU-QLD"
-    country: Optional[str] = None           # resolved country name, e.g. "Australia" -- see country_code for the raw ISO 3166-1 alpha-2 code
+    country: Optional[str] = None           # resolved country name; see country_code for the raw ISO 3166-1 alpha-2 code
     country_code: Optional[str] = None      # ISO 3166-1 alpha-2 country code, e.g. "AU"
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -194,27 +177,16 @@ class AirportRecord(BaseModel):
 
 
 class CompletedFlight(BaseModel):
-    """
-    Completed flight record published to the RabbitMQ archive queue by the
-    message processor. Shape matches the legacy MongoDB document written by
-    Flight.persist() in SkyFollower-legacy, with additive fields:
-    _id is now UUID-v7 (was UUID-v4), and receiver_sources/force_archive are
-    new.
+    """Completed flight record published to the RabbitMQ archive queue by
+    the message processor. Matches the legacy MongoDB document shape,
+    with `_id` now UUID-v7 and `receiver_sources`/`force_archive` added.
 
-    receiver_sources and matched_rules both default to an empty list rather
-    than being required, since neither exists in legacy flight records —
-    the legacy-to-S3 migration plan deliberately leaves those files
-    untouched rather than backfilling a synthetic value.
+    origin/destination carry the full resolved airport object here; the
+    archive processor reduces each to its bare ICAO code string before
+    writing the S3 object.
 
-    origin/destination carry the full resolved airport object on this
-    RabbitMQ/archive-queue record (matching the legacy in-memory shape);
-    the archive processor reduces each to its bare ICAO code string before
-    writing the S3 object, so only the persisted document differs from
-    this one.
-
-    Serialise with .model_dump(by_alias=True, mode="json") for RabbitMQ
-    transport and S3 storage to produce the {"_id": ...} key expected by
-    downstream consumers.
+    Serialise with .model_dump(by_alias=True, mode="json") to produce the
+    {"_id": ...} key downstream consumers expect.
     """
 
     model_config = {"populate_by_name": True}
@@ -228,15 +200,11 @@ class CompletedFlight(BaseModel):
     aircraft: dict                           # AircraftRecord fields; must include icao_hex
     ident: Optional[str] = None
     operator: Optional[dict] = None          # OperatorRecord fields; source key stripped
-    registrant: Optional[dict] = None        # names/street/city/administrative_area/postal_code/country/type -- the aircraft's legal owner, an entity like operator, not a property of the airframe
+    registrant: Optional[dict] = None        # aircraft's legal owner (an entity like operator, not a property of the airframe)
     squawk: Optional[str] = None
-    origin: Optional[dict] = None            # full AirportRecord fields, e.g. {"icao_code": "KATL", ...} -- resolved at route-resolution time; reduced to an ICAO code string only when persisted to S3 (see archive-processor)
+    origin: Optional[dict] = None            # full AirportRecord fields; reduced to a bare ICAO code string only when persisted to S3
     destination: Optional[dict] = None       # full AirportRecord fields; see origin
     matched_rules: list[str] = []
     positions: list[dict] = []               # Position.to_dict() output
     velocities: list[dict] = []              # Velocity.to_dict() output
-    raw_frames: list[dict] = []              # RawFrame.to_dict() output; only ever non-empty when
-                                              # CAPTURE_RAW_FRAMES was on -- see message-processor's
-                                              # _archive(), which unconditionally excludes this field
-                                              # before publishing to the permanent archive queue,
-                                              # regardless of that setting.
+    raw_frames: list[dict] = []              # RawFrame.to_dict() output; message-processor's _archive() always excludes this before publishing to the permanent archive queue

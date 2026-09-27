@@ -1,14 +1,13 @@
 """
-Integration tests for shared/lua/merge_aircraft.lua, run against a live Redis
-(RedisJSON + Lua scripting required — a redis-stack instance).
+Integration tests for shared/lua/merge_aircraft.lua, run against a live
+Redis (RedisJSON + Lua scripting required -- a redis-stack instance).
 
-These tests exercise the actual Lua script via EVALSHA, the same way the
-message processor calls it, rather than mocking the merge behavior. There's no way to
-verify Lua semantics (e.g. cjson.null handling) by testing Python code alone.
+Exercises the actual Lua script via EVALSHA rather than mocking the merge
+behavior, since Lua semantics (e.g. cjson.null handling) can't be verified
+by testing Python code alone.
 
 Requires a reachable Redis at REDIS_TEST_HOST:REDIS_TEST_PORT (defaults to
-localhost:6379). If none is reachable, every test in this module is skipped
-rather than failed, since CI does not run a Redis service for this workflow.
+localhost:6379); skipped, not failed, when none is reachable.
 """
 
 from __future__ import annotations
@@ -21,16 +20,10 @@ import pytest
 
 redis = pytest.importorskip("redis")
 
-# Under pytest-xdist, a "module"-scoped fixture is instantiated once per
-# worker *process*, not once globally -- if this module's tests get split
-# across workers (which happens unpredictably once there's enough other
-# work in the full suite to balance against), each worker independently
-# exercises the shared aircraft:{mictronics,registry,livery}:{hex} keys
-# below against the one live Redis every worker actually talks to, racing
-# each other. The icao_hex fixture only draws from a 256-value space, so a
-# collision between two workers' concurrently-running tests is a real risk,
-# not a theoretical one -- see shared/tests/test_route_airports_lua.py for
-# the same fix applied to the same class of problem.
+# Keeps this module's tests on one pytest-xdist worker: a module-scoped
+# fixture is per-worker-process, so splitting across workers would let
+# them race each other against the same live Redis keys (icao_hex only
+# draws from a 256-value space, so a collision is a real risk).
 pytestmark = pytest.mark.xdist_group(name="merge_aircraft_lua")
 
 _LUA_PATH = pathlib.Path(__file__).parent.parent / "lua" / "merge_aircraft.lua"
@@ -82,31 +75,22 @@ _COUNTRIES_KEY = "lookup:icao-countries"
 @pytest.fixture
 def code_blocks_and_countries(redis_client):
     """Seeds the two global hex-range lookup keys used by
-    apply_country_resolution(), then deletes them afterward so unrelated
-    tests in this module (which never expect them to exist) see the same
-    "no lookup table present" behaviour as before this fixture existed.
-
-    The seeded code-blocks table matches the icao_hex fixture's entire
-    "FFFE00"-"FFFEFF" address space regardless of its random last byte
-    (significant_bitmask 0xFFFF00 against bitmask 0xFFFE00), at a lower
-    significant_bitmask than the narrower 0xFFFE10-only block -- so tests
-    can select which one matches by choosing a hex inside or outside the
-    narrow block, exactly like the real table's broad-vs-narrow overlap.
+    apply_country_resolution(), then deletes them afterward. The seeded
+    code-blocks table matches the icao_hex fixture's entire "FFFE00"-
+    "FFFEFF" range at a lower significant_bitmask than the narrower
+    0xFFFE10-only block, so tests can pick which one matches by choosing
+    a hex inside or outside the narrow block.
     """
     redis_client.json().set(_CODE_BLOCKS_KEY, "$", [
-        # Narrower, more specific block -- must be checked first (higher
-        # significant_bitmask) and win over the broad block below for any
-        # hex inside FFFE10-FFFE1F.
+        # Narrower block: higher significant_bitmask, wins for FFFE10-FFFE1F.
         {"bitmask": 0xFFFE10, "significant_bitmask": 0xFFFFF0, "country_code": "NN"},
-        # Broad block covering the whole fixture range.
         {"bitmask": 0xFFFE00, "significant_bitmask": 0xFFFF00, "country_code": "BB"},
     ])
     redis_client.json().set(_COUNTRIES_KEY, "$", {
         "AA": "Test Country A",
         "BB": "Test Country B",
         "NN": "Test Country Narrow",
-        # Deliberately no entry for "CC" -- covers a country_code with no
-        # resolvable name.
+        # No entry for "CC": covers a country_code with no resolvable name.
     })
     yield
     redis_client.delete(_CODE_BLOCKS_KEY, _COUNTRIES_KEY)
@@ -116,10 +100,8 @@ def code_blocks_and_countries(redis_client):
 def broad_block_hex(redis_client):
     """A fixed hex ("FFFE20") inside code_blocks_and_countries' broad
     FFFE00-FFFEFF block (country_code BB) but outside its narrower
-    FFFE10-FFFE1F sub-block -- unlike the icao_hex fixture's random last
-    byte, tests that assert specifically on BB (not just "some hex-range
-    match") need a value guaranteed to land outside the narrow sub-range,
-    not a ~94%-of-the-time bet."""
+    FFFE10-FFFE1F sub-block, for tests that need to assert on BB
+    specifically rather than "some hex-range match"."""
     hex_ = "FFFE20"
     yield hex_
     redis_client.delete(
@@ -203,10 +185,9 @@ class TestManufacturerModelFallback:
 
 
 class TestDescriptionCodePromotion:
-    """Guards the generic aircraft.* top-level promotion against regressions
-    for the description_code field specifically -- no dedicated Lua logic
-    exists for it (unlike manufacturer_model's fallback), so this only needs
-    to prove the existing generic promotion mechanism picks it up."""
+    """Guards the generic aircraft.* top-level promotion for
+    description_code specifically -- no dedicated Lua logic exists for it,
+    unlike manufacturer_model's fallback."""
 
     def test_mictronics_description_code_promoted_to_top_level(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
@@ -218,15 +199,13 @@ class TestDescriptionCodePromotion:
 
 
 class TestLiveryLayer:
-    """Covers the third merge tier — aircraft:livery:{icao_hex}, written by
-    the airportwebcams-special-liveries runner — added on top of the existing
-    mictronics/registry two-key merge."""
+    """Covers the third merge tier -- aircraft:livery:{icao_hex}, written
+    by the airportwebcams-special-liveries runner -- on top of the
+    existing mictronics/registry two-key merge."""
 
     def test_livery_absent_merge_unaffected(self, redis_client, merge_sha, icao_hex):
-        """An aircraft with no special livery (the common case) must merge
-        exactly as it did before this key existed — no special_livery key
-        at all. Mirrors the real N659DL/A8AE7F and N62770/A833A4 control
-        cases documented in the runner's README."""
+        """No special livery (the common case): must merge with no
+        special_livery key at all."""
         redis_client.json().set(
             f"aircraft:mictronics:{icao_hex}", "$",
             {"aircraft": {"manufacturer_model": "BOEING 757-200"}},
@@ -264,8 +243,7 @@ class TestLiveryLayer:
 
     def test_livery_wins_on_field_overlap_with_registry(self, redis_client, merge_sha, icao_hex):
         """Livery is deep-merged last, so it must win over registry on any
-        overlapping field — proving the requested stacking order (Mictronics
-        -> registry -> livery) even though no real field overlaps today."""
+        overlapping field."""
         redis_client.json().set(
             f"aircraft:registry:{icao_hex}", "$", {"registration": "REGISTRY-VALUE"},
         )
@@ -280,14 +258,10 @@ class TestLiveryLayer:
 
 
 class TestFlattening:
-    """Covers promoting the nested aircraft.aircraft sub-object to the top
-    level -- the mictronics/country-registry runners write type/category/
-    manufacturer/model/seats/powerplant/serial_number/manufactured_date one
-    level deeper than icao_hex/registration/military/registrant, but
-    AircraftRecord's documented shape is flat. Without this, rule matching
-    (aircraft_type_designator/aircraft_powerplant_count) and the archive
-    search index's type_designator column silently break, since both read
-    flight.aircraft directly."""
+    """Covers promoting the nested aircraft.aircraft sub-object to the
+    top level -- runners write several fields one level deeper than
+    icao_hex/registration/military/registrant, but AircraftRecord's
+    documented shape is flat."""
 
     def test_nested_fields_promoted_to_top_level(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(
@@ -317,14 +291,12 @@ class TestFlattening:
         assert result["powerplant"] == {"type": "Turbo-fan", "count": 2}
         assert result["serial_number"] == "12345"
         assert result["manufactured_date"] == "2005-01-01"
-        # These were already top-level -- unaffected by the promotion.
-        assert result["icao_hex"] == icao_hex
+        assert result["icao_hex"] == icao_hex  # already top-level, unaffected
         assert result["registration"] == "N659DL"
 
     def test_no_nested_aircraft_key_is_a_no_op(self, redis_client, merge_sha, icao_hex):
-        """A record with no nested aircraft sub-object at all (e.g. a
-        registry runner that only ever writes flat fields) must merge
-        exactly as before -- no synthetic `aircraft` key created."""
+        """A record with no nested aircraft sub-object at all must merge
+        unchanged -- no synthetic `aircraft` key created."""
         redis_client.json().set(
             f"aircraft:registry:{icao_hex}", "$", {"icao_hex": icao_hex, "registration": "N659DL"},
         )
@@ -334,9 +306,7 @@ class TestFlattening:
 
     def test_existing_top_level_key_not_overwritten_by_nested_copy(self, redis_client, merge_sha, icao_hex):
         """If a top-level key and the nested aircraft sub-object's key of
-        the same name both exist -- not a real shape today, but a future
-        runner change shouldn't silently reorder precedence -- the
-        top-level value wins."""
+        the same name both exist, the top-level value wins."""
         redis_client.json().set(
             f"aircraft:registry:{icao_hex}", "$",
             {"category": "TOP-LEVEL-VALUE", "aircraft": {"category": "NESTED-VALUE"}},
@@ -346,10 +316,9 @@ class TestFlattening:
 
 
 class TestDataSources:
-    """Covers merge_aircraft.lua's data_sources aggregation — every present
-    key's own scalar `source` collected into an array, instead of the old
-    deep_merge behaviour where only the last-written key's `source`
-    survived."""
+    """Covers merge_aircraft.lua's data_sources aggregation: every
+    present key's own scalar `source` collected into an array, instead of
+    only the last-written key's `source` surviving."""
 
     def test_no_source_fields_present_no_data_sources_key(self, redis_client, merge_sha, icao_hex):
         redis_client.json().set(f"aircraft:registry:{icao_hex}", "$", {"registration": "N659DL"})
@@ -388,11 +357,9 @@ class TestDataSources:
         assert result["data_sources"] == ["mictronics", "us-faa-registry", "airportwebcams-special-liveries"]
 
     def test_mictronics_absent_registry_and_livery_still_both_collected(self, redis_client, merge_sha, icao_hex):
-        """Regression guard: an earlier draft of this aggregation used Lua's
-        ipairs() over {mictronics_doc, registry_doc, livery_doc}, which
-        silently stops at the first nil element. With mictronics absent
-        (nil, index 1), that would have skipped registry/livery too even
-        though both are present — this is exactly the case that catches it."""
+        """Regression guard: ipairs() over {mictronics_doc, registry_doc,
+        livery_doc} would silently stop at the first nil element; with
+        mictronics absent this must not also skip registry/livery."""
         redis_client.json().set(
             f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa-registry"},
         )
@@ -425,20 +392,18 @@ class TestDataSources:
 
 
 class TestCountryResolution:
-    """Covers #1848 -- country/country_code resolution added to
-    merge_aircraft.lua: a registry-sourced country_code wins outright when
-    present; otherwise icao_hex is matched against lookup:icao-code-blocks
-    (VRS's code-blocks.csv, descending-significant_bitmask longest-prefix
-    match); either way, lookup:icao-countries then resolves the ISO2 code to
-    an English name. See the code_blocks_and_countries fixture above for the
-    exact seeded table shape."""
+    """Covers #1848 -- country/country_code resolution: a registry-sourced
+    country_code wins outright when present; otherwise icao_hex is
+    matched against lookup:icao-code-blocks (descending-significant_bitmask
+    longest-prefix match), then lookup:icao-countries resolves the ISO2
+    code to an English name. See code_blocks_and_countries above for the
+    seeded table shape."""
 
     def test_hex_range_fallback_resolves_when_no_registry_country_code(
         self, redis_client, merge_sha, broad_block_hex, code_blocks_and_countries,
     ):
-        """No registry record at all -- the hex-range table alone must
-        resolve country/country_code, from the broad FFFE00-FFFEFF block
-        (country_code BB)."""
+        """No registry record at all: the hex-range table alone must
+        resolve country/country_code, from the broad block (BB)."""
         redis_client.json().set(f"aircraft:mictronics:{broad_block_hex}", "$", {"source": "mictronics"})
         result = _merge(redis_client, merge_sha, broad_block_hex)
         assert result["country_code"] == "BB"
@@ -448,9 +413,9 @@ class TestCountryResolution:
         self, redis_client, merge_sha, code_blocks_and_countries,
     ):
         """A hex inside the narrower FFFE10-FFFE1F block must resolve to
-        that block's country (NN), not the broader FFFE00-FFFEFF block
-        (BB) that also technically contains it -- proving the scan takes
-        the first (highest significant_bitmask) match, not just any match."""
+        that block's country (NN), not the broader block (BB) that also
+        contains it -- proving the scan takes the highest-significance
+        match, not just any match."""
         hex_ = "FFFE15"
         redis_client.delete(f"aircraft:mictronics:{hex_}", f"aircraft:registry:{hex_}", f"aircraft:livery:{hex_}")
         redis_client.json().set(f"aircraft:mictronics:{hex_}", "$", {"source": "mictronics"})
@@ -464,10 +429,8 @@ class TestCountryResolution:
     def test_registry_country_code_wins_over_hex_range(
         self, redis_client, merge_sha, icao_hex, code_blocks_and_countries,
     ):
-        """A registry-sourced country_code (e.g. us-faa-registry writing
-        "US") must be kept even though the hex also matches a hex-range
-        block for a different country -- registry data is exact, hex-range
-        is only the fallback for hexes no registry covers."""
+        """A registry-sourced country_code must be kept even though the
+        hex also matches a hex-range block for a different country."""
         redis_client.json().set(f"aircraft:mictronics:{icao_hex}", "$", {"source": "mictronics"})
         redis_client.json().set(
             f"aircraft:registry:{icao_hex}", "$", {"source": "us-faa-registry", "country_code": "AA"},
@@ -477,10 +440,8 @@ class TestCountryResolution:
         assert result["country"] == "Test Country A"
 
     def test_no_match_when_hex_range_table_absent(self, redis_client, merge_sha, icao_hex):
-        """No lookup:icao-code-blocks key at all (e.g. the vrs-standing-data
-        runner has never run) must not crash and must leave country/
-        country_code entirely unset -- the pre-#1848 behaviour for every
-        other field."""
+        """No lookup:icao-code-blocks key at all must not crash and must
+        leave country/country_code entirely unset."""
         redis_client.delete(_CODE_BLOCKS_KEY, _COUNTRIES_KEY)
         redis_client.json().set(f"aircraft:mictronics:{icao_hex}", "$", {"source": "mictronics"})
         result = _merge(redis_client, merge_sha, icao_hex)
@@ -490,11 +451,8 @@ class TestCountryResolution:
     def test_no_match_when_hex_range_table_present_but_hex_unallocated(
         self, redis_client, merge_sha, icao_hex,
     ):
-        """The code-block table's own no-match case (acceptance criterion):
-        a populated table that simply has no row covering this hex --
-        analogous to the real table's dropped ZZ catch-all rows leaving
-        genuinely-unallocated hexes with nothing to match. Must resolve to
-        no country, not raise or fall through to a wrong one."""
+        """A populated table with no row covering this hex must resolve
+        to no country, not raise or fall through to a wrong one."""
         redis_client.json().set(_CODE_BLOCKS_KEY, "$", [
             {"bitmask": 0x000000, "significant_bitmask": 0xFFFFFF, "country_code": "ZZ"},
         ])
@@ -510,10 +468,8 @@ class TestCountryResolution:
     def test_registry_country_code_with_no_countries_entry_leaves_country_unresolved(
         self, redis_client, merge_sha, icao_hex, code_blocks_and_countries,
     ):
-        """A registry-sourced country_code with no matching row in
-        lookup:icao-countries (e.g. countries.csv hasn't been re-imported
-        yet) must still keep country_code, just leave country unset rather
-        than crashing or inventing a name."""
+        """A country_code with no matching row in lookup:icao-countries
+        must still keep country_code, just leave country unset."""
         redis_client.json().set(f"aircraft:mictronics:{icao_hex}", "$", {"source": "mictronics"})
         redis_client.json().set(
             f"aircraft:registry:{icao_hex}", "$", {"source": "some-registry", "country_code": "CC"},
@@ -525,10 +481,9 @@ class TestCountryResolution:
     def test_registry_country_null_treated_as_absent_and_falls_back_to_hex_range(
         self, redis_client, merge_sha, broad_block_hex, code_blocks_and_countries,
     ):
-        """cjson.decode turns JSON null into cjson.null, not Lua nil -- an
-        explicit country_code: null on the registry record must still fall
-        through to the hex-range table, not be treated as "present but
-        null" and block the fallback."""
+        """cjson.decode turns JSON null into cjson.null, not Lua nil: an
+        explicit country_code: null must still fall through to the
+        hex-range table, not block the fallback."""
         redis_client.json().set(f"aircraft:mictronics:{broad_block_hex}", "$", {"source": "mictronics"})
         redis_client.json().set(
             f"aircraft:registry:{broad_block_hex}", "$", {"source": "us-faa-registry", "country_code": None},
@@ -540,10 +495,8 @@ class TestCountryResolution:
     def test_military_field_untouched_by_code_blocks_is_military(
         self, redis_client, merge_sha, broad_block_hex, code_blocks_and_countries,
     ):
-        """AircraftRecord.military must stay sourced only from Mictronics --
-        code-blocks.csv's IsMilitary is a per-range flag, dropped entirely by
-        the vrs-standing-data runner, and must never appear on the merged
-        result or influence the aircraft-level military field."""
+        """AircraftRecord.military must stay sourced only from
+        Mictronics, never from code-blocks.csv's IsMilitary flag."""
         redis_client.json().set(
             f"aircraft:mictronics:{broad_block_hex}", "$", {"source": "mictronics", "military": False},
         )
@@ -553,12 +506,10 @@ class TestCountryResolution:
 
 
 class TestHexRangeOnlyRecord:
-    """Covers #1889 -- when mictronics/registry/livery are all absent, the
-    hex-range table (via apply_country_resolution) is the last remaining
-    source of anything. A hex that resolves there must yield a minimal
+    """Covers #1889 -- when mictronics/registry/livery are all absent, a
+    hex that resolves in the hex-range table must yield a minimal
     synthesized record instead of nil, so /api/aircraft returns 200 with a
-    country guess instead of a 404 for a hex nothing else has ever heard
-    of but that still falls in a known ICAO address block."""
+    country guess rather than a 404."""
 
     def test_hex_range_match_with_all_three_keys_absent_returns_minimal_record(
         self, redis_client, merge_sha, broad_block_hex, code_blocks_and_countries,
@@ -574,9 +525,8 @@ class TestHexRangeOnlyRecord:
     def test_no_hex_range_match_with_all_three_keys_absent_still_returns_none(
         self, redis_client, merge_sha, icao_hex,
     ):
-        """No lookup:icao-code-blocks key at all (e.g. vrs-standing-data has
-        never run) -- unchanged pre-#1889 behaviour: nil, not a synthesized
-        record with no country in it."""
+        """No lookup:icao-code-blocks key at all must still return nil,
+        not a synthesized record with no country in it."""
         redis_client.delete(_CODE_BLOCKS_KEY, _COUNTRIES_KEY)
         assert _merge(redis_client, merge_sha, icao_hex) is None
 
@@ -584,7 +534,7 @@ class TestHexRangeOnlyRecord:
         self, redis_client, merge_sha, icao_hex,
     ):
         """The code-block table's own no-match case, combined with all
-        three keys absent -- must still be nil, not a record with a missing
+        three keys absent, must still be nil, not a record with a missing
         country_code."""
         redis_client.json().set(_CODE_BLOCKS_KEY, "$", [
             {"bitmask": 0x000000, "significant_bitmask": 0xFFFFFF, "country_code": "ZZ"},
@@ -599,10 +549,8 @@ class TestHexRangeOnlyRecord:
         self, redis_client, merge_sha, icao_hex,
     ):
         """A hex-range match whose country_code has no row in
-        lookup:icao-countries must still synthesize the record (country_code
-        + data_sources), just without a `country` name -- same "leave the
-        name unresolved rather than invent one" rule apply_country_resolution
-        already applies to the enrichment path."""
+        lookup:icao-countries must still synthesize the record, just
+        without a `country` name."""
         redis_client.json().set(_CODE_BLOCKS_KEY, "$", [
             {"bitmask": 0xFFFE00, "significant_bitmask": 0xFFFF00, "country_code": "CC"},
         ])
@@ -620,10 +568,8 @@ class TestHexRangeOnlyRecord:
     def test_any_real_data_present_is_unaffected_even_with_no_hex_range_match(
         self, redis_client, merge_sha, icao_hex,
     ):
-        """A hex with real Mictronics data (and no hex-range match at all)
-        must merge exactly as before -- proving this change is additive to
-        the all-absent case only, not a change to the normal enrichment
-        path."""
+        """A hex with real Mictronics data and no hex-range match must
+        merge exactly as before."""
         redis_client.json().set(
             f"aircraft:mictronics:{icao_hex}", "$", {"source": "mictronics", "registration": "N659DL"},
         )

@@ -1,20 +1,16 @@
 """
 Shared make/model -> ICAO type-designator consensus inference.
 
-Direct-hex civil registries (US FAA, Transport Canada, CZ CAA, IM ARDIS,
-NO CAA, ...) publish a raw manufacturer/model string but never an ICAO type
-designator. Mictronics independently has a type designator for a large
-share of the *same hexes* -- those hexes double as free training labels:
-group a registry's own tails by normalized (manufacturer, model), and for
-each group, apply the majority Mictronics designator (among the tails in
-that group whose Mictronics designator is known) to that group's other,
-unlabelled tails.
+Direct-hex civil registries publish a raw manufacturer/model string but
+never an ICAO type designator. Mictronics independently has a type
+designator for a large share of the same hexes, so those hexes double as
+free training labels: group a registry's own tails by normalized
+(manufacturer, model), and for each group, apply the majority Mictronics
+designator to that group's other, unlabelled tails.
 
-See issue #1888 for the precision/coverage measurements behind the
->= 3 examples / >= 90% agreement threshold below -- loosening either bar
-was measured to cost meaningfully more precision than the coverage it
-buys, so both are kept as fixed constants rather than per-registry tuning
-knobs.
+The >= 3 examples / >= 90% agreement thresholds below are measured
+constants, not per-registry tuning knobs -- loosening either was measured
+to cost more precision than the coverage it buys.
 """
 
 from __future__ import annotations
@@ -55,14 +51,12 @@ def build_consensus_table(
 ) -> dict[str, str]:
     """Build a normalized-(manufacturer, model)-key -> majority type
     designator table from labelled (manufacturer, model, type_designator)
-    examples -- each one a tail whose registry make/model is known and
-    whose ICAO type designator is independently known (from Mictronics).
+    examples.
 
-    A group is included only when it has >= min_examples labelled examples
-    AND its majority designator holds >= min_agreement share of that
-    group's votes. Every other group -- including a (manufacturer, model)
-    with zero labelled examples -- is simply absent from the returned
-    table, which is this function's abstain signal.
+    A group is included only when it has >= min_examples labelled
+    examples AND its majority designator holds >= min_agreement share of
+    the votes. Every other group is simply absent from the returned
+    table -- this function's abstain signal.
     """
     groups: dict[str, Counter] = defaultdict(Counter)
     for manufacturer, model, type_designator in labelled_examples:

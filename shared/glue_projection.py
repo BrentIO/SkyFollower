@@ -2,22 +2,14 @@
 Canonical Glue partition-projection configuration for the archive Parquet
 index table (`specs/aws/cloudformation.yaml`'s `GlueArchiveFlightsTable`).
 
-CloudFormation performs ZERO validation of a Glue table's `Parameters` map
--- it is a free-form string-to-string map, so a typo (`projection.enbaled`,
-`projection.enabled: "ture"`, a `digits` value that no longer matches the
-zero-padding archive-processor/archive-compaction actually write) deploys
-cleanly and yields a table that silently returns zero rows for every query,
-forever. This module is the single source of truth both sides check
-against:
-
-- `shared/tests/test_cloudformation_template.py` asserts the template's
-  `Parameters` map matches `EXPECTED_PROJECTION_PARAMETERS` exactly.
-- Any predicate generator that builds Athena partition predicates (e.g.
-  management-ui's archive search) must zero-pad month/day to `MONTH_DIGITS`
-  / `DAY_DIGITS` characters or partition projection will not match a row.
-
-Values here must stay in lockstep with the template by hand -- nothing
-regenerates the template from this module.
+CloudFormation performs zero validation of a Glue table's `Parameters`
+map, so a typo there deploys cleanly and yields a table that silently
+returns zero rows for every query. This module is the single source of
+truth `shared/tests/test_cloudformation_template.py` checks the template
+against; values here must stay in lockstep with the template by hand,
+since nothing regenerates one from the other. Any Athena predicate
+generator must also zero-pad month/day to `MONTH_DIGITS`/`DAY_DIGITS`
+characters, or partition projection will not match a row.
 """
 
 from __future__ import annotations

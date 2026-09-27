@@ -29,13 +29,11 @@ def _interpolate_altitudes(positions: list[dict]) -> list[Optional[int]]:
     for i in range(n):
         if alts[i] is not None:
             continue
-        # Find the previous known altitude
         prev_idx = None
         for j in range(i - 1, -1, -1):
             if alts[j] is not None:
                 prev_idx = j
                 break
-        # Find the next known altitude
         next_idx = None
         for j in range(i + 1, n):
             if alts[j] is not None:
@@ -43,24 +41,20 @@ def _interpolate_altitudes(positions: list[dict]) -> list[Optional[int]]:
                 break
 
         if prev_idx is not None and next_idx is not None:
-            # Linear interpolation
             span = next_idx - prev_idx
             frac = (i - prev_idx) / span
             alts[i] = int(round(alts[prev_idx] + frac * (alts[next_idx] - alts[prev_idx])))
-        # If only one side is available, leave as None — the coordinate will
-        # fall back to 2D.
+        # Only one side available: leave as None, coordinate falls back to 2D.
 
     return alts
 
 
 def _parse_epoch_seconds(ts) -> Optional[float]:
-    """Best-effort timestamp -> Unix epoch seconds. Accepts a numeric epoch
-    (already seconds) or an ISO 8601 string (the shape positions[]/
-    velocities[] timestamps are stored in after CompletedFlight's
-    mode="json" serialisation) -- 'Z' is normalised to '+00:00' since
-    datetime.fromisoformat only accepts the latter on Python < 3.11.
-    Returns None for anything unparseable rather than raising, since a
-    single malformed sample shouldn't break the whole flight path."""
+    """Best-effort timestamp -> Unix epoch seconds. Accepts a numeric
+    epoch or an ISO 8601 string ('Z' normalised to '+00:00' since
+    datetime.fromisoformat only accepts the latter on Python < 3.11).
+    Returns None for anything unparseable rather than raising, so one
+    malformed sample doesn't break the whole flight path."""
     if ts is None:
         return None
     if isinstance(ts, (int, float)):
@@ -72,11 +66,8 @@ def _parse_epoch_seconds(ts) -> Optional[float]:
 
 
 def _speed_at(t: float, samples: list[tuple[float, float]]) -> Optional[float]:
-    """Nearest-match or linear-interpolate a velocity sample at time `t`,
-    mirroring _interpolate_altitudes' prev/next approach but keyed on
-    timestamp across a *different* list (velocities are sampled
-    independently of positions) rather than by shared index. `samples` must
-    already be sorted by timestamp."""
+    """Nearest-match or linear-interpolate a velocity sample at time `t`.
+    `samples` must already be sorted by timestamp."""
     times = [s[0] for s in samples]
     idx = bisect.bisect_left(times, t)
     if idx < len(times) and times[idx] == t:
@@ -90,8 +81,7 @@ def _speed_at(t: float, samples: list[tuple[float, float]]) -> Optional[float]:
             return prev[1]
         frac = (t - prev[0]) / span
         return prev[1] + frac * (nxt[1] - prev[1])
-    # Only one side available (t is before the first or after the last
-    # sample) -- nearest-match rather than leaving it unset.
+    # t is before the first or after the last sample: nearest-match.
     if prev is not None:
         return prev[1]
     if nxt is not None:
@@ -123,16 +113,13 @@ def _interpolate_speeds(position_times: list[Optional[float]], velocities: list[
 
 def build_flight_path(positions: list[dict], velocities: Optional[list[dict]] = None) -> Optional[dict]:
     """
-    Build a 3D GeoJSON LineString Feature from a flight's position reports,
-    linearly interpolating altitude where it's missing.
+    Build a 3D GeoJSON LineString Feature from a flight's position
+    reports, linearly interpolating altitude where it's missing.
 
-    `properties.coordTimes` is always included -- one Unix-epoch-seconds
-    int (or None if unparseable) per coordinate, parallel to
-    geometry.coordinates -- so a consumer can always correlate a point back
-    to when it was recorded. `properties.coordSpeeds` (knots, nearest-
-    matched/interpolated from velocities' own independent timestamp series)
-    is included only when `velocities` is explicitly passed, keeping the
-    lighter default shape for a caller that doesn't need it.
+    `properties.coordTimes` (Unix-epoch-seconds int per coordinate) is
+    always included. `properties.coordSpeeds` (knots) is included only
+    when `velocities` is explicitly passed, keeping the lighter default
+    shape for callers that don't need it.
 
     Returns None when there are fewer than 2 positions.
     """

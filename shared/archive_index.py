@@ -37,19 +37,11 @@ def build_s3_key(flight: CompletedFlight) -> str:
     Build the S3 object key for a completed flight.
     Format: flights/{YYYY}/{MM}/{DD}/{uuid}.json.gz
 
-    Dated by first_message, not last_message: split-flight stitching
-    (_merge_segments) always preserves the *original* segment's
-    first_message across every stitch, while last_message keeps advancing
-    to whichever segment most recently continued the flight. This key is
-    only ever computed once per flight (a stitch overwrites the object in
-    place under its original key, never recomputing it) — first_message
-    is what keeps that frozen key's date consistent with the value the
-    Parquet index (build_index_s3_key, same rationale) recomputes on every
-    stitch, even when a stitch happens to straddle a UTC day boundary.
-
-    Also the key format tools/legacy-migration copies legacy flights under
-    -- first_message there comes from the legacy Mongo stub rather than a
-    live message processor, but the field means the same thing.
+    Dated by first_message, not last_message: this key is computed once
+    and frozen (a stitch overwrites the object in place, never
+    recomputing the key), and first_message -- unlike last_message -- is
+    invariant across stitching, so the frozen date stays correct even if
+    a stitch straddles a UTC day boundary.
     """
     dt = flight.first_message.astimezone(timezone.utc)
     yyyy = dt.strftime("%Y")
@@ -66,22 +58,12 @@ def build_index_s3_key(flight: CompletedFlight) -> str:
     Build the S3 object key for a completed flight's single-row Parquet
     index file. Format: index/year={YYYY}/month={MM}/day={DD}/{uuid}.parquet
 
-    Hive-style partition segments (year=/month=/day=) so Athena partition
-    projection can use its default location-template behavior with no
-    explicit storage.location.template table property required. Dated by
-    first_message, matching build_s3_key() — unlike the flight object's
-    key (computed once, then frozen across any later stitch), this index
-    row IS rebuilt on every stitch, so it must derive its date from
-    something stitching never changes. last_message advances with every
-    stitched segment; first_message is always the original segment's,
-    invariant across the whole chain (see archive-processor's
-    _merge_segments). Using last_message here would silently orphan a
-    stale index row under the original day's partition — and create a
-    second, live one elsewhere — the moment a stitch happened to straddle
-    a UTC day boundary.
-
-    Not used by tools/legacy-migration, which writes one file per *day*
-    (many flights already compacted) rather than one file per flight.
+    Hive-style partition segments so Athena partition projection needs no
+    explicit storage.location.template. Dated by first_message: unlike
+    build_s3_key()'s frozen key, this index row is rebuilt on every
+    stitch, so it must derive its date from a field stitching never
+    changes -- using last_message would orphan the row under the wrong
+    day's partition whenever a stitch straddles a UTC day boundary.
     """
     dt = flight.first_message.astimezone(timezone.utc)
     yyyy = dt.strftime("%Y")
@@ -92,21 +74,17 @@ def build_index_s3_key(flight: CompletedFlight) -> str:
 
 def flight_index_row(flight: CompletedFlight, s3_key: str) -> dict:
     """
-    Build one Parquet index row (as a plain dict, matching
+    Build one Parquet index row (as a plain dict matching
     PARQUET_INDEX_SCHEMA's column set/order) for a completed flight.
-    s3_key is the flight object's own key (from build_s3_key), copied into
-    the row so a search hit can be resolved to its full flight record.
-    Column set/order matches specs/data-dictionary.yaml's
-    archive_parquet_index record exactly.
+    s3_key is the flight object's own key (from build_s3_key), copied in
+    so a search hit can be resolved to its full flight record.
     """
     return {
         "icao_hex": flight.aircraft.get("icao_hex", "") or "",
         "registration": flight.aircraft.get("registration", "") or "",
         "type_designator": flight.aircraft.get("type_designator", "") or "",
-        # The merged aircraft record only ever has military present-and-true
-        # or absent (to_completed_flight() strips an explicit False for
-        # legacy compatibility) — normalize absent to False here so the
-        # column is a clean non-nullable boolean rather than tri-state.
+        # military is present-and-true or absent, never explicit False;
+        # normalize absent to False for a clean non-nullable column.
         "military": bool(flight.aircraft.get("military") or False),
         "operator_designator": (flight.operator or {}).get("airline_designator", "") or "",
         "ident": flight.ident or "",
@@ -119,11 +97,9 @@ def flight_index_row(flight: CompletedFlight, s3_key: str) -> dict:
 def build_parquet_index_row(flight: CompletedFlight, s3_key: str) -> bytes:
     """
     Build the single-row Parquet file (in-memory bytes) for one completed
-    flight's index entry. Used by archive-processor, which writes one
-    index file per flight; tools/legacy-migration instead accumulates
-    flight_index_row() dicts across a whole day and writes one compacted
-    Parquet table, so it calls flight_index_row() directly rather than
-    this function.
+    flight's index entry. tools/legacy-migration instead accumulates
+    flight_index_row() dicts across a day and writes one compacted table,
+    calling flight_index_row() directly rather than this function.
     """
     table = pa.Table.from_pylist([flight_index_row(flight, s3_key)], schema=PARQUET_INDEX_SCHEMA)
     sink = io.BytesIO()
