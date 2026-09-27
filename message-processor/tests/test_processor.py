@@ -26,13 +26,11 @@ from pyModeS._altcode import altcode_to_altitude
 from pyModeS._bits import crc_remainder
 from pyModeS.position._cpr import cprNL
 
-# message-processor/ can't be imported as a normal package -- the hyphen in
-# the directory name isn't a valid Python identifier -- so register it under
-# the dotted name 'message_processor' via importlib, the same workaround
-# archive-processor/tests/conftest.py uses. This has to live inline here
-# (not in a conftest.py) because pytest derives every conftest.py's plugin
-# name from its "tests/conftest.py" path once the hyphenated parent breaks
-# the dotted-name walk, so a second same-named conftest.py collides with
+# message-processor/ can't be imported as a normal package (hyphen isn't a
+# valid identifier), so register it under 'message_processor' via importlib,
+# same workaround archive-processor/tests/conftest.py uses. Lives inline
+# here, not in a conftest.py, since pytest derives plugin names from
+# "tests/conftest.py" and a second same-named one collides with
 # archive-processor's at collection time.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _MESSAGE_PROCESSOR_DIR = os.path.dirname(_HERE)
@@ -139,11 +137,9 @@ def _make_processor(
          patch.object(MessageProcessor, "_claim_message_processor_id"):
         mock_redis = MagicMock()
         mock_redis.script_load.return_value = "abc123sha"
-        # Default RedisJSON reads (e.g. _enrich_operator's .json().get()) to
-        # "no data", matching a real empty Redis -- an unconfigured MagicMock
-        # is truthy and not JSON-serializable, which breaks flight.save() in
-        # any test that incidentally triggers operator enrichment without
-        # caring about it.
+        # Default RedisJSON reads to "no data" -- an unconfigured MagicMock
+        # is truthy and not JSON-serializable, which breaks flight.save() if
+        # a test incidentally triggers operator enrichment.
         mock_redis.json.return_value.get.return_value = None
         MockRedis.return_value = mock_redis
         p = MessageProcessor(cfg, message_processor_id=message_processor_id)
@@ -155,23 +151,16 @@ def _make_processor(
 
 
 # ---------------------------------------------------------------------------
-# Synthetic DF17 BDS 0,5 (airborne position) frame builder -- #1841.
+# Synthetic DF17 BDS 0,5 (airborne position) frame builder.
 #
-# PipeDecoder's CPR pairing/bootstrap/motion-consistency logic needs a real
-# *track* (several timestamped messages), not a single hand-built result
-# dict, to exercise meaningfully. There's no encode-side API in pyModeS to
-# lean on (it's decode-only), so this builds real, valid-CRC DF17 airborne-
-# position frames from scratch: a standard CPR encoder (the inverse of
-# pyModeS.position._cpr's decode math, using its own cprNL() so zone
-# boundaries always agree), a brute-force search over the 12-bit AC
-# altitude field (small/cached -- only 4096 values, and only Q=1/25ft-step
-# codes decode to a given altitude, so "first match" is deterministic), and
-# pyModeS._bits.crc_remainder for the real PI field. Every frame this
-# produces is independently verified against pyModeS's own pms.decode() in
-# test_synthetic_airborne_frame_round_trips_through_real_pms_decode below,
-# same verification discipline as the hand-crafted frames earlier in this
-# file. Used to build the "clean track" context around the real captured
-# bad frames from #1835/#1836 in TestPipeDecoderRegressionFixtures.
+# PipeDecoder's CPR pairing/bootstrap logic needs a real track (several
+# timestamped messages), not a single hand-built dict. Since pyModeS has no
+# encode-side API, this builds real valid-CRC DF17 frames from scratch: a
+# CPR encoder, a brute-force search over the 12-bit AC altitude field, and
+# crc_remainder for the PI field. Verified against pms.decode() in
+# test_synthetic_airborne_frame_round_trips_through_real_pms_decode below.
+# Used for the "clean track" context around real captured bad frames in
+# TestPipeDecoderRegressionFixtures.
 # ---------------------------------------------------------------------------
 
 _AC12_FOR_ALTITUDE_CACHE: dict[int, int] = {}
@@ -253,14 +242,12 @@ def test_synthetic_airborne_frame_round_trips_through_real_pms_decode():
 # ---------------------------------------------------------------------------
 # _decode_1090 (pyModeS 3.x migration)
 #
-# These hex frames are hand-crafted with pyModeS's own CRC function
-# (pyModeS._bits.crc_remainder) rather than copy-pasted from elsewhere, so
-# each one is deliberately built to exercise exactly one field combination
-# and independently verified against pms.decode() directly before being
-# used here. This is the coverage that would have caught a pyModeS 3.x
-# migration bug (pms.df() raising V2APIRemovedError on every message) —
-# every other test in this file calls _update_flight directly with
-# hand-built dicts and never touches real decode at all.
+# Hex frames are hand-crafted with pyModeS's own CRC function, each built to
+# exercise exactly one field combination and verified against pms.decode()
+# directly. This is the coverage that would have caught a pyModeS 3.x
+# migration bug (pms.df() raising on every message) -- every other test in
+# this file calls _update_flight directly with hand-built dicts and never
+# touches real decode.
 # ---------------------------------------------------------------------------
 
 class TestDecode1090:
@@ -300,11 +287,9 @@ class TestDecode1090:
         assert data["heading"] == 90.0
 
     def test_configured_reference_no_longer_influences_position(self):
-        # #1841: PipeDecoder never consults the receiver's configured
-        # lat/lon for airborne CPR at all -- unlike the old
-        # pms.decode(raw, reference=...) call, a configured reference now
-        # has zero effect on a single position message. Altitude still
-        # decodes from a single message either way (no pairing needed).
+        # PipeDecoder never consults the receiver's configured lat/lon for
+        # airborne CPR -- unlike the old pms.decode(reference=...) call, it
+        # has zero effect on a single position message.
         p, _ = _make_processor(_minimal_config() | {"latitude": 52.2572, "longitude": 3.9198})
         msg = InboundMessage(
             raw="8D40621D58C382D690C8AC2863A7",
@@ -426,17 +411,11 @@ class TestDecode1090:
         )
         assert p._decode_1090(msg) is None
 
-    # DF5/DF21 (squawk-only replies) carry no explicit ICAO field, so
-    # pyModeS can't compute a real crc_valid for them without an
-    # independently-verified ICAO hint (which _decode_1090 doesn't supply)
-    # — it reports crc_valid=None, which the `is False` check above lets
-    # straight through. These are 19 real captured messages reported as
-    # legacy "parity errors"; each one decodes without raising, but several
-    # produce fabricated reserved/emergency squawks (7500/7600/7700/7777)
-    # from corrupted bits. _decode_1090 still surfaces the (possibly
-    # fabricated) value here -- deciding whether to trust it belongs to
-    # _update_flight, which needs the raw value plus the `verified` flag
-    # below to run the confirmation logic (see #900 and
+    # DF5/DF21 report crc_valid=None (pyModeS can't verify them without an
+    # ICAO hint), which the `is False` check above lets through. These are
+    # 19 real captured "parity error" messages; several produce fabricated
+    # reserved/emergency squawks from corrupted bits. _decode_1090 still
+    # surfaces the value -- trusting it is _update_flight's job (see
     # TestSquawkConfirmation/TestIdentConfirmation).
     @pytest.mark.parametrize("raw,expected_squawk", [
         ("A8AE2ACA7DB5CA4AC22FCE4A0F04", "7600"),
@@ -473,15 +452,9 @@ class TestDecode1090:
 
     def test_verified_squawk_from_df17_aircraft_status_broadcast(self):
         # DF17 TC=28 subtype 1 ("Aircraft status") re-encodes the same
-        # squawk inside a real extended-squitter message, which always
-        # carries genuine CRC (unlike DF5/21's ICAO-derived kind) --
-        # hand-crafted with pyModeS's own CRC function
-        # (pyModeS._bits.crc_remainder) the same way the module docstring
-        # above describes, encoding idcode 2730 (-> squawk "7700") at
-        # TC=28/subtype=1/emergency_state=1, ICAO A8AE7F, independently
-        # verified against pms.decode() directly: {'df': 17, 'icao':
-        # 'A8AE7F', 'crc_valid': True, 'typecode': 28, 'bds': '6,1',
-        # 'subtype': 1, 'emergency_state': 1, 'squawk': '7700'}.
+        # squawk in a real extended-squitter message with genuine CRC
+        # (unlike DF5/21's ICAO-derived kind) -- hand-crafted and verified
+        # against pms.decode() directly.
         p, _ = _make_processor()
         msg = InboundMessage(
             raw="8DA8AE7FE12AAA0000000060E34A",
@@ -518,12 +491,9 @@ class TestDecode1090:
         assert data["ident"] == "N30GD"
         assert data["verified"] is False
 
-    # Plausibility filtering (#1565): crafting a real hex frame that decodes
-    # to an out-of-range or fabricated-but-in-range lat/lon/altitude isn't
-    # practical (CPR position encoding doesn't map to arbitrary lat/lon
-    # values), so these patch pms.decode() directly with hand-built result
-    # dicts -- exercising exactly the field-level logic in _decode_1090
-    # without needing a real corrupted-bits capture.
+    # Plausibility filtering (#1565): crafting a real hex frame with an
+    # out-of-range lat/lon/altitude isn't practical, so these patch
+    # pms.decode() directly with hand-built result dicts instead.
     def test_verified_altitude_out_of_range_dropped_but_squawk_survives(self):
         p, _ = _make_processor()
         msg = InboundMessage(
@@ -570,10 +540,8 @@ class TestDecode1090:
 
     def test_unverified_df5_20_21_never_contributes_position_or_altitude(self):
         # crc_valid=None (DF5/20/21): an in-range but fabricated position
-        # must still be dropped -- only a genuinely CRC-verified DF17/18
-        # message (crc_valid=True) may supply latitude/longitude/altitude.
-        # The squawk sibling field is unaffected, still surfaced with
-        # verified=False as before this change.
+        # must still be dropped -- only crc_valid=True may supply
+        # latitude/longitude/altitude. squawk is unaffected.
         p, _ = _make_processor()
         msg = InboundMessage(
             raw="A800030F992252CD453820AD87FB",
@@ -647,11 +615,10 @@ class TestDecode1090:
 # ---------------------------------------------------------------------------
 # _decode_978 (pyModeS978 UAT decoding)
 #
-# These UAT frames are hand-crafted with a synthetic frame builder ported
-# from pyModeS978's own test suite (tests/synth.py — test-only there, not
-# shipped in the PyPI package) and independently verified against
-# pyModeS978.decode() directly before being hardcoded here, matching the
-# same verification discipline TestDecode1090 above uses for 1090 frames.
+# UAT frames are hand-crafted with a synthetic frame builder ported from
+# pyModeS978's own test suite (test-only there, not shipped in the PyPI
+# package), verified against pyModeS978.decode() directly before being
+# hardcoded here -- same discipline TestDecode1090 uses for 1090 frames.
 # ---------------------------------------------------------------------------
 
 class TestDecode978:
