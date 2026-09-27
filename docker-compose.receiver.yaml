@@ -38,6 +38,8 @@ x-receiver-environment: &receiver-environment
 x-receiver: &receiver
   image: ghcr.io/brentio/skyfollower-receiver:${SKYFOLLOWER_VERSION:-latest}
   restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   # RAM-backed, not the container's writable layer -- the healthcheck
   # heartbeat file is rewritten every 15s and must never hit the host's
   # eMMC/SD storage the way /app/data (the fallback queue) legitimately does.

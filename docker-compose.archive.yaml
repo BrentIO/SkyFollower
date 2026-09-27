@@ -26,6 +26,8 @@ services:
   archive-processor:
     image: ghcr.io/brentio/skyfollower-archive-processor:${SKYFOLLOWER_VERSION:-latest}
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       <<: *archive-environment
       AWS_ACCESS_KEY_ID: ${ARCHIVE_PROCESSOR_AWS_ACCESS_KEY_ID}
@@ -78,6 +80,8 @@ services:
     image: ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}
     container_name: skyfollower-archive-compaction
     profiles: ["compaction"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       <<: *archive-environment
       AWS_ACCESS_KEY_ID: ${ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID}
@@ -119,6 +123,8 @@ services:
     image: mcuadros/ofelia:v3.0.8@sha256:c36048db84b0b54d47a689f723f6f5d19281ac4b87d90fa6433a4582b93f1a5b
     restart: unless-stopped
     command: ["daemon", "--docker"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:

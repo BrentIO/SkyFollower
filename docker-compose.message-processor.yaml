@@ -51,6 +51,8 @@ x-message-processor-environment: &message-processor-environment
 x-message-processor: &message-processor
   image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
   restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   # RAM-backed, not the container's writable layer -- the healthcheck
   # heartbeat file is rewritten every 15s and must never hit the host's
   # eMMC/SD storage the way /app/data (the active flight store) legitimately does.

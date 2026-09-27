@@ -39,6 +39,8 @@ services:
     build:
       context: .
       dockerfile: tools/legacy-migration/Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       <<: *legacy-migration-environment
     volumes:
@@ -54,6 +56,8 @@ services:
       dockerfile: tools/legacy-migration/Dockerfile
     profiles: ["producer"]
     entrypoint: ["python", "main.py", "produce"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       <<: *legacy-migration-environment
     volumes:
@@ -67,6 +71,8 @@ services:
       dockerfile: tools/legacy-migration/Dockerfile
     profiles: ["verify"]
     entrypoint: ["python", "main.py", "verify"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       <<: *legacy-migration-environment
     volumes:
