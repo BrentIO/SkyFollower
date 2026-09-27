@@ -419,7 +419,7 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
                   {view.operator && (
                     <div>
                       <SectionLabel>Operator</SectionLabel>
-                      <div className="pl-4 text-right">
+                      <div className="pl-4">
                         {view.operator.name && (
                           <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
                             {view.operator.name}
