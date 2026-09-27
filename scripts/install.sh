@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 #
-# Interactive, non-root installer for SkyFollower. Replaces
-# download-host-files.sh: that script fetched files and stopped, leaving
-# every remaining step -- filling in credentials, starting the stack,
-# seeding Redis -- to an operator following documentation. This script
-# asks for what it needs and finishes the job.
+# Interactive, non-root installer for SkyFollower: fetches config, prompts
+# for credentials, and brings the stack up.
 #
 # Usage:
 #   ./install.sh [--root <path>] [--role <role> ...] [--non-interactive] [--upgrade]
@@ -12,57 +9,43 @@
 # Or, without cloning anything first:
 #   curl -fsSL https://raw.githubusercontent.com/BrentIO/SkyFollower/main/scripts/install.sh | bash
 #
-# <role> is one of: receiver, core, management-ui, message-processor,
-# archive, map -- may be repeated to select several in one
-# run (e.g. --role core --role management-ui, since both live on the same
-# host). Omit entirely for an interactive multi-select prompt.
+# <role>: receiver, core, management-ui, message-processor, archive, map --
+# may be repeated. Omit for an interactive multi-select prompt.
 #
-# --non-interactive reads every value this run needs from already-exported
-# environment variables (RECEIVER_NAME, RECEIVER_SOURCES, RABBITMQ_HOST,
-# etc. -- the same names, whether they end up in .env or, for the
-# per-instance receiver/message-processor values, a generated compose
-# service block) instead of prompting, and requires --role at least once.
-# The receiver role configures exactly one instance per non-interactive
-# run; add more with a repeated run or interactively. Every missing
-# required value is reported together as one error, not one per restart.
+# --non-interactive reads every value from already-exported environment
+# variables instead of prompting, and requires --role at least once. The
+# receiver role configures exactly one instance per run; add more with a
+# repeated run. Every missing required value is reported together at the
+# end, not one per restart.
 #
-# --upgrade re-resolves the latest release tag and runs `docker compose
-# pull && up -d` in every role directory found under the install root,
-# rewriting SKYFOLLOWER_VERSION in each. No prompting. Replaces
-# `docker images | xargs -L1 docker pull`, which pulled every image on the
-# host (unrelated ones included) and could not be rolled back.
+# --upgrade re-resolves the latest release tag, refreshes each role's
+# fetched config/compose files, rewrites SKYFOLLOWER_VERSION, and runs
+# `docker compose pull && up -d` in every role directory under the install
+# root. No prompting.
 #
-# Files are fetched from the latest GitHub *release tag* by default. Every
-# image is only ever built and published on a release tag, so a
-# docker-compose.*.yaml's image: :latest always corresponds to the most
-# recent release commit, not tip of main -- fetching config from main by
-# default would risk downloading a newer config/compose shape than the
-# :latest image understands. Any individual file missing at the resolved
-# tag (a release cut before a given role existed) falls back to main for
-# that one file, with a printed warning.
+# Files are fetched from the latest GitHub release tag by default: a
+# docker-compose.*.yaml's image: :latest always matches that tag, not tip
+# of main, so fetching from main risks a config/compose shape the pinned
+# image doesn't understand. A file missing at the resolved tag falls back
+# to main, with a warning.
 #
-# Testing a dev build: set ONE variable, `branch`, to a branch name (or
-# `main`). Its presence is what makes the run a dev install. It selects
-# BOTH the branch whose compose/config files are fetched AND the matching
-# ghcr.io/brentio/skyfollower-*:dev-<branch> images -- they cannot desync.
-# The images must already be published by build-container-images.yaml's
-# dev_mode (`gh workflow run build-container-images.yaml --ref <branch> -f
-# dev_mode=true`); the installer verifies they exist in GHCR before doing
-# anything and stops with the exact command if not. Every run (fresh or
-# repeat) pulls before bringing the stack up, and a loud DEVELOPMENT BUILD
-# banner prints at the start and end.
+# Dev build: set the `branch` env var to a branch name (or `main`) to fetch
+# that branch's config/compose files and use the matching
+# ghcr.io/brentio/skyfollower-*:dev-<branch> images -- one variable picks
+# both so they can't desync. Those images must already be published via
+# build-container-images.yaml's dev_mode; the installer checks GHCR first
+# and stops with the exact command if they're missing. A real release tag
+# (YYYY.MM.BB) as `branch` is a hard error. See docs/getting-started/
+# index.md's "Testing a dev build" section.
 #   curl -fsSL .../install.sh | branch=my-branch bash
 #   curl -fsSL .../install.sh | branch=my-branch bash -s -- --upgrade
-# `branch` given a real release tag (YYYY.MM.BB) is a hard error -- omit it
-# for a release install. See docs/getting-started/index.md's "Testing a
-# dev build" section.
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Never escalate. No step in this script may invoke sudo -- a root
-# precondition is detected, reported with the exact command to run, and the
-# script exits so it can be re-run once that's done.
+# Never escalate: no step here may invoke sudo. A root precondition is
+# detected, reported with the exact command to run, and the script exits
+# so it can be re-run once that's done.
 # ---------------------------------------------------------------------------
 
 SCRIPT_NAME="$(basename "$0")"
@@ -72,29 +55,20 @@ INSTALL_ROOT="$PWD"
 ROOT_EXPLICIT=0
 SELECTED_ROLES=()
 
-# Set by resolve_ref(). DEV_BUILD=1 when the `branch` env var is present:
-# REF is that branch (for file fetches), IMAGE_VERSION is
-# dev-<sanitized-branch> (the image tag and the .env SKYFOLLOWER_VERSION),
-# BRANCH is the raw branch name (for messages and the gh command hint).
+# Set by resolve_ref(): DEV_BUILD=1 when the `branch` env var is present,
+# REF/IMAGE_VERSION/BRANCH follow from it (see resolve_ref).
 DEV_BUILD=0
 BRANCH=""
 
 ALL_ROLES="core management-ui archive message-processor receiver map"
 
 # Fixed dependency order the selected roles are sorted into before the
-# install loop runs, regardless of the order they were selected or typed:
-# core stashes shared secrets the others read, and archive must deploy the
-# CloudFormation stack before management-ui reads its outputs. map has no
-# dependency on (or from) any other role -- its own dedicated map-redis is
-# bundled in docker-compose.map.yaml, and MAP_UDP_HOST/PORT (the
-# message-processor side of the pairing) is a plain manual value, not
-# something map's own collect_map_env() produces for message-processor to
-# read -- so it's appended at the end, order otherwise irrelevant.
+# install loop runs: core stashes shared secrets the others read, and
+# archive must deploy the CloudFormation stack before management-ui reads
+# its outputs. map has no dependency on/from any other role.
 ROLE_DEPENDENCY_ORDER="core receiver message-processor archive management-ui map"
 
-# usage()'s exit code depends on why it's being shown: 0 for an explicit
-# --help request (informational, not an error), 1 for anything else
-# (an unknown/malformed argument) -- callers pass the code they want.
+# Exit code depends on why usage() is shown: 0 for --help, 1 otherwise.
 usage() {
   local code="${1:-1}"
   cat >&2 <<USAGE
@@ -136,9 +110,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# curl is preferred (matches the release workflow's own tooling
-# assumptions); wget is a fallback for a minimal image that happens to have
-# it but not curl.
+# wget is a fallback for a minimal image with wget but not curl.
 if command -v curl >/dev/null 2>&1; then
   http_get() { curl -fsSL "${1}"; }
 elif command -v wget >/dev/null 2>&1; then
@@ -148,11 +120,9 @@ else
   exit 1
 fi
 
-# Anonymous existence check for a public GHCR image tag, via the registry
-# v2 API with an anonymous pull token -- no `docker pull`, no buildx, no
-# manifest-experimental flag. Returns 0 if the tag exists, 1 if it does
-# not, 2 if GHCR could not be reached at all (so the caller can warn and
-# continue rather than hard-fail on a transient network problem).
+# Anonymous existence check for a public GHCR image tag via the registry
+# v2 API. Returns 0 if the tag exists, 1 if it does not, 2 if GHCR could
+# not be reached (caller warns and continues rather than hard-failing).
 ghcr_tag_exists() {
   local repo="$1" tag="$2" token
   local accept='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
@@ -172,11 +142,7 @@ ghcr_tag_exists() {
 }
 
 resolve_ref() {
-  # `branch` env var present -> dev install. One variable picks BOTH the
-  # git ref for file fetches (REF) and the image tag (IMAGE_VERSION,
-  # dev-<sanitized-branch>), so config files and images can't come from
-  # different code. A value shaped like a real release tag is rejected --
-  # omit `branch` entirely for a release.
+  # `branch` env var present -> dev install (see header comment).
   if [ -n "${branch:-}" ]; then
     BRANCH="$branch"
     if printf '%s' "$BRANCH" | grep -qE '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$'; then
@@ -190,8 +156,6 @@ resolve_ref() {
     local sanitized
     sanitized="$(printf '%s' "$BRANCH" | tr '/' '-')"
     IMAGE_VERSION="dev-${sanitized}"
-    # Verify the dev image set is actually published before prompting for
-    # anything -- no silent fallback to :latest or a stale local image.
     # One canary image is enough: dev_mode builds the whole matrix in one
     # workflow run.
     local canary="brentio/skyfollower-message-processor"
@@ -212,18 +176,11 @@ EOF
     echo "Dev build: branch '${BRANCH}', images ${IMAGE_VERSION}"
     return
   fi
-  # No jq assumption (Raspberry Pi OS Lite doesn't ship it) -- the
-  # tag_name field is a simple top-level string, so a plain grep/cut pull
-  # is enough without pulling in a JSON parser for one field.
-  # Deliberately no `grep -m1`: it closes the pipe as soon as it finds a
-  # match, before curl finishes writing the rest of the response body --
-  # curl then dies of SIGPIPE/CURLE_WRITE_ERROR, and pipefail+set -e take
-  # the whole script down with it even though REF would have been
-  # captured correctly regardless. Letting grep read to EOF avoids that.
-  # `|| true` guards the other pipefail trap: if the API response ever
-  # doesn't contain a tag_name field at all, grep's own no-match failure
-  # would otherwise take the whole script down right here under set -e,
-  # never reaching the friendly "could not determine" message below.
+  # No jq assumption (not guaranteed on a minimal image); tag_name is a
+  # plain top-level string, so grep/cut suffices. No `grep -m1` -- it would
+  # close the pipe early and SIGPIPE curl before the body finishes, taking
+  # the script down under pipefail. `|| true` stops a genuinely-absent
+  # tag_name's no-match failure from doing the same under `set -e`.
   REF="$(http_get "https://api.github.com/repos/BrentIO/SkyFollower/releases/latest" \
     | grep '"tag_name"' | head -1 | cut -d '"' -f 4 || true)"
   if [ -z "$REF" ]; then
@@ -235,9 +192,8 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Preflight -- before any prompting, so a host that cannot possibly work
-# fails in the first two seconds instead of after twenty minutes of
-# questions.
+# Preflight -- runs before any prompting, so a host that can't work fails
+# immediately instead of after twenty minutes of questions.
 # ---------------------------------------------------------------------------
 
 preflight() {
@@ -265,15 +221,11 @@ preflight() {
   fi
 
   if command -v docker >/dev/null 2>&1; then
-    # A successful `docker compose ...` invocation at all -- as a `docker`
-    # subcommand, not a separate `docker-compose` binary -- is itself the
-    # signal that the modern Compose plugin is installed; the legacy v1
-    # standalone tool never registers as a docker subcommand in the first
-    # place. Not pattern-matching the version's leading digit: Compose's
-    # own release numbering advances independently of that v1/v2
-    # distinction, so a hardcoded "must start with 2" check goes stale as
-    # soon as Compose ships a 3.x/4.x/5.x release, even though every one
-    # of those is still the plugin this check exists to require.
+    # A successful `docker compose ...` (a `docker` subcommand, not the
+    # separate legacy `docker-compose` binary) is itself the signal that
+    # the modern Compose plugin is installed. Not pattern-matching the
+    # version's leading digit: that would go stale the moment Compose
+    # ships a 3.x/4.x/5.x release.
     local compose_version
     if compose_version="$(docker compose version --short 2>/dev/null)" && [ -n "$compose_version" ]; then
       echo "  ✓ docker compose v${compose_version} (Compose plugin)"
@@ -292,10 +244,10 @@ preflight() {
     echo "  ✓ $(command -v curl >/dev/null 2>&1 && echo curl || echo wget) found"
   fi
 
-  # The install root itself, or its nearest existing ancestor, must be
-  # writable by the current user -- Docker will happily create a missing
-  # bind-mount source itself, but as root, which then can't be inspected,
-  # copied, or removed by an operator who is merely in the docker group.
+  # The install root, or its nearest existing ancestor, must be writable by
+  # the current user -- Docker will happily create a missing bind-mount
+  # source itself, but as root, unremovable by an operator merely in the
+  # docker group.
   local check_dir="$INSTALL_ROOT"
   while [ ! -e "$check_dir" ]; do
     check_dir="$(dirname "$check_dir")"
@@ -323,10 +275,8 @@ preflight() {
 # ---------------------------------------------------------------------------
 
 sanitize_identifier() {
-  # Lowercased, anything outside [a-z0-9_-] replaced with '-', leading and
-  # trailing '-' trimmed. Matches Docker Compose's own project-name
-  # character rules instead of relying on Compose silently stripping
-  # anything else.
+  # Matches Docker Compose's own project-name character rules instead of
+  # relying on Compose silently stripping anything else.
   local out
   out="$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-')"
   while [ "${out#-}" != "$out" ]; do out="${out#-}"; done
@@ -335,28 +285,20 @@ sanitize_identifier() {
 }
 
 existing_env_value() {
-  # Prints the last KEY=... line's value from an existing .env, or nothing
-  # if the file or key doesn't exist -- used to offer current values as
-  # defaults on a re-run, per component convention (last-write-wins for a
-  # repeated key, matching how a human editing the file would expect it
-  # to behave).
+  # Prints the last KEY=... line's value from an existing .env (last-write-
+  # wins for a repeated key), or nothing if the file/key doesn't exist.
   local file="$1" key="$2"
   [ -f "$file" ] || return 0
-  # || true: the key legitimately not being present yet (e.g. re-running
-  # against a .env from before this key existed) makes grep itself exit
-  # non-zero on zero matches -- since this is the function's last command,
-  # that becomes this function's own return status, which would otherwise
-  # take the whole script down under set -e the moment a caller does
-  # x="$(existing_env_value ...)", not just fail to find a default.
+  # `|| true`: a legitimately-absent key makes grep exit non-zero on zero
+  # matches, which as this function's last command would otherwise take
+  # the whole script down under `set -e` on every caller, not just fail to
+  # find a default.
   grep -E "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
 existing_env_value_or() {
-  # existing_env_value(...) always exits 0 now (see its own comment above),
-  # so the "existing_env_value ... || echo DEFAULT" idiom this replaces
-  # never actually falls back to DEFAULT -- that only ever triggers on a
-  # non-zero exit status, not on empty output. This checks the printed
-  # value itself instead.
+  # existing_env_value() always exits 0, so checks the printed value
+  # itself rather than relying on exit status for the fallback.
   local file="$1" key="$2" default="$3" val
   val="$(existing_env_value "$file" "$key")"
   if [ -n "$val" ]; then
@@ -367,12 +309,10 @@ existing_env_value_or() {
 }
 
 default_receiver_name() {
-  # Suggested RECEIVER_NAME default on a fresh install: the machine's short
-  # hostname, uppercased. `hostname -s` works on both this script's
-  # realistic host platforms (Linux, macOS); the fallback strips everything
-  # after the first '.' from plain `hostname` output in case `-s` isn't
-  # available. `tr` rather than bash 4+ `${h^^}` -- this script has already
-  # hit a real macOS-default-bash-3.2 compatibility bug once (#1031).
+  # Suggested RECEIVER_NAME default: the machine's short hostname,
+  # uppercased. Falls back to stripping after the first '.' if `hostname
+  # -s` isn't available. `tr`, not bash 4+ `${h^^}` -- this script targets
+  # macOS's default bash 3.2 too.
   local h
   h="$(hostname -s 2>/dev/null)"
   if [ -z "$h" ]; then
@@ -391,14 +331,10 @@ generate_password() {
 }
 
 detect_lan_ip() {
-  # Asks the OS which local interface/IP it would route a packet to a
-  # public address through -- a UDP "connect" never actually sends
-  # anything (UDP has no handshake), so this is a pure routing-table
-  # lookup, not real network traffic. On any normal single-NIC host this
-  # is the LAN IP an operator would actually browse to. Prints nothing
-  # (rather than failing the caller) if python3 is unavailable or there's
-  # no route at all, e.g. an offline sandbox -- the TLS cert's SAN then
-  # just covers localhost + hostname instead.
+  # Asks the OS which local IP it would route a packet to a public address
+  # through -- a UDP "connect" never sends anything, so this is a pure
+  # routing-table lookup. Prints nothing if python3 is unavailable or
+  # there's no route; the TLS cert's SAN then just covers localhost/hostname.
   command -v python3 >/dev/null 2>&1 || return 0
   python3 -c '
 import socket
@@ -412,10 +348,8 @@ except Exception:
 }
 
 tls_san_entry() {
-  # Prints one openssl `-addext subjectAltName=...` entry for an
-  # arbitrary operator-supplied name -- IP:<addr> for a dotted-quad,
-  # DNS:<name> for anything else (a hostname, or a bare LAN name with no
-  # dots that still isn't an IP).
+  # One openssl `-addext subjectAltName=...` entry: IP:<addr> for a
+  # dotted-quad, DNS:<name> otherwise.
   local value="$1"
   if [[ "$value" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
     printf 'IP:%s' "$value"
@@ -425,20 +359,14 @@ tls_san_entry() {
 }
 
 generate_self_signed_cert() {
-  # Idempotent self-signed TLS cert+key generation shared by the
-  # management-ui (fronting nginx) and map (terminated directly in
-  # uvicorn) roles -- see management-ui/README.md's and map/README.md's
-  # TLS sections. Fixed filenames (cert.pem/key.pem) so this doubles as
-  # the BYO-cert path: an operator drops their own pair into $1 under
-  # those same names before running install.sh, and this function leaves
-  # them untouched.
+  # Idempotent self-signed TLS cert+key generation shared by management-ui
+  # and map. Fixed filenames (cert.pem/key.pem) double as the BYO-cert
+  # path: an operator can drop their own pair into $1 before running
+  # install.sh, and this function leaves them untouched.
   #
-  # $1 = tls_dir (host path, e.g. "${role_dir}/data/management-ui/tls")
-  # $2 = label, used only in prompts/log lines (e.g. "management-ui")
-  # $3 = varname to read/record the optional extra SAN name under, so a
-  #      non-interactive run can supply MANAGEMENT_UI_TLS_EXTRA_SAN /
-  #      MAP_TLS_EXTRA_SAN independently rather than sharing one name
-  #      across both roles.
+  # $1 = tls_dir, $2 = label (prompts/log lines), $3 = varname for the
+  # optional extra SAN, kept per-role so a non-interactive run can set
+  # MANAGEMENT_UI_TLS_EXTRA_SAN / MAP_TLS_EXTRA_SAN independently.
   local tls_dir="$1" label="$2" san_varname="$3"
   local cert_file="${tls_dir}/cert.pem" key_file="${tls_dir}/key.pem"
 
@@ -471,8 +399,7 @@ generate_self_signed_cert() {
 
   echo "  Generating self-signed TLS certificate for ${label} (10-year validity; SAN: ${san})..."
   # umask so the private key is never briefly world/group-readable between
-  # openssl creating it and the explicit chmod below -- same "restrictive
-  # from the first byte" posture write_env_header() uses for .env.
+  # openssl creating it and the chmod below.
   if ! (umask 077 && openssl req -x509 -nodes -newkey rsa:2048 \
       -keyout "$key_file" -out "$cert_file" -days 3650 \
       -subj "/CN=${lan_host:-localhost}" \
@@ -486,20 +413,15 @@ generate_self_signed_cert() {
   echo "  Wrote ${cert_file} and ${key_file} (never printed to the terminal)."
 }
 
-# All prompt_* helpers are no-ops in --non-interactive mode: they read the
-# named environment variable instead of calling `read`, and record a
-# problem (rather than exiting immediately) if it's required and unset --
-# so a missing .env in that mode is reported as one list, matching the
-# shared config loader's own "every problem at once" behaviour rather than
-# failing on the first one.
+# In --non-interactive mode, every prompt_* helper reads the named
+# environment variable instead of calling `read`, and records a problem
+# (rather than exiting immediately) if required and unset, so every
+# missing value is reported together at the end.
 #
-# A file, not a bash array: every prompt_* function is invoked as
-# X="$(prompt_string ...)" so its printed value can be captured, and
-# command substitution always forks a subshell -- an array append made
-# inside that subshell (NONINTERACTIVE_PROBLEMS+=(...)) would vanish the
-# instant the subshell exits, silently discarding every recorded problem
-# before this shell ever saw them. A file is real filesystem I/O, so it
-# survives the subshell boundary that in-memory shell state cannot cross.
+# A file, not a bash array: every prompt_* function runs as
+# X="$(prompt_string ...)", which forks a subshell -- an array append
+# inside that subshell would vanish when it exits. A file survives the
+# subshell boundary that in-memory shell state cannot cross.
 PROBLEMS_FILE="$(mktemp)"
 trap 'rm -f "$PROBLEMS_FILE"' EXIT
 record_problem() {
@@ -533,10 +455,8 @@ prompt_string() {
 }
 
 prompt_password_value() {
-  # required defaults to 1, but MQTT_PASSWORD passes 0: MQTT genuinely
-  # supports an anonymous connection (both username and password blank),
-  # so it must be possible to accept an empty value here on a first run,
-  # not just on a re-run where an existing (also-blank) default exists.
+  # required defaults to 1, but MQTT_PASSWORD passes 0: MQTT supports an
+  # anonymous connection (blank username and password).
   local varname="$1" label="$2" default="$3" required="${4:-1}"
   if [ "$NON_INTERACTIVE" -eq 1 ]; then
     local val="${!varname:-$default}"
@@ -593,11 +513,9 @@ prompt_int_range() {
 }
 
 prompt_number_range() {
-  # Latitude/longitude -- decimal, not integer, so validated with a regex
-  # rather than shell integer comparison. `required` (default 1, matching
-  # prompt_string's own convention) lets a caller allow a blank answer to
-  # mean "leave this feature disabled" -- see collect_map_env()'s center
-  # lat/long -- instead of forcing a numeric value.
+  # Decimal (lat/long), so validated with python3 rather than shell
+  # integer comparison. `required=0` lets a blank answer mean "leave this
+  # feature disabled" (see collect_map_env()'s center lat/long).
   local varname="$1" label="$2" default="$3" min="$4" max="$5" required="${6:-1}"
   if [ "$NON_INTERACTIVE" -eq 1 ]; then
     local val="${!varname:-$default}"
@@ -632,8 +550,8 @@ prompt_number_range() {
 
 validate_receiver_sources() {
   # Mirrors shared/config.py's parse_receiver_sources -- kept in sync by
-  # hand since this is bash validating input before it ever reaches that
-  # Python parser, not a substitute for it.
+  # hand; this validates input before it reaches that parser, not a
+  # substitute for it.
   local raw="$1" triple host port tag
   IFS=',' read -ra triples <<< "$raw"
   [ "${#triples[@]}" -eq 0 ] && return 1
@@ -642,8 +560,7 @@ validate_receiver_sources() {
     [ -z "$host" ] && return 1
     [[ "$port" =~ ^[0-9]+$ ]] || return 1
     [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
-    # tr, not ${tag^^} -- the latter is a bash 4+ feature and this script
-    # otherwise only relies on bash 3.2+ syntax.
+    # tr, not bash 4+ ${tag^^} -- this script targets bash 3.2+.
     case "$(printf '%s' "$tag" | tr 'a-z' 'A-Z')" in
       1090|978|EXTERNAL) ;;
       *) return 1 ;;
@@ -680,17 +597,10 @@ prompt_receiver_sources() {
 }
 
 probe_tcp() {
-  # No dependency on GNU coreutils' `timeout` (absent by default on
-  # macOS, and not guaranteed on every minimal Linux image either): a
-  # background watchdog kills the connection attempt after 3s if it's
-  # still running, and the blocking `wait` below picks up its real exit
-  # status either way -- 0 for an actual successful connect, non-zero for
-  # both a genuine refusal and a watchdog-forced kill. Polling with
-  # `kill -0` in a sleep loop was tried first and rejected: a background
-  # job that has already exited but not yet been reaped can still answer
-  # `kill -0` as "alive" on some systems, which would kill (and then
-  # misreport as a timeout) a connection that had actually already
-  # succeeded.
+  # No dependency on GNU coreutils' `timeout` (absent on macOS by
+  # default): a background watchdog kills the connection attempt after 3s
+  # if it's still running, and `wait` below picks up the real exit status
+  # either way.
   local host="$1" port="$2" label="$3"
   [ -z "$host" ] && return 0
   ( exec 3<>"/dev/tcp/${host}/${port}" ) 2>/dev/null &
@@ -703,9 +613,8 @@ probe_tcp() {
   else
     status=1
   fi
-  # Both of these routinely "fail" (the watchdog already fired and exited
-  # on its own) and that's fine -- explicitly not checked, since under
-  # set -e an unchecked bare failure here would silently kill the whole
+  # `|| true`: the watchdog routinely has already fired and exited on its
+  # own, and under `set -e` an unchecked failure here would kill the
   # script instead of just this cleanup step.
   kill "$watchdog_pid" 2>/dev/null || true
   wait "$watchdog_pid" 2>/dev/null || true
@@ -722,10 +631,9 @@ probe_tcp() {
 # ---------------------------------------------------------------------------
 
 role_files() {
-  # Echoes "compose_file config_file..." (space-separated) for a role,
-  # mirroring the mapping documented in docs/deployment/index.md's Compose
-  # Files and Configuration tables -- update both places together if it
-  # ever changes.
+  # Echoes "compose_file config_file..." for a role, mirroring
+  # docs/deployment/index.md's Compose Files/Configuration tables --
+  # update both together if it ever changes.
   case "$1" in
     receiver)
       echo "docker-compose.receiver.yaml"
@@ -751,10 +659,8 @@ role_files() {
 role_data_dirs() {
   case "$1" in
     receiver)
-      # Nothing fixed to create here: which instances this node hosts (and
-      # so which data/skyfollower-receiver-{slug} directories exist) isn't
-      # known until collect_receiver_env() has run its prompts, which
-      # creates each one itself as it appends that instance's service block.
+      # Nothing fixed here: which per-instance data dirs exist isn't known
+      # until collect_receiver_env() creates them itself.
       ;;
     core)
       echo "data/rabbitmq data/redis"
@@ -763,21 +669,14 @@ role_data_dirs() {
       echo "data/management-ui"
       ;;
     message-processor)
-      # Nothing fixed to create here: which IDs this node hosts (and so
-      # which data/skyfollower-message-processor-{id} directories exist)
-      # isn't known until collect_message_processor_env() has run its
-      # prompts, which creates each one itself as it appends that ID's
-      # service block.
+      # Nothing fixed here: which per-ID data dirs exist isn't known until
+      # collect_message_processor_env() creates them itself.
       ;;
     archive)
       echo "data/archive-processor data/archive-compaction data/archive-index-cache"
       ;;
     map)
-      # map-redis is deliberately ephemeral (no persistence, by design --
-      # see its comments in docker-compose.map.yaml). The map service keeps
-      # two things on disk: the TLS directory (populated by
-      # collect_map_env()'s generate_self_signed_cert() call) and the daily
-      # range-outline snapshots (./data/map/range-outline/{YYYY-MM-DD}.json).
+      # map-redis is deliberately ephemeral (see docker-compose.map.yaml).
       echo "data/map/tls data/map/range-outline"
       ;;
   esac
@@ -792,14 +691,10 @@ fetch_role() {
   for rel_path in $(role_files "$role"); do
     local dest_path="${role_dir}/${rel_path}"
     mkdir -p "$(dirname "$dest_path")"
-    # The message-processor and receiver compose files stop being static
-    # fetched artifacts the moment collect_*_env() appends this node's
-    # generated per-instance service blocks into them -- re-fetching over
-    # one on a later run would silently discard every already-running
-    # instance's block. No-clobber them exactly like a config/*.example's
-    # real target below: fetched fresh only the first time, left entirely
-    # alone once they exist (delete by hand to pick up template/anchor
-    # changes).
+    # The message-processor/receiver compose files hold generated
+    # per-instance service blocks once collect_*_env() has run --
+    # re-fetching would discard them, so no-clobber like config/*.example
+    # below (delete by hand to pick up template/anchor changes).
     if [ -e "$dest_path" ] && {
       { [ "$role" = "message-processor" ] && [ "$rel_path" = "docker-compose.message-processor.yaml" ]; } ||
       { [ "$role" = "receiver" ] && [ "$rel_path" = "docker-compose.receiver.yaml" ]; }
@@ -819,9 +714,7 @@ fetch_role() {
     http_get "${main_base}/${rel_path}" > "$dest_path"
   done
 
-  # No-clobber: skips any real file that already exists, so a re-run into
-  # an existing install directory can never silently overwrite values
-  # already filled in by the operator.
+  # No-clobber: never overwrites a config file the operator already filled in.
   if [ -d "${role_dir}/config" ]; then
     find "${role_dir}/config" -name "*.example" -exec bash -c '
       for example; do
@@ -842,15 +735,11 @@ fetch_role() {
 }
 
 # ---------------------------------------------------------------------------
-# Per-role .env body -- the values genuinely worth an interactive prompt.
-# Everything else (LOG_LEVEL, the Athena names) has a sensible default and
-# is written directly, matching "the installer asks for what it needs"
-# rather than every value that could theoretically be tuned -- an operator
-# who wants one of those can still just edit .env afterward. Internal timing
-# values (publish cadence, key TTLs, retry backoffs) are not env vars at
-# all: they are fixed constants in shared/timing.py. flight_ttl_seconds is
-# the one tunable behavioural value and lives in the config:flight_ttl_seconds
-# Redis key, not here.
+# Per-role .env body -- only the values genuinely worth an interactive
+# prompt. Everything else (LOG_LEVEL, the Athena names) gets a sensible
+# default and is written directly; an operator can still edit .env
+# afterward. Internal timing values live in shared/timing.py, not here;
+# flight_ttl_seconds lives in the config:flight_ttl_seconds Redis key.
 # ---------------------------------------------------------------------------
 
 collect_receiver_env() {
@@ -859,20 +748,17 @@ collect_receiver_env() {
   echo "-- ${role_dir} (receiver) --"
 
   # One or more receiver instances share this host and this .env. Each
-  # instance is just a name (Home Assistant label + Redis SET NX identity)
-  # plus its own RECEIVER_SOURCES, baked as literals into a generated
-  # service block in docker-compose.receiver.yaml -- the connection
-  # settings collected further down are shared across every instance.
-  # Re-running install.sh for the receiver role appends any names whose
-  # slug isn't already a block. No fleet-count/ordinal prompts: receivers
-  # have no positional consistent-hash slots the way message processors do.
+  # instance is a name (Home Assistant label + Redis identity) plus its own
+  # RECEIVER_SOURCES, baked into a generated service block in
+  # docker-compose.receiver.yaml; connection settings below are shared.
+  # Re-running appends any name whose slug isn't already a block.
   local existing_slugs
   existing_slugs="$(existing_receiver_slugs "$compose_file")"
 
   local first=1
   while true; do
     if [ "$first" -eq 0 ]; then
-      [ "$NON_INTERACTIVE" -eq 1 ] && break   # non-interactive: exactly one instance
+      [ "$NON_INTERACTIVE" -eq 1 ] && break   # exactly one instance
       local another
       read -r -p "  Add another receiver on this host? [y/N]: " another </dev/tty
       { [ -n "$another" ] && [[ "$another" =~ ^[Yy] ]]; } || break
@@ -906,11 +792,9 @@ collect_receiver_env() {
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(shared_conn_default "$env_file" MQTT_PASSWORD SHARED_CONN_MQTT_PASSWORD)" 0)"
-  # Optional -- leave REDIS_HOST blank to disable entirely: no
-  # identity claim/heartbeat, no period-counter sensors, no core-health
-  # registration, and RECEIVER_NAME stays purely cosmetic (the receiver
-  # falls back to its own generated UUID identity). Same
-  # optional/empty-default pattern MQTT_HOST already uses above.
+  # Optional -- blank disables identity claim/heartbeat, period-counter
+  # sensors, and core-health registration; RECEIVER_NAME then stays purely
+  # cosmetic (a generated UUID identity is used instead).
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host (leave blank to disable identity claim + message counters)" "$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST)" 0)"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(shared_conn_default "$env_file" REDIS_PORT SHARED_CONN_REDIS_PORT 6379)" 1 65535)"
   REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(shared_conn_default "$env_file" REDIS_PASSWORD SHARED_CONN_REDIS_PASSWORD)" 0)"
@@ -918,9 +802,8 @@ collect_receiver_env() {
   probe_tcp "$MQTT_HOST" "$MQTT_PORT" "MQTT"
   probe_tcp "$REDIS_HOST" "$REDIS_PORT" "Redis"
 
-  # Stash what this role just collected so a later non-core role in this
-  # same run defaults to it instead of its own empty .env (see
-  # shared_conn_default() above).
+  # Stashed so a later non-core role in this run defaults to it instead of
+  # its own empty .env (see shared_conn_default()).
   SHARED_CONN_RABBITMQ_HOST="$RABBITMQ_HOST"
   SHARED_CONN_RABBITMQ_PORT="$RABBITMQ_PORT"
   SHARED_CONN_RABBITMQ_USERNAME="$RABBITMQ_USERNAME"
@@ -969,18 +852,12 @@ ENV_EOF
 # within one install.sh run.
 # ---------------------------------------------------------------------------
 
-# SHARED_CONN_* mirror the AWS_PROV_* pattern below (see "AWS provisioning")
-# for the RabbitMQ/Redis/MQTT host/port/username/password values that every
-# non-core collect_*_env() function prompts for. Without this, a second
-# non-core role selected in the same run (e.g. archive then management-ui)
-# has no memory of what a sibling role already collected moments earlier,
-# and re-prompts from each value's bare fallback (blank host, default port,
-# ...) instead of what the operator just typed. core is deliberately not a
-# participant here -- it HOSTS RabbitMQ/Redis rather than dialing out to
-# them, so its own prompts are a different, already-separate mechanism (see
-# CORE_SELECTED_IN_THIS_RUN / resolve_core_shared_password below).
-# Initialised once before the role loop and blanked again at the end of the
-# run, same lifetime as AWS_PROV_*.
+# SHARED_CONN_* mirror the AWS_PROV_* pattern below: lets a second non-core
+# role in the same run (e.g. archive then management-ui) default to what a
+# sibling role already collected, instead of each value's bare fallback.
+# core is not a participant -- it hosts RabbitMQ/Redis rather than dialing
+# out, so it uses a separate mechanism (see resolve_core_shared_password).
+# Initialised once before the role loop, blanked again at the end.
 init_shared_conn_globals() {
   SHARED_CONN_RABBITMQ_HOST=""
   SHARED_CONN_RABBITMQ_PORT=""
@@ -996,16 +873,10 @@ init_shared_conn_globals() {
 }
 clear_shared_conn_globals() { init_shared_conn_globals; }
 
-# Prompt-default precedence for one shared connection value: (1) this
-# role's OWN existing .env -- an operator who already configured this exact
-# role on a prior run keeps seeing what they set for it, even if a sibling
-# role earlier in THIS run cached something else; (2) the run-scoped cache
-# an earlier non-core role in this same run just collected (stashed via
-# plain assignment to the SHARED_CONN_* global at the end of that role's
-# collect_*_env()); (3) the hardcoded fallback (a default port, or blank),
-# same as every prompt on a fresh install today. The result is always just
-# a prompt default -- never skips the prompt -- so it's always still
-# editable.
+# Prompt-default precedence: (1) this role's own existing .env, (2) the
+# run-scoped SHARED_CONN_* cache an earlier non-core role in this run
+# collected, (3) the hardcoded fallback. Always just a prompt default --
+# never skips the prompt.
 shared_conn_default() {
   local env_file="$1" key="$2" cache_var="$3" fallback="${4:-}"
   local existing
@@ -1023,16 +894,10 @@ shared_conn_default() {
 }
 
 # Reuses a password collect_core_env() already collected/generated earlier
-# in this same run instead of a dependent role independently re-prompting
-# against its own (often still-empty) .env -- see CORE_SELECTED_IN_THIS_RUN
-# and where collect_core_env() stashes CORE_REDIS_PASSWORD/
-# CORE_RABBITMQ_PASSWORD. Per the resolved scope, this skips the prompt
-# entirely (no Enter-to-accept step) rather than merely pre-filling a
-# default, since the value is already decided, not just a guess at one.
-# Falls back to shared_conn_default() (rather than existing_env_value()
-# alone) so RABBITMQ_PASSWORD/REDIS_PASSWORD get the same cross-role reuse
-# as every other shared connection value on a run where core ISN'T
-# selected at all (so there's no CORE_* value to skip straight to).
+# in this run instead of a dependent role re-prompting against its own
+# (often still-empty) .env -- skips the prompt entirely when a CORE_* value
+# exists, since it's already decided. Falls back to shared_conn_default()
+# when core wasn't selected in this run at all.
 resolve_core_shared_password() {
   local core_var="$1" varname="$2" label="$3" env_file="$4" cache_var="$5"
   local core_val="${!core_var:-}"
@@ -1061,24 +926,19 @@ collect_core_env() {
   else
     RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$existing_rmq_pw")"
   fi
-  # Stashed in a run-scoped variable so any dependent role's collect_*_env
-  # processed later in this same invocation can reuse it silently -- see
+  # Stashed for a dependent role's collect_*_env to reuse silently -- see
   # resolve_core_shared_password() above.
   CORE_RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD"
-  # Fixed, not prompted -- nothing requires a human to choose the dashboard
-  # admin's username any more than its password. Its credentials never
-  # leave this host: no other role's .env ever references it, and no
-  # component reads it, since RabbitMQ is provisioned by rabbitmqctl after
-  # startup (see provision_rabbitmq_users), not by an image env var.
+  # Fixed, not prompted -- never leaves this host (RabbitMQ is provisioned
+  # by rabbitmqctl after startup; see provision_rabbitmq_users).
   RABBITMQ_ADMIN_USERNAME="$(existing_env_value_or "$env_file" RABBITMQ_ADMIN_USERNAME skyfollower-admin)"
   RABBITMQ_ADMIN_PASSWORD="$(existing_env_value "$env_file" RABBITMQ_ADMIN_PASSWORD)"
   if [ -z "$RABBITMQ_ADMIN_PASSWORD" ]; then
     RABBITMQ_ADMIN_PASSWORD="$(generate_password)"
   fi
-  # core-health's own broker-wide read-only credential (RabbitMQ's built-in
-  # `monitoring` tag), provisioned the same way as the two above -- fixed
-  # username, generated password, never prompted, since there's no more a
-  # reason for a human to choose this username than the dashboard admin's.
+  # core-health's own broker-wide read-only credential (RabbitMQ's
+  # `monitoring` tag), provisioned the same way: fixed username, generated
+  # password, never prompted.
   RABBITMQ_MONITORING_USERNAME="$(existing_env_value_or "$env_file" RABBITMQ_MONITORING_USERNAME skyfollower-monitoring)"
   RABBITMQ_MONITORING_PASSWORD="$(existing_env_value "$env_file" RABBITMQ_MONITORING_PASSWORD)"
   if [ -z "$RABBITMQ_MONITORING_PASSWORD" ]; then
@@ -1154,13 +1014,10 @@ ENV_EOF
 collect_management_ui_env() {
   local role_dir="$1" env_file="${1}/.env"
   echo "-- ${role_dir} (management-ui) --"
-  # If core is also selected in this run and lives in a sibling directory,
-  # this defaults to reaching it via the host loopback address (Redis'
-  # port is published to the host) rather than the "redis" service name,
-  # which only resolves inside core's own Compose project network. That
-  # localhost default only applies with nothing else to go on yet, so it
-  # sits below both the per-role .env and the cross-role cache in
-  # shared_conn_default()'s own precedence.
+  # If core is also selected in this run, default to the host loopback
+  # address (Redis' port is published to the host) rather than the "redis"
+  # service name, which only resolves inside core's own Compose network.
+  # Only applies below the per-role .env and cross-role cache defaults.
   local redis_default
   redis_default="$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST)"
   if [ -z "$redis_default" ] && [ -n "${CORE_SELECTED_IN_THIS_RUN:-}" ]; then
@@ -1169,19 +1026,14 @@ collect_management_ui_env() {
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$redis_default")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(shared_conn_default "$env_file" REDIS_PORT SHARED_CONN_REDIS_PORT 6379)" 1 65535)"
   REDIS_PASSWORD="$(resolve_core_shared_password CORE_REDIS_PASSWORD REDIS_PASSWORD "Redis password" "$env_file" SHARED_CONN_REDIS_PASSWORD)"
-  # Reads the archive stack's outputs (via `aws-setup --outputs-only`) so
-  # bucket/region/credentials pre-fill the prompts below. Needs its own
-  # temporary credentials -- none of the three scoped identities can read
-  # the CloudFormation control plane. Declining falls through unchanged.
+  # Reads the archive stack's outputs so bucket/region/credentials
+  # pre-fill the prompts below. Declining falls through unchanged.
   offer_aws_provisioning management-ui "$env_file"
   S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "${AWS_PROV_S3_BUCKET:-$(existing_env_value "$env_file" S3_BUCKET)}")"
   AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "${AWS_PROV_REGION:-$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)}")"
   AWS_ACCESS_KEY_ID="$(prompt_string AWS_ACCESS_KEY_ID "AWS access key ID" "${AWS_PROV_MANAGEMENT_UI_KEY_ID:-$(existing_env_value "$env_file" AWS_ACCESS_KEY_ID)}")"
   AWS_SECRET_ACCESS_KEY="$(prompt_password_value AWS_SECRET_ACCESS_KEY "AWS secret access key" "${AWS_PROV_MANAGEMENT_UI_SECRET:-$(existing_env_value "$env_file" AWS_SECRET_ACCESS_KEY)}")"
-  # Optional -- leave MQTT_HOST blank to disable MQTT entirely. When set,
-  # the backend publishes a minimal Home Assistant presence (discovery +
-  # running version + start time) and nothing else. Same optional/
-  # empty-default pattern every other role uses for MQTT.
+  # Optional -- leave MQTT_HOST blank to disable MQTT entirely.
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host (blank to disable Home Assistant presence)" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST)" 0)"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
@@ -1231,50 +1083,36 @@ collect_map_env() {
   local role_dir="$1" env_file="${1}/.env"
   echo "-- ${role_dir} (map) --"
 
-  # Single instance -- no MAP_SERVICE_ID-style claim/heartbeat, no
-  # per-instance service blocks to generate (map/README.md: "unlike
-  # message-processor, this is not horizontally scaled"). Same
-  # existing-.env-only default precedence as collect_management_ui_env()
-  # for map's own settings -- map has nothing in common with the
-  # RabbitMQ/Redis values SHARED_CONN_* caches for the other roles. The
-  # one exception is MQTT (below), which every role that talks to the
-  # broker shares.
+  # Single instance -- map is not horizontally scaled, so no per-instance
+  # service blocks. No SHARED_CONN_* reuse for map's own settings (nothing
+  # in common with the other roles' RabbitMQ/Redis); MQTT below is the
+  # one exception, shared with every role that talks to the broker.
   MAP_LISTEN_HOST="$(prompt_string MAP_LISTEN_HOST "UDP listener bind address" "$(existing_env_value_or "$env_file" MAP_LISTEN_HOST 0.0.0.0)")"
   MAP_LISTEN_PORT="$(prompt_int_range MAP_LISTEN_PORT "UDP listener bind port (message-processor's MAP_UDP_PORT must point here)" "$(existing_env_value_or "$env_file" MAP_LISTEN_PORT 30500)" 1 65535)"
   MAP_HTTP_HOST="$(prompt_string MAP_HTTP_HOST "REST/WebSocket bind address" "$(existing_env_value_or "$env_file" MAP_HTTP_HOST 0.0.0.0)")"
   MAP_HTTP_PORT="$(prompt_int_range MAP_HTTP_PORT "REST/WebSocket bind port (HTTPS by default)" "$(existing_env_value_or "$env_file" MAP_HTTP_PORT 443)" 1 65535)"
   # Dedicated map-redis (bundled in docker-compose.map.yaml) -- never core
-  # Redis (see map/README.md's "Data boundary" section). Defaults to the
-  # map-redis service name since both containers live in that same
-  # compose file/host.
+  # Redis. Defaults to the map-redis service name.
   MAP_REDIS_HOST="$(prompt_string MAP_REDIS_HOST "map-redis host" "$(existing_env_value_or "$env_file" MAP_REDIS_HOST map-redis)")"
   MAP_REDIS_PORT="$(prompt_int_range MAP_REDIS_PORT "map-redis port" "$(existing_env_value_or "$env_file" MAP_REDIS_PORT 6379)" 1 65535)"
-  # Optional -- map-redis ships with no auth by default (see
-  # docker-compose.map.yaml's comments); only set this if MAP_REDIS_HOST
-  # points at an external, already-secured Redis instead of the bundled
-  # one.
+  # Optional -- map-redis has no auth by default; only set this for an
+  # external, already-secured Redis instead of the bundled one.
   MAP_REDIS_PASSWORD="$(prompt_password_value MAP_REDIS_PASSWORD "map-redis password (blank for none)" "$(existing_env_value "$env_file" MAP_REDIS_PASSWORD)" 0)"
   MAP_STALE_SECONDS="$(prompt_int_range MAP_STALE_SECONDS "Stale TTL, seconds (aircraft fades but stays visible)" "$(existing_env_value_or "$env_file" MAP_STALE_SECONDS 15)" 1 86400)"
   MAP_HIDE_SECONDS="$(prompt_int_range MAP_HIDE_SECONDS "Hide TTL, seconds (aircraft drops from view but trail data is kept)" "$(existing_env_value_or "$env_file" MAP_HIDE_SECONDS 60)" 1 86400)"
   # Should equal core Redis's config:flight_ttl_seconds for this
-  # deployment (default 300, matching MAP_EVICT_SECONDS's own default) --
-  # this role never queries core Redis (map/README.md's "Data boundary"
-  # section), so there's nothing to auto-detect here; just a reminder.
+  # deployment -- this role never queries core Redis, so it's a reminder,
+  # not an auto-detected value.
   MAP_EVICT_SECONDS="$(prompt_int_range MAP_EVICT_SECONDS "Evict TTL, seconds (aircraft fully removed -- should match this deployment's flight_ttl_seconds)" "$(existing_env_value_or "$env_file" MAP_EVICT_SECONDS 300)" 1 86400)"
   probe_tcp "$MAP_REDIS_HOST" "$MAP_REDIS_PORT" "map-redis"
 
   # Optional "center" reference point for the frontend's on-map marker,
-  # initial camera position, and "Return to center" button -- read at
-  # runtime by this backend role and served to the frontend over GET
-  # /api/config (shared/config.py's map_config(), MAP_CENTER_LATITUDE/
-  # MAP_CENTER_LONGITUDE), not a Vite build-time value. Both or neither:
-  # leave blank to leave the feature disabled.
+  # initial camera position, and "Return to center" button. Both or
+  # neither: leave blank to leave the feature disabled.
   MAP_CENTER_LATITUDE="$(prompt_number_range MAP_CENTER_LATITUDE "Center reference latitude, decimal degrees (blank to disable the center marker/recenter)" "$(existing_env_value "$env_file" MAP_CENTER_LATITUDE)" -90 90 0)"
   MAP_CENTER_LONGITUDE="$(prompt_number_range MAP_CENTER_LONGITUDE "Center reference longitude, decimal degrees (blank to disable the center marker/recenter)" "$(existing_env_value "$env_file" MAP_CENTER_LONGITUDE)" -180 180 0)"
 
-  # Optional -- leave MQTT_HOST blank to disable MQTT entirely. When set,
-  # this service publishes a minimal Home Assistant presence (discovery +
-  # running version + start time) and nothing else -- no telemetry loop.
+  # Optional -- leave MQTT_HOST blank to disable MQTT entirely.
   MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host (blank to disable Home Assistant presence)" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST)" 0)"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
@@ -1333,14 +1171,9 @@ ENV_EOF
 }
 
 normalize_message_processor_id() {
-  # Accepts either the full "skyfollower-message-processor-{id}" form or a
-  # bare "{id}", and prints the bare id -- always what's actually stored/
-  # compared, since it's what names the compose service/container, the
-  # RabbitMQ queue, and the Redis heartbeat key are all built from at
-  # generation time. Fails (no output, non-zero exit) on anything that
-  # isn't a positive whole number once the prefix is stripped -- fleet IDs
-  # start at 1, matching existing_count+1 as the first ID a fresh fleet
-  # ever hands out.
+  # Accepts either "skyfollower-message-processor-{id}" or a bare "{id}",
+  # prints the bare id. Fails on anything that isn't a positive whole
+  # number once the prefix is stripped.
   local raw="$1" id
   case "$raw" in
     skyfollower-message-processor-*)
@@ -1355,12 +1188,9 @@ normalize_message_processor_id() {
 }
 
 existing_message_processor_ids() {
-  # IDs already holding a generated service block in this node's compose
-  # file, one per line -- empty (not an error) if the file doesn't exist
-  # yet or has no service blocks appended. Used so a re-run only appends
-  # the IDs it doesn't already find, whether that's this collection
-  # function's own "how many currently implemented" arithmetic overlapping
-  # a prior run, or a "replacing" ID that turns out to already be present.
+  # IDs already holding a generated service block, one per line -- empty
+  # (not an error) if the file doesn't exist yet. Lets a re-run only
+  # append IDs it doesn't already find.
   local compose_file="$1"
   [ -f "$compose_file" ] || return 0
   grep -E '^  skyfollower-message-processor-[0-9]+:' "$compose_file" 2>/dev/null \
@@ -1368,10 +1198,9 @@ existing_message_processor_ids() {
 }
 
 append_message_processor_service() {
-  # Appends one concrete service block referencing this file's own
-  # x-message-processor/x-message-processor-environment anchors -- YAML
-  # anchors only resolve within the file that defines them, which is why
-  # this can't be a second compose file merged in via COMPOSE_FILE.
+  # References this file's own x-message-processor anchors -- YAML anchors
+  # only resolve within the file that defines them, so this can't be a
+  # second compose file merged in via COMPOSE_FILE.
   local compose_file="$1" id="$2"
   cat >> "$compose_file" <<SERVICE_EOF
 
@@ -1387,10 +1216,8 @@ SERVICE_EOF
 }
 
 existing_receiver_slugs() {
-  # Name-slugs already holding a generated service block in this node's
-  # docker-compose.receiver.yaml, one per line -- empty (not an error) if
-  # the file doesn't exist yet or has no blocks appended. Used so a re-run
-  # only appends the instances it doesn't already find.
+  # Name-slugs already holding a generated service block, one per line --
+  # empty (not an error) if the file doesn't exist yet.
   local compose_file="$1"
   [ -f "$compose_file" ] || return 0
   grep -E '^  skyfollower-receiver-[a-z0-9_-]+:' "$compose_file" 2>/dev/null \
@@ -1398,12 +1225,8 @@ existing_receiver_slugs() {
 }
 
 append_receiver_service() {
-  # Appends one concrete receiver service block referencing this file's own
-  # x-receiver/x-receiver-environment anchors. RECEIVER_NAME keeps the
-  # operator's original casing (Home Assistant label + Redis SET NX
-  # identity use it verbatim); the sanitized slug is used only for the
-  # service name, container name, and per-instance data directory. Quote
-  # RECEIVER_SOURCES -- it's a compound host:port:source,... string.
+  # RECEIVER_NAME keeps the operator's original casing; the sanitized slug
+  # is used only for the service/container name and data directory.
   local compose_file="$1" name="$2" sources="$3" slug
   slug="$(sanitize_identifier "$name")"
   cat >> "$compose_file" <<SERVICE_EOF
@@ -1455,22 +1278,14 @@ collect_message_processor_env() {
           if [ -z "$confirm" ] || [[ "$confirm" =~ ^[Yy] ]]; then
             break
           fi
-          # Declined: loop back and ask for the ID again rather than
-          # aborting -- this is a single value being re-entered, not the
-          # multi-prompt fleet-count collection below, which is what the
-          # design calls out for a full-abort-on-decline treatment.
         else
           echo "    Must be skyfollower-message-processor-{id} or a bare positive whole-number id." >&2
         fi
       done
     fi
-    # Only non-interactive mode can reach here with norm_id still unset --
-    # a validation failure recorded a problem above rather than exiting
-    # immediately (matching every other prompt_* helper's non-interactive
-    # behaviour: every problem across every selected role is collected and
-    # reported together at the very end of main(), not one at a time), so
-    # this must not append a malformed empty-id service block in the
-    # meantime.
+    # Only non-interactive mode can reach here with norm_id still unset (a
+    # validation failure recorded a problem instead of exiting immediately)
+    # -- must not append a malformed empty-id service block meanwhile.
     [ -n "$norm_id" ] && ids_to_add=("$norm_id")
   else
     local existing_count num_new
@@ -1485,11 +1300,7 @@ collect_message_processor_env() {
       read -r -p "  After installation, you will have ${total} message processors. Continue? [Y/n]: " proceed </dev/tty
     fi
     if [ -n "$proceed" ] && ! [[ "$proceed" =~ ^[Yy] ]]; then
-      # Full abort, not a loop back to the top of this function: simpler to
-      # implement, and every value collected so far (including RABBITMQ_*/
-      # REDIS_*/MQTT_* below, never mind this function hasn't even reached
-      # those yet) is still just local shell variables that vanish with the
-      # process -- nothing has been written to disk yet for this role.
+      # Full abort: nothing collected so far has been written to disk yet.
       echo "Aborted -- no message-processor configuration was written." >&2
       exit 1
     fi
@@ -1503,10 +1314,8 @@ collect_message_processor_env() {
   echo
   local id
   # ${arr[@]} directly under set -u throws "unbound variable" on bash 3.2
-  # (macOS's default /bin/bash) when the array has zero elements -- the
-  # non-interactive malformed-ID path above deliberately leaves ids_to_add
-  # empty and defers to the top-level PROBLEMS_FILE check, so this has to
-  # tolerate that instead of crashing here first.
+  # when the array has zero elements (the non-interactive malformed-ID
+  # path above deliberately leaves it empty).
   if [ "${#ids_to_add[@]}" -gt 0 ]; then
     for id in "${ids_to_add[@]}"; do
       if printf '%s\n' "$existing_ids" | grep -qx "$id"; then
@@ -1532,27 +1341,19 @@ collect_message_processor_env() {
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(shared_conn_default "$env_file" MQTT_PASSWORD SHARED_CONN_MQTT_PASSWORD)" 0)"
-  # Optional live position/metadata UDP feed toward the map component (see
-  # docker-compose.map.yaml / the `map` role) -- leave MAP_UDP_HOST blank
-  # to disable entirely, same optional-endpoint convention as MQTT_HOST
-  # above. Not a SHARED_CONN_* value: it isn't a connection this role
-  # shares with any sibling role in the same run. MAP_UDP_PORT is always
-  # prompted (same "port still has a value even when the host is blank"
-  # convention REDIS_PORT uses above) -- its suggested default matches
-  # collect_map_env()'s own MAP_LISTEN_PORT default, so accepting both
-  # defaults leaves the pairing already agreeing. Not probed with
-  # probe_tcp: this is a UDP destination, and a TCP connect attempt
-  # against it would misleadingly report "unreachable" even when
-  # correctly configured.
+  # Optional live position/metadata UDP feed toward the map role -- leave
+  # MAP_UDP_HOST blank to disable. Its suggested default matches
+  # collect_map_env()'s MAP_LISTEN_PORT default. Not probed with
+  # probe_tcp: it's a UDP destination, and a TCP connect attempt would
+  # misleadingly report "unreachable" even when correctly configured.
   MAP_UDP_HOST="$(prompt_string MAP_UDP_HOST "Map UDP destination host (leave blank to disable)" "$(existing_env_value "$env_file" MAP_UDP_HOST)" 0)"
   MAP_UDP_PORT="$(prompt_int_range MAP_UDP_PORT "Map UDP destination port" "$(existing_env_value_or "$env_file" MAP_UDP_PORT 30500)" 1 65535)"
   probe_tcp "$RABBITMQ_HOST" "$RABBITMQ_PORT" "RabbitMQ"
   probe_tcp "$REDIS_HOST" "$REDIS_PORT" "Redis"
   probe_tcp "$MQTT_HOST" "$MQTT_PORT" "MQTT"
 
-  # Stash what this role just collected so a later non-core role in this
-  # same run defaults to it instead of its own empty .env (see
-  # shared_conn_default() above).
+  # Stashed so a later non-core role in this run defaults to it instead of
+  # its own empty .env (see shared_conn_default()).
   SHARED_CONN_RABBITMQ_HOST="$RABBITMQ_HOST"
   SHARED_CONN_RABBITMQ_PORT="$RABBITMQ_PORT"
   SHARED_CONN_RABBITMQ_USERNAME="$RABBITMQ_USERNAME"
@@ -1606,8 +1407,7 @@ collect_archive_env() {
   local role_dir="$1" env_file="${1}/.env"
   echo "-- ${role_dir} (archive) --"
   # Offer to create/update the CloudFormation stack first, so its outputs
-  # become the prompt defaults below. Declining falls through to the same
-  # manual prompts, unchanged, for anyone who already has infrastructure.
+  # become the prompt defaults below. Declining falls through unchanged.
   offer_aws_provisioning archive "$env_file"
   S3_BUCKET="$(prompt_string S3_BUCKET "S3 archive bucket name" "${AWS_PROV_S3_BUCKET:-$(existing_env_value "$env_file" S3_BUCKET)}")"
   AWS_DEFAULT_REGION="$(prompt_string AWS_DEFAULT_REGION "AWS region" "${AWS_PROV_REGION:-$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)}")"
@@ -1633,9 +1433,8 @@ collect_archive_env() {
   probe_tcp "$REDIS_HOST" "$REDIS_PORT" "Redis"
   probe_tcp "$MQTT_HOST" "$MQTT_PORT" "MQTT"
 
-  # Stash what this role just collected so a later non-core role in this
-  # same run (management-ui) defaults to it instead of its own empty .env
-  # (see shared_conn_default() above).
+  # Stashed so a later non-core role in this run (management-ui) defaults
+  # to it instead of its own empty .env (see shared_conn_default()).
   SHARED_CONN_RABBITMQ_HOST="$RABBITMQ_HOST"
   SHARED_CONN_RABBITMQ_PORT="$RABBITMQ_PORT"
   SHARED_CONN_RABBITMQ_USERNAME="$RABBITMQ_USERNAME"
@@ -1689,9 +1488,7 @@ write_env_header() {
   local env_file="$1" role_dir="$2"
   local compose_file
   compose_file="$(role_files "$ROLE_FOR_HEADER" | awk '{print $1}')"
-  # umask, not a chmod afterwards: the file must never exist
-  # world-readable, not even for the moment between creating and
-  # tightening it.
+  # umask, not a chmod afterwards: never briefly world-readable.
   (
     umask 077
     cat > "$env_file" <<ENV_EOF
@@ -1732,11 +1529,9 @@ default_folder_for_role() {
 }
 
 project_name_for_folder() {
-  # Mirrors Compose's own project-name derivation, sanitized. Both the
-  # receiver and message-processor compose files now carry an authoritative
-  # top-level `name:` (skyfollower-receiver / skyfollower-message-processor)
-  # that this must agree with -- for the fixed role folders it does by
-  # construction (skyfollower-<folder>).
+  # Mirrors Compose's own project-name derivation, sanitized. Must agree
+  # with the receiver/message-processor compose files' own top-level
+  # `name:` (skyfollower-<folder>), which it does by construction.
   local folder_name="$1"
   local sanitized
   sanitized="$(sanitize_identifier "$folder_name")"
@@ -1781,13 +1576,11 @@ select_roles_interactively() {
 # Finishing the job
 # ---------------------------------------------------------------------------
 
-# Bring one role's stack up. For a dev build the image tag (dev-<branch>)
-# is floating -- a newer build can sit behind the same tag -- so pull
-# first, on every run, or a re-run silently keeps whatever is already
-# local. --profile runners so the core host's runner-* images refresh too
-# (a no-op everywhere else); NOT passed to `up -d` (would launch every
-# one-shot runner). A release pin is immutable, so a plain release
-# install still skips the pull (only --upgrade pulls, as before).
+# For a dev build the image tag (dev-<branch>) is floating, so pull first
+# every run or a re-run silently keeps a stale local image. --profile
+# runners refreshes the core host's runner-* images too; NOT passed to
+# `up -d` (would launch every one-shot runner). A release pin is
+# immutable, so a plain release install skips the pull.
 compose_bring_up() {
   local role_dir="$1"
   if [ "$DEV_BUILD" -eq 1 ]; then
@@ -1812,18 +1605,13 @@ offer_up() {
 }
 
 provision_rabbitmq_users() {
-  # RabbitMQ's RABBITMQ_DEFAULT_USER/PASS env vars always create that user
-  # as a full administrator on `/` -- there is no env var that creates it
-  # scoped from the start. This runs once the container is actually up,
-  # demoting the application user to SkyFollower's own resources and
-  # creating a separate administrator for the dashboard, so a compromised
-  # receiver/message-processor/archive host only ever holds a credential
-  # that can publish/consume on known queue names, never one that can
-  # reconfigure the broker. Every rabbitmqctl call below is idempotent, so
-  # running this again (a second install.sh run, --upgrade, or manually
-  # re-running just this role) is always safe -- including the migration
-  # case, where an existing deployment's application user is still
-  # full-admin from before this existed.
+  # RabbitMQ's RABBITMQ_DEFAULT_USER/PASS always creates that user as a
+  # full administrator on `/`; there's no env var that scopes it from the
+  # start. This runs once the container is up, demoting the application
+  # user to SkyFollower's own resources and creating a separate dashboard
+  # administrator, so a compromised host only ever holds a credential
+  # scoped to known queue names. Every rabbitmqctl call is idempotent, so
+  # re-running this is always safe.
   local role_dir="$1"
   local rabbitmq_username rabbitmq_admin_username rabbitmq_admin_password
   local rabbitmq_monitoring_username rabbitmq_monitoring_password
@@ -1861,16 +1649,10 @@ provision_rabbitmq_users() {
 
   echo "Provisioning RabbitMQ users..."
 
-  # configure/write/read, in that order -- amq.default is required for
-  # write because completed flights are published to the archive queue
-  # through the default exchange. skyfollower-message-processor-.* is each
-  # processor's own queue (fleet-ID-named, not adsb-*-prefixed). Keep this
-  # pattern in sync with shared/rabbitmq_topology.py's
-  # SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN -- bash can't import that Python
-  # constant directly, so the two copies have to be kept identical by hand;
-  # core-health filters RabbitMQ's Management API queue list with that
-  # constant, so a change here that isn't mirrored there (or vice versa)
-  # silently drifts "what SkyFollower owns" apart between the two.
+  # configure/write/read, in that order. Keep this pattern in sync by hand
+  # with shared/rabbitmq_topology.py's SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN
+  # -- core-health filters RabbitMQ's queue list with that constant, so a
+  # change here not mirrored there silently drifts what SkyFollower "owns".
   if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_username") \
     && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_username" \
       '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|skyfollower-archive-raw-frames|amq\.default)$' '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|skyfollower-archive-raw-frames|amq\.default)$' '^(skyfollower-adsb.*|skyfollower-message-processor-.*|skyfollower-archive|skyfollower-archive-raw-frames)$'); then
@@ -1879,9 +1661,8 @@ provision_rabbitmq_users() {
     echo "  ✗ Could not scope ${rabbitmq_username}'s tags/permissions -- check manually." >&2
   fi
 
-  # add_user fails if the user already exists (a prior run already created
-  # it, with its own password) -- that's fine, list_users first so this
-  # doesn't print a scary error on every re-run.
+  # add_user fails if the user already exists; list_users first so a
+  # re-run doesn't print a scary error.
   if ! (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl list_users 2>/dev/null | grep -q "^${rabbitmq_admin_username}[[:space:]]"); then
     (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$rabbitmq_admin_username" "$rabbitmq_admin_password" >/dev/null) \
       || echo "  ✗ Could not create ${rabbitmq_admin_username} -- check manually." >&2
@@ -1894,11 +1675,10 @@ provision_rabbitmq_users() {
   fi
 
   # core-health's broker-wide read-only credential. The "monitoring" tag
-  # alone grants Management API visibility into every vhost/queue/
-  # connection's aggregated stats -- no per-resource permission is needed
-  # (or possible: `monitoring` is a role tag, not a permission scope), so
-  # this is set to match nothing rather than left at RabbitMQ's own
-  # all-matching default for a freshly add_user'd account.
+  # alone grants Management API visibility into every vhost/queue's
+  # stats -- no per-resource permission is possible, so this is set to
+  # match nothing rather than left at a freshly add_user'd account's
+  # all-matching default.
   if [ -n "$rabbitmq_monitoring_username" ] && [ -n "$rabbitmq_monitoring_password" ]; then
     if ! (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl list_users 2>/dev/null | grep -q "^${rabbitmq_monitoring_username}[[:space:]]"); then
       (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$rabbitmq_monitoring_username" "$rabbitmq_monitoring_password" >/dev/null) \
@@ -1919,22 +1699,18 @@ provision_rabbitmq_users() {
 # AWS provisioning (archive + management-ui hosts)
 # ---------------------------------------------------------------------------
 
-# Pulls one KEY=value line out of the aws-setup container's stdout. Same
-# grep/cut style as existing_env_value(); `|| true` so a legitimately
-# absent key doesn't take the script down under `set -e`.
+# Pulls one KEY=value line out of the aws-setup container's stdout.
+# `|| true` so a legitimately absent key doesn't take the script down
+# under `set -e`.
 aws_setup_output_value() {
   local outputs="$1" key="$2"
   printf '%s\n' "$outputs" | grep -E "^${key}=" | tail -1 | cut -d= -f2- || true
 }
 
 # AWS_PROV_* carry the stack outputs from one provisioning run across every
-# AWS-consuming role installed in the same run (archive, then management-ui
-# -- dependency-ordered so archive deploys first). AWS_PROV_DONE guards the
-# single elevated-credential prompt: once the one provisioning interaction
-# has happened (whether it succeeded, was declined, or fell back), no later
-# role re-prompts. Both are initialised once before the role loop and
-# blanked once at the end of the whole run -- nothing elevated is left in
-# the process environment.
+# AWS-consuming role in the same run. AWS_PROV_DONE guards the single
+# elevated-credential prompt: once that interaction has happened, no later
+# role re-prompts. Initialised once before the role loop, blanked at the end.
 init_aws_prov_globals() {
   AWS_PROV_DONE=0
   AWS_PROV_S3_BUCKET=""
@@ -1948,12 +1724,9 @@ init_aws_prov_globals() {
 }
 clear_aws_prov_globals() { init_aws_prov_globals; }
 
-# After a successful provisioning run on the one-time-IAM-user path, offers
-# to delete that user (its access key, inline policy, and the user itself)
-# with its own still-valid credentials. A no-op on the paste-a-session path
-# (bootstrap_user empty). A failed delete step is handled inside
-# `aws-setup --delete-bootstrap-user`, which prints exactly what is left
-# and the manual console steps; this just relays its non-zero exit.
+# After a successful one-time-IAM-user provisioning run, offers to delete
+# that user (key, inline policy, user) with its own still-valid
+# credentials. A no-op on the paste-a-session path (bootstrap_user empty).
 offer_bootstrap_user_cleanup() {
   local image="$1" bootstrap_user="$2" key_id="$3" secret="$4" region="$5"
   [ -n "$bootstrap_user" ] || return 0
@@ -1981,32 +1754,24 @@ offer_bootstrap_user_cleanup() {
 }
 
 # Offers to create/update the archive's CloudFormation stack (archive
-# role), or to read an already-deployed stack's outputs (management-ui
-# role), via a one-shot `docker run --rm ghcr.io/.../skyfollower-aws-setup`.
-# Modelled on provision_rabbitmq_users(): idempotent, degrades to advice
-# rather than aborting, and every failure path just falls through to the
-# manual AWS prompts unchanged.
+# role) or read an already-deployed stack's outputs (management-ui role),
+# via a one-shot `docker run --rm ghcr.io/.../skyfollower-aws-setup`. Every
+# failure path falls through to the manual AWS prompts unchanged.
 #
-# It prompts for the elevated provisioning credential exactly once per run.
-# First it asks how the operator wants to supply one: paste an existing
-# temporary session (SSO / access portal), or have the installer print the
-# least-privilege caller policy and walk them through creating a one-time
-# IAM user -- then offer to delete that user once provisioning succeeds.
-# aws-setup itself creates the CloudFormation execution role and hands it
-# to CloudFormation, so the caller credential only ever needs that small
-# policy.
+# Prompts for the elevated provisioning credential exactly once per run:
+# either an existing temporary session, or a printed least-privilege
+# policy plus console steps to create a one-time IAM user (offered
+# cleanup once provisioning succeeds).
 #
 # On success it sets AWS_PROV_* globals that collect_archive_env() /
-# collect_management_ui_env() then use as their AWS prompt defaults, so the
-# operator presses Enter through them. It never writes the elevated
-# (provisioning) credentials anywhere -- they are passed to the container
-# as environment for that single --rm run and expire on their own (or, for
-# the one-time user, are self-deleted at the end).
+# collect_management_ui_env() use as prompt defaults. It never writes the
+# elevated credentials anywhere -- passed only as environment to that
+# single --rm run.
 offer_aws_provisioning() {
   local role="$1" env_file="$2"
 
   # Non-interactive runs read every AWS value straight from the
-  # environment (the .env key names) -- no container step, no prompting.
+  # environment -- no container step, no prompting.
   if [ "$NON_INTERACTIVE" -eq 1 ]; then
     return 0
   fi
@@ -2038,8 +1803,7 @@ offer_aws_provisioning() {
 
   local image="ghcr.io/brentio/skyfollower-aws-setup:${IMAGE_VERSION}"
   # dev-<branch> is a floating tag; `docker run` alone won't refresh an
-  # image already present locally. Pull so a re-run provisions with the
-  # current dev build. (A release pin is immutable -- nothing to do.)
+  # image already present locally.
   if [ "$DEV_BUILD" -eq 1 ]; then
     docker pull "$image" >/dev/null 2>&1 || true
   fi
@@ -2056,9 +1820,9 @@ offer_aws_provisioning() {
   read -r -p "  Choose [1/2]: " cred_choice </dev/tty
 
   if [ "$cred_choice" = "2" ]; then
-    # One-time IAM user path. Ask region and prefix first so the printed
-    # caller policy has no placeholders left in it; the bucket is asked
-    # here too so the deploy below has everything it needs in one pass.
+    # Ask region/prefix first so the printed caller policy has no
+    # placeholders left; the bucket too, so the deploy below has
+    # everything it needs in one pass.
     echo
     prov_region="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
     prov_prefix="$(prompt_string RESOURCE_NAME_PREFIX "Resource name prefix (for the stack's IAM identity names)" "skyfollower")"
@@ -2113,15 +1877,13 @@ offer_aws_provisioning() {
     prov_key_id="$(prompt_string AWS_PROVISIONING_ACCESS_KEY_ID "AWS access key ID" "")"
     prov_secret="$(prompt_password_value AWS_PROVISIONING_SECRET_ACCESS_KEY "AWS secret access key" "")"
     prov_token="$(prompt_password_value AWS_PROVISIONING_SESSION_TOKEN "AWS session token" "")"
-    # Region must be prompted before any stack lookup: finding a stack
-    # requires knowing its region, so it can't be taken from the stack's own
-    # AwsRegion output.
+    # Must be prompted before any stack lookup -- can't come from the
+    # stack's own AwsRegion output when finding the stack needs it first.
     prov_region="$(prompt_string AWS_DEFAULT_REGION "AWS region" "$(existing_env_value_or "$env_file" AWS_DEFAULT_REGION us-east-1)")"
   fi
 
-  # A plain IAM user's key needs no session token, and boto3 rejects an
-  # empty-string AWS_SESSION_TOKEN rather than ignoring it -- so only pass
-  # it when non-empty.
+  # boto3 rejects an empty-string AWS_SESSION_TOKEN rather than ignoring
+  # it, so only pass it when non-empty.
   local cred_args=(
     -e AWS_ACCESS_KEY_ID="$prov_key_id"
     -e AWS_SECRET_ACCESS_KEY="$prov_secret"
@@ -2144,12 +1906,9 @@ offer_aws_provisioning() {
       read -r -p "  Create this bucket? [Y/n]: " answer </dev/tty
       if [ -z "$answer" ] || [[ "$answer" =~ ^[Yy] ]]; then prov_create="Yes"; else prov_create="No"; fi
     fi
-    # RESOURCE_NAME_PREFIX is only passed when the operator set a non-default
-    # value (the one-time-user path) -- otherwise the template's own default
-    # stands, matching the names the printed policy was scoped to. Built as
-    # folded into one always-non-empty array so `"${deploy_args[@]}"` is
-    # safe under `set -u` on bash 3.2 (see the note in
-    # collect_message_processor_env about zero-element arrays).
+    # RESOURCE_NAME_PREFIX is only passed for a non-default value, so the
+    # array starts non-empty (safe under `set -u` on bash 3.2; see the
+    # note in collect_message_processor_env about zero-element arrays).
     local -a deploy_args=(-e ARCHIVE_BUCKET_NAME="$prov_bucket" -e CREATE_ARCHIVE_BUCKET="$prov_create")
     if [ -n "$prov_prefix" ] && [ "$prov_prefix" != "skyfollower" ]; then
       deploy_args+=(-e "RESOURCE_NAME_PREFIX=$prov_prefix")
@@ -2191,33 +1950,13 @@ _bootstrap_user_retry_hint() {
   echo "      -e AWS_DEFAULT_REGION=${region} ${image} --delete-bootstrap-user ${bootstrap_user}" >&2
 }
 
-# Runs the first-time bulk-load runner sequence detached from the installer
-# process, so accepting the offer doesn't require keeping the installer's
-# terminal session open for however long the full run takes (hours, once
-# slow per-record-fetch runners like cz-caa-registry/uk-caa-registry are in
-# the mix) and doesn't block the main role loop's later offer_up prompts.
+# Runs the first-time bulk-load runner sequence detached, so accepting
+# doesn't require keeping the installer's session open for however long
+# the full run takes, and doesn't block the later offer_up prompts.
 #
-# ofelia itself was considered for this instead of a bash loop -- it's
-# already being brought up in this same flow and already encodes this exact
-# ordering as permanent weekly cron labels in docker-compose.core.yaml -- but
-# it has no on-demand "run this job chain now" trigger: it's a pure
-# label/cron-driven daemon (job-run/job-exec/job-local/job-service-run, all
-# scheduled), with no CLI subcommand, HTTP API, or signal to fire a job
-# outside its schedule. The only way to get immediate execution out of it
-# would be temporarily scheduling each job a few seconds apart, which is
-# fragile against exactly the runners this ordering exists for: mictronics
-# must finish (not just start) before the rest run, since they resolve
-# icao_hex against its RediSearch index, and cz-caa-registry/uk-caa-registry
-# routinely run far longer than a few seconds. A generated one-shot script
-# reusing the same sequential ordering, just detached, avoids all of that.
-#
-# The generated script is written to a temp file and deletes itself as its
-# last line; `nohup` keeps it from being killed by SIGHUP when the
-# installer's session ends, and `disown` drops it from this shell's job
-# table so the shell doesn't wait on or report it. Output goes to a log file
-# under role_dir the operator can tail after the installer has moved on to
-# the next role or exited entirely; `docker compose ps`/`docker ps` also
-# show whichever runner is currently mid-run.
+# The generated script deletes itself as its last line; `nohup` survives
+# the installer's session ending, `disown` drops it from this shell's job
+# table. Output goes to a log file under role_dir the operator can tail.
 run_bulk_load_detached() {
   local role_dir="$1" ordered="$2"
   local log_file script_file
@@ -2278,19 +2017,12 @@ offer_ofelia_and_bulk_load() {
   fi
 
   # The runner list comes from `docker compose config --services`, not a
-  # hardcoded list, so it cannot drift from what's actually declared.
-  # `--profile runners` is required: every runner-* service is declared
-  # `profiles: ["runners"]`, and `config --services` filters by active
-  # profiles exactly as `up`/`pull`/`ps` do -- without it the list comes
-  # back empty and the bulk load silently no-ops.
-  # Every grep below is guarded with `|| true`: under set -e, a filter
-  # that legitimately matches nothing (an unusual runner set, or none at
-  # all) would otherwise take the whole script down right here instead of
-  # just producing an empty list.
-  # cz-caa-registry and uk-caa-registry are both pulled out of the
-  # alphabetical batch and appended last: each does a per-record detail
-  # fetch (cz-caa-registry with a 0.25s inter-request delay, uk-caa-registry
-  # with 676+ prefix searches on top) and runs far longer than the rest.
+  # hardcoded list, so it can't drift from what's declared. `--profile
+  # runners` is required or the list comes back empty. Every grep is
+  # guarded with `|| true` since a legitimate no-match would otherwise
+  # take the script down under `set -e`. cz-caa-registry/uk-caa-registry
+  # are pulled out of the alphabetical batch and appended last: both do
+  # slow per-record detail fetches.
   local all_runners mictronics rest cz_second_last uk_last ordered
   all_runners="$(cd "$role_dir" && docker compose --profile runners config --services | grep '^runner-' || true)"
   mictronics="$(echo "$all_runners" | grep '^runner-mictronics$' || true)"
@@ -2308,8 +2040,7 @@ offer_ofelia_and_bulk_load() {
 
 do_upgrade() {
   # REF/IMAGE_VERSION are already resolved by main() before dispatching
-  # here (release tag, or dev-<branch> when `branch` was set) -- resolving
-  # again would mean two GitHub API calls per --upgrade run for the same
+  # here -- resolving again would mean two GitHub API calls for the same
   # answer.
   echo "Upgrading every role directory under ${INSTALL_ROOT} to ${IMAGE_VERSION}..."
   echo "(runner-* images are pulled too -- they sit behind the \"runners\" compose profile)"
@@ -2321,22 +2052,18 @@ do_upgrade() {
     role_dir="$(dirname "$env_file")"
     echo
     echo "-- ${role_dir} --"
-    # Re-fetch this role's compose file (and any config/*.example) the same
-    # way a first install does, via fetch_role -- an upgrade that only ever
-    # pulls images and never refreshes the compose file can never deliver a
-    # new service, label, or port mapping to an existing deployment (#1961).
-    # default_folder_for_role() guarantees folder name == role name, so
-    # basename is a reliable way back to the role fetch_role expects.
-    # fetch_role's own no-clobber logic (message-processor/receiver's
-    # per-instance service blocks, already-derived config/* files) applies
-    # unchanged here -- nothing about upgrade needs its own copy of that.
+    # Re-fetch this role's compose file (and any config/*.example) via
+    # fetch_role, same as a first install -- an upgrade that only pulls
+    # images can never deliver a new service, label, or port mapping to
+    # an existing deployment. basename is a reliable way back to the role
+    # fetch_role expects, since default_folder_for_role() guarantees
+    # folder name == role name. fetch_role's own no-clobber logic applies
+    # unchanged here.
     fetch_role "$(basename "$role_dir")" "$role_dir"
-    # Rewrite SKYFOLLOWER_VERSION in place -- every other line, including
-    # any operator edits, is left exactly as it is. Also renames the map
-    # role's MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys (the "center"
-    # rename) to MAP_CENTER_LATITUDE/MAP_CENTER_LONGITUDE, preserving
-    # whatever value was already set -- a blanket no-op on every non-map
-    # role dir, which never had those keys to begin with.
+    # Rewrite SKYFOLLOWER_VERSION in place; every other line, including
+    # operator edits, is left as-is. Also renames the map role's old
+    # MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys to MAP_CENTER_LATITUDE/
+    # MAP_CENTER_LONGITUDE -- a no-op on every non-map role dir.
     local tmp
     tmp="$(mktemp)"
     awk -v v="$IMAGE_VERSION" '
@@ -2346,17 +2073,12 @@ do_upgrade() {
       { print }
     ' "$env_file" > "$tmp"
     (umask 077; mv "$tmp" "$env_file")
-    # --profile runners on the pull so the runner-* services (all gated
-    # behind profiles: ["runners"] in docker-compose.core.yaml) get their
-    # images refreshed to the new tag -- without it every runner silently
-    # stays on its old image after an upgrade. Blanket for every role dir:
-    # a no-op where the compose file declares no such profile. The flag is
-    # deliberately NOT passed to `up -d`: the runner services are one-shot
-    # jobs (their CMD runs an import and exits), so `up` would kick off all
-    # of them -- including the multi-hour uk-caa-registry -- on every
-    # upgrade. Ofelia (always-on, no profile) is recreated by the `up -d`
-    # below and spawns fresh runner containers from the pulled images on
-    # schedule.
+    # --profile runners on the pull refreshes the runner-* images too (a
+    # no-op where the compose file declares no such profile). Deliberately
+    # NOT passed to `up -d`: the runner services are one-shot jobs, so
+    # `up` would kick off every one of them, including the multi-hour
+    # uk-caa-registry. Ofelia is recreated by `up -d` and spawns fresh
+    # runner containers from the pulled images on its own schedule.
     (cd "$role_dir" && docker compose --profile runners pull && docker compose up -d)
   done
   if [ "$found" -eq 0 ]; then
@@ -2387,9 +2109,8 @@ BANNER_EOF
   echo
 }
 
-# Loud, unmistakable marker that this run is a dev build and not a
-# release. Printed right after resolve_ref() (so it covers --upgrade too)
-# and echoed once more in the end-of-run summary.
+# Loud marker that this run is a dev build, not a release. Printed right
+# after resolve_ref() (covers --upgrade too) and again in the summary.
 print_dev_banner() {
   cat >&2 <<EOF
 
@@ -2404,11 +2125,9 @@ print_dev_banner() {
 EOF
 }
 
-# Only asked when --root was not explicitly passed and the run is
-# interactive -- confirms the resolved default (now $PWD, not
-# ${HOME}/SkyFollower) before anything else happens, since preflight's
-# writability check and every later step depend on INSTALL_ROOT being
-# right from the start.
+# Only asked when --root wasn't explicitly passed and the run is
+# interactive -- confirms the default before preflight's writability
+# check and every later step depend on INSTALL_ROOT being right.
 confirm_install_root() {
   local answer
   read -r -p "Use ${INSTALL_ROOT} as the root directory? [Y/n]: " answer </dev/tty
@@ -2464,13 +2183,10 @@ main() {
     [ "$r" = "core" ] && CORE_SELECTED_IN_THIS_RUN=1
   done
 
-  # Sort the selected roles into ROLE_DEPENDENCY_ORDER. Two constraints
-  # this satisfies: collect_core_env() must run before any dependent role's
-  # collect_*_env (those read CORE_REDIS_PASSWORD / CORE_RABBITMQ_PASSWORD
-  # that only exist once core has stashed them -- see
-  # resolve_core_shared_password()), and archive must deploy the
-  # CloudFormation stack before management-ui's collect_*_env reads its
-  # outputs via `aws-setup --outputs-only`.
+  # Sort into ROLE_DEPENDENCY_ORDER: collect_core_env() must run before any
+  # dependent role's collect_*_env (see resolve_core_shared_password()),
+  # and archive must deploy its CloudFormation stack before
+  # management-ui's collect_*_env reads its outputs.
   local reordered_roles=() want r
   for want in $ROLE_DEPENDENCY_ORDER; do
     for r in "${SELECTED_ROLES[@]}"; do
