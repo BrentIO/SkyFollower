@@ -11,6 +11,11 @@ x-ofelia-runner-defaults:
   environment: &ofelia-runner-environment '["LOG_LEVEL=${LOG_LEVEL:-info}", "REDIS_HOST=${REDIS_HOST}", "REDIS_PORT=${REDIS_PORT:-6379}", "REDIS_PASSWORD=${REDIS_PASSWORD}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}"]'
   delete: &ofelia-runner-delete "true"
 
+# Native Linux Docker Engine (what this project deploys to) doesn't resolve
+# host.docker.internal the way Docker Desktop does -- every service needs it
+# declared explicitly to reach services running directly on the host.
+x-extra-hosts: &extra-hosts ["host.docker.internal:host-gateway"]
+
 # Every runner reads the same set, so the services below alias this block
 # rather than merging into it. Deliberately not `env_file: .env`: that would
 # hand this host's whole file -- AWS credentials included -- to rabbitmq and
@@ -33,6 +38,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:4.3-management-alpine@sha256:b839b492a91788a1d9406ef3ec0e1d8a8448032c48148a54a9e0c68ed66cde9b
+    extra_hosts: *extra-hosts
     restart: unless-stopped
     ports:
       - "5672:5672"
@@ -65,6 +71,7 @@ services:
 
   redis:
     image: redis/redis-stack-server:7.4.0-v8@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
+    extra_hosts: *extra-hosts
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -94,6 +101,7 @@ services:
   # on their own poll cadence until each backend is reachable.
   core-health:
     image: ghcr.io/brentio/skyfollower-core-health:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     restart: unless-stopped
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -154,6 +162,7 @@ services:
   # to 5 fields when adding a job.
   ofelia:
     image: mcuadros/ofelia:v3.0.8@sha256:c36048db84b0b54d47a689f723f6f5d19281ac4b87d90fa6433a4582b93f1a5b
+    extra_hosts: *extra-hosts
     restart: unless-stopped
     command: ["daemon", "--docker"]
     volumes:
@@ -492,18 +501,21 @@ services:
 
   runner-mictronics:
     image: ghcr.io/brentio/skyfollower-runner-mictronics:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-mictronics
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-us-faa-telephony-designators:
     image: ghcr.io/brentio/skyfollower-runner-us-faa-telephony-designators:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-us-faa-telephony-designators
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-ourairports:
     image: ghcr.io/brentio/skyfollower-runner-ourairports:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-ourairports
     profiles: ["runners"]
     environment: *runner-environment
@@ -516,288 +528,336 @@ services:
 
   runner-us-faa-registry:
     image: ghcr.io/brentio/skyfollower-runner-us-faa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-us-faa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-ca-transport-canada-registry:
     image: ghcr.io/brentio/skyfollower-runner-ca-transport-canada-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-ca-transport-canada-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-ba-bhdca-registry:
     image: ghcr.io/brentio/skyfollower-runner-ba-bhdca-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-ba-bhdca-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-sr-casas-registry:
     image: ghcr.io/brentio/skyfollower-runner-sr-casas-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-sr-casas-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-tt-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-tt-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-tt-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-tg-anac-registry:
     image: ghcr.io/brentio/skyfollower-runner-tg-anac-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-tg-anac-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-jo-carc-registry:
     image: ghcr.io/brentio/skyfollower-runner-jo-carc-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-jo-carc-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-mo-aacm-registry:
     image: ghcr.io/brentio/skyfollower-runner-mo-aacm-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-mo-aacm-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-sc-scaa-registry:
     image: ghcr.io/brentio/skyfollower-runner-sc-scaa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-sc-scaa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-lk-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-lk-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-lk-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-nz-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-nz-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-nz-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-no-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-no-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-no-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-au-casa-registry:
     image: ghcr.io/brentio/skyfollower-runner-au-casa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-au-casa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-fr-dgac-registry:
     image: ghcr.io/brentio/skyfollower-runner-fr-dgac-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-fr-dgac-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-br-anac-registry:
     image: ghcr.io/brentio/skyfollower-runner-br-anac-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-br-anac-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-nl-ilt-registry:
     image: ghcr.io/brentio/skyfollower-runner-nl-ilt-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-nl-ilt-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-bs-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-bs-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-bs-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-ch-bazl-registry:
     image: ghcr.io/brentio/skyfollower-runner-ch-bazl-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-ch-bazl-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-at-austrocontrol-registry:
     image: ghcr.io/brentio/skyfollower-runner-at-austrocontrol-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-at-austrocontrol-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-ky-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-ky-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-ky-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-uk-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-uk-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-uk-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-is-samgongustofa-registry:
     image: ghcr.io/brentio/skyfollower-runner-is-samgongustofa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-is-samgongustofa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-lu-dac-registry:
     image: ghcr.io/brentio/skyfollower-runner-lu-dac-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-lu-dac-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-bz-bdca-registry:
     image: ghcr.io/brentio/skyfollower-runner-bz-bdca-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-bz-bdca-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-im-ardis-registry:
     image: ghcr.io/brentio/skyfollower-runner-im-ardis-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-im-ardis-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-es-aesa-registry:
     image: ghcr.io/brentio/skyfollower-runner-es-aesa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-es-aesa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-kr-koca-registry:
     image: ghcr.io/brentio/skyfollower-runner-kr-koca-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-kr-koca-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-cz-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-cz-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-cz-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-ee-transpordiamet-registry:
     image: ghcr.io/brentio/skyfollower-runner-ee-transpordiamet-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-ee-transpordiamet-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-ge-gcaa-registry:
     image: ghcr.io/brentio/skyfollower-runner-ge-gcaa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-ge-gcaa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-gg-2reg-registry:
     image: ghcr.io/brentio/skyfollower-runner-gg-2reg-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-gg-2reg-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-kg-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-kg-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-kg-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-lv-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-lv-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-lv-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-md-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-md-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-md-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-mv-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-mv-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-mv-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-me-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-me-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-me-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-hu-kozhaf-registry:
     image: ghcr.io/brentio/skyfollower-runner-hu-kozhaf-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-hu-kozhaf-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-mk-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-mk-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-mk-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-pg-casapng-registry:
     image: ghcr.io/brentio/skyfollower-runner-pg-casapng-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-pg-casapng-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-rs-cad-registry:
     image: ghcr.io/brentio/skyfollower-runner-rs-cad-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-rs-cad-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-sg-caas-registry:
     image: ghcr.io/brentio/skyfollower-runner-sg-caas-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-sg-caas-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-sk-nsat-registry:
     image: ghcr.io/brentio/skyfollower-runner-sk-nsat-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-sk-nsat-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-tc-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-tc-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-tc-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-bg-caa-registry:
     image: ghcr.io/brentio/skyfollower-runner-bg-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-bg-caa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-hr-ccaa-registry:
     image: ghcr.io/brentio/skyfollower-runner-hr-ccaa-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-hr-ccaa-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-cy-dca-registry:
     image: ghcr.io/brentio/skyfollower-runner-cy-dca-registry:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-cy-dca-registry
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-airportwebcams-special-liveries:
     image: ghcr.io/brentio/skyfollower-runner-airportwebcams-special-liveries:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-airportwebcams-special-liveries
     profiles: ["runners"]
     environment: *runner-environment
 
   runner-vrs-standing-data:
     image: ghcr.io/brentio/skyfollower-runner-vrs-standing-data:${SKYFOLLOWER_VERSION:-latest}
+    extra_hosts: *extra-hosts
     container_name: skyfollower-runner-vrs-standing-data
     profiles: ["runners"]
     environment: *runner-environment
