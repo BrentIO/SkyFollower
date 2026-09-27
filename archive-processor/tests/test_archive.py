@@ -507,12 +507,8 @@ class TestExternalOnlySkip:
 # ---------------------------------------------------------------------------
 
 class TestLifetimeCounters:
-    """Pure in-memory, device-local counters mirroring the receiver's
-    _RateTracker.lifetime_count -- never touch Redis, reset to 0 on
-    restart by design. See TestIncrPeriodCounters.
-    test_no_lifetime_period_used_for_archive_processor_counters for the
-    (unrelated, unchanged) Redis-period-counter guarantee these are
-    additive to."""
+    """Pure in-memory, device-local counters -- never touch Redis, reset
+    to 0 on restart by design."""
 
     def test_flights_archived_lifetime_increments_on_successful_write(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -799,15 +795,10 @@ class TestMergeSegments:
         assert merged.last_message == datetime(2024, 5, 31, 14, 0, 0, tzinfo=timezone.utc)
 
     def test_new_segment_with_string_timestamps_merges_without_crashing(self):
-        """A live CompletedFlight's positions/velocities have string
-        timestamps by the time they reach here -- CompletedFlight.positions
-        is an untyped list[dict] (see shared/models.py), so pydantic never
-        re-parses a "timestamp" string back into datetime on
-        model_validate_json(), which is exactly what deserializes every
-        real flight off RabbitMQ (or the local SQLite fallback queue).
-        _make_flight() constructs positions with real datetime objects
-        directly, which doesn't exercise this -- this test simulates the
-        actual shape a live segment has instead."""
+        """A live CompletedFlight has string timestamps by the time it
+        reaches here (untyped list[dict], see shared/models.py) --
+        _make_flight() uses real datetime objects and doesn't exercise
+        this, so this test simulates the actual live shape instead."""
         new = _make_flight(
             positions=[
                 {"timestamp": "2024-05-31T12:15:00+00:00",
@@ -831,11 +822,8 @@ class TestMergeSegments:
         )
 
     def test_mixed_string_and_datetime_timestamps_sort_correctly(self):
-        """A previously-archived (string-timestamp) segment and a live
-        (also string-timestamp, post-round-trip) segment must interleave
-        into true chronological order, not just "prev items then new
-        items" -- proves the fix actually normalizes both sides rather
-        than merely avoiding the crash."""
+        """Prev and new segments must interleave into true chronological
+        order, not just "prev items then new items"."""
         new = _make_flight(
             positions=[
                 # Earlier than the previous segment's own position below --
@@ -853,10 +841,8 @@ class TestMergeSegments:
         ]
 
     # origin/destination merge precedence (see _merge_airport_field): prev
-    # (segment 1, a plain S3 dict whose origin/destination are already-
-    # reduced ICAO code strings) wins whenever it has data; new_flight
-    # (segment 2, a full airport object/dict, not yet reduced) is used only
-    # when segment 1 has none. Each field is decided independently.
+    # wins whenever it has data; new_flight is used only when prev has
+    # none. Each field is decided independently.
 
     def test_origin_destination_segment1_only_keeps_segment1(self):
         new = _make_flight(origin=None, destination=None)
@@ -939,22 +925,13 @@ class TestStitching:
 
     def test_negative_gap_writes_normally_instead_of_merging_backwards(self):
         """A flight can arrive out of order relative to the pointer it
-        finds -- e.g. it failed and sat in the local retry queue while a
-        later continuation for the same aircraft raced ahead and archived
-        first. The pointer's last_message then lands *after* this flight's
-        own first_message (a negative gap), which the too-large-gap check
-        alone doesn't catch. Before this guard, _merge_segments would
-        still run and -- since it takes first_message from the pointed-to
-        segment and leaves last_message from the segment being processed --
-        silently produce (and write to S3, overwriting the correct object)
-        a record with last_message before first_message.
-
-        Archives the "later continuation" for real first (a genuine S3
-        object + pointer to fetch and merge against), matching what
-        _try_stitch actually does -- a pointer referencing a nonexistent
-        key would short-circuit in _fetch_previous_segment before ever
-        reaching the gap check this test is about, silently passing for
-        the wrong reason."""
+        finds (a negative gap), which the too-large-gap check alone
+        doesn't catch. Without this guard, _merge_segments would still
+        run and silently produce a record with last_message before
+        first_message. Archives the "later continuation" for real first,
+        so the pointer resolves to a genuine object rather than
+        short-circuiting in _fetch_previous_segment for the wrong
+        reason."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=300)
             processor._s3_client = _FakeS3()
@@ -1090,16 +1067,13 @@ class TestStitching:
             assert len(merged["positions"]) == 3  # one per segment
 
     def test_stitch_survives_a_real_wire_round_trip(self):
-        """End-to-end regression test for the crash a real continuation
-        segment always hit: every other stitching test in this class
-        constructs its "new" segment directly via _make_flight() and calls
-        _archive_flight_to_s3() with it, which keeps real datetime
-        objects the whole way through and never exercises the shape a
-        live flight actually has. This test instead round-trips the
-        continuation segment through model_dump_json()/model_validate_json()
-        -- exactly what _on_message() does for every real RabbitMQ message
-        -- and drives it through _process_flight(), the real entry point,
-        not _archive_flight_to_s3() directly."""
+        """Other stitching tests construct segments via _make_flight() and
+        call _archive_flight_to_s3() directly, keeping real datetime
+        objects and never exercising the shape a live flight actually
+        has. This test round-trips through model_dump_json()/
+        model_validate_json() (what _on_message() does for every real
+        message) and drives it through _process_flight(), the real entry
+        point."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=300)
             processor._s3_client = _FakeS3()
@@ -1600,16 +1574,12 @@ class TestFinishS3Connect:
             assert processor._fallback.depth() == 1  # left queued, not lost
 
     def test_reconnect_drain_gate_prevents_live_flight_from_jumping_the_backlog(self):
-        """The core reconnect-race regression test. Segment A (queued while
-        S3 was down) is still being drained when segment B -- its continuation,
-        same aircraft, within flight_ttl_seconds -- arrives on what would
-        be the live RabbitMQ consumer path. Before the fix, B would see
-        s3_connected already True and archive independently (missing A's
-        not-yet-written stitch pointer), splitting one flight into two S3
-        objects. With the fix, B must still see s3_connected as False at
-        that moment and queue behind A instead -- so by the time B is
-        actually processed (later in this same drain), A's pointer already
-        exists and B correctly stitches into a single object."""
+        """Segment A (queued while S3 was down) is still draining when
+        segment B -- its continuation, same aircraft, within
+        flight_ttl_seconds -- arrives on the live consumer path. B must
+        still see s3_connected as False and queue behind A, so by the
+        time B is processed A's pointer already exists and B stitches
+        into a single object instead of splitting into two."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = _make_processor(tmp_dir, flight_ttl_seconds=300)
             processor._s3_client = _FakeS3()
@@ -1629,16 +1599,9 @@ class TestFinishS3Connect:
                 aircraft={"icao_hex": "A8AE7F", "registration": "N659DL"},
                 first_message=datetime.fromtimestamp(1050.0, tz=timezone.utc),  # 50s gap, within ttl
                 last_message=datetime.fromtimestamp(1200.0, tz=timezone.utc),
-                # Empty, not _make_flight's default positions -- this test
-                # goes through the same JSON round-trip (fallback queue
-                # put -> model_validate_json) that a real live flight does,
-                # which turns positions[]/velocities[]' timestamps into
-                # plain strings (untyped list[dict] fields). _merge_segments
-                # doesn't normalize the *new* segment's timestamps back to
-                # datetime (only the previously-archived one it's merging
-                # against), so a non-empty positions list here would trip
-                # that unrelated, separately-filed bug instead of exercising
-                # what this test is actually about.
+                # Empty, not _make_flight's default positions: a non-empty
+                # list here would trip a separate, unrelated timestamp-
+                # normalization bug instead of exercising this test.
                 positions=[],
                 velocities=[],
             )
