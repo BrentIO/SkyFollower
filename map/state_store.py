@@ -2,41 +2,30 @@
 Redis-backed per-aircraft live state for the map service.
 
 Three keys per tracked aircraft, all in the map service's own dedicated
-Redis instance (never core Redis -- see map/README.md):
+Redis instance (never core Redis):
 
-- ``flight:live:{icao_hex}`` -- short-TTL sentinel, no meaningful value.
-  Its expiry is the "stale" signal (see FlightStateStore.parse_expired_key).
-  TTL refreshed only by `position` packets, not `metadata` -- see
-  FlightStateStore.apply_update's docstring (#1966).
-- ``flight:visible:{icao_hex}`` -- a second, longer-TTL sentinel. Its
-  expiry is the "hide" signal: the aircraft leaves the map's screen, but
-  its detail/trail data is left alone so a resumed flight reappears as one
-  continuous track.
+- ``flight:live:{icao_hex}`` -- short-TTL sentinel; its expiry is the
+  "stale" signal. Refreshed only by `position` packets, not `metadata`.
+- ``flight:visible:{icao_hex}`` -- a longer-TTL sentinel; its expiry is the
+  "hide" signal (leaves the map's screen, but detail/trail data is kept so
+  a resumed flight reappears as one continuous track).
 - ``flight:detail:{icao_hex}`` -- a Redis hash holding the aircraft's
-  merged current-state: every field known from both `position` and
-  `metadata` UDP messages, field-level HSET on each update so a partial
-  update never clobbers fields it didn't carry. Its expiry is the "remove"
-  signal.
+  merged current-state (field-level HSET per update so a partial update
+  never clobbers fields it didn't carry). Its expiry is the "remove" signal.
 
 ``flight:trail:{icao_hex}`` is a fourth, related key: a plain list of JSON
 lat/lon/altitude snapshots appended on every accepted `position` update,
-refreshed onto the same TTL/lifecycle as ``flight:detail`` so it lives and
-dies alongside the aircraft's detail record -- independent of the
-stale/hide sentinels above, so it survives both.
+sharing ``flight:detail``'s TTL/lifecycle independent of the stale/hide
+sentinels above, so it survives both.
 
 A fifth key, unrelated to any one aircraft, tracks message-processor
-liveness instead: ``map:processors`` -- a Redis hash (field = processor_id,
-value = last-seen epoch timestamp) recording every message processor this
-map instance has seen a `heartbeat`/`position`/`metadata` UDP packet from.
-Unlike the four keys above, it has no TTL -- see
-``FlightStateStore.record_processor_seen``'s docstring for why, and
-``processor_status``/``overall_processor_status`` for how a roster entry
-becomes a green/amber/red status.
+liveness: ``map:processors`` -- a Redis hash (field = processor_id, value =
+last-seen epoch timestamp). Unlike the four keys above it has no TTL (see
+``FlightStateStore.record_processor_seen``).
 
-These key families are local to this service -- they're not part of
-shared/redis_keys.py's schema, which documents *core* Redis's keys. The map
-service's Redis is a second, separate instance this service alone owns, so
-its key namespace has no reason to be centralized alongside core's.
+These key families are local to this service, not part of
+shared/redis_keys.py's core-Redis schema -- the map service's Redis is a
+separate instance this service alone owns.
 """
 
 from __future__ import annotations
@@ -62,69 +51,27 @@ _DETAIL_PREFIX = "flight:detail:"
 _TRAIL_PREFIX = "flight:trail:"
 
 # Upper bound on how many points flight:trail:{icao_hex} retains -- the Lua
-# LTRIMs to the most recent MAX_TRAIL_POINTS after every append. Mirrors the
-# frontend's own trail-line cap (map/frontend/src/lib/aircraftState.ts's
-# MAX_TRAIL_POINTS -- a distinct constant from that module's own
-# MAX_TRACE_POINTS, which caps the independent Aircraft Detail Panel Trace
-# Points buffer and has no server-side equivalent at all): GET
-# /api/flights/{icao_hex} hands this list back as the seed for the
-# client-side trail, so a server cap larger than the client's would just be
-# trimmed again on arrival, and a smaller one would lose history the client
-# would otherwise keep. Kept in sync by hand -- the two can't share a
-# constant across the Python/TypeScript boundary.
-#
-# Raised from a former 300 (~5 minutes of history at this cap's own worst
-# case below) to cover, without truncation, the overwhelming majority of
-# flights this map would ever hold continuous contact with. The message
-# processor enforces a floor of one `position` UDP packet per aircraft per
-# second (shared/timing.py's DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS),
-# so 25,000 is a worst-case ~7 hours of uninterrupted max-rate tracking --
-# comfortably past a typical domestic flight, and past most international
-# ones too, given a ground-based ADS-B/EXTERNAL-feed network rarely holds
-# uninterrupted contact with one aircraft much longer than that (unlike a
-# satellite-fed source, coverage gaps are the norm over open ocean/remote
-# terrain). A true ultra-long-haul flight tracked gapless the whole way is
-# the one case that still truncates -- accepted rather than removing the
-# cap outright, for two reasons:
-#
-# - Memory: each trail point is a small JSON object (`{"lat", "lon",
-#   "alt"}`), well under 100 bytes as a Redis list element even accounting
-#   for per-entry list overhead. 25,000 of them is on the order of 2-3MB
-#   for a single aircraft that actually reaches this ceiling -- trivial for
-#   map-redis's no-persistence, in-memory-only footprint (see
-#   docker-compose.map.yaml) even with several such aircraft airborne at
-#   once, at this service's documented "a few dozen aircraft" scale.
-# - Rendering: the frontend draws one LineString feature per consecutive
-#   trail-point pair (map/frontend/src/lib/featureCollections.ts), rebuilt
-#   for the whole tracked-aircraft set on every update and coalesced to at
-#   most once per 200ms by lib/syncThrottle.ts -- coalescing bounds *how
-#   often* that rebuild runs, not its size. A single aircraft's worst case
-#   at this cap (24,999 segments) is the same order of magnitude as the
-#   full-fleet worst case already reasoned tolerable under that throttle
-#   (50 aircraft x the old 300-point cap =~ 14,950 segments) -- a
-#   genuinely unbounded per-aircraft trail would let one long-haul flight
-#   alone exceed that by an arbitrary, unbounded factor.
+# LTRIMs to the most recent MAX_TRAIL_POINTS after every append. Must match
+# the frontend's own trail-line cap (aircraftState.ts's MAX_TRAIL_POINTS) by
+# hand, since a mismatch either re-trims on arrival or silently loses
+# history the client would otherwise keep.
 MAX_TRAIL_POINTS = 25000
 
 # Single Redis hash (field = processor_id, value = last-seen epoch
 # timestamp) tracking every message processor this map instance has heard
-# from -- see FlightStateStore.record_processor_seen/get_processor_roster.
-# Deliberately not TTL'd like flight:live/flight:detail above: a processor
-# that goes silent is meant to sit in the roster as "red" indefinitely (so
-# an operator sees it), not quietly disappear the way a completed flight
-# does. The roster resets only when this no-persistence Redis instance
-# itself restarts -- see map/README.md's "Processor Roster" section.
+# from. Deliberately not TTL'd like flight:live/flight:detail above: a
+# processor that goes silent should sit in the roster as "red" indefinitely
+# for an operator to see, not quietly disappear. Resets only when this
+# no-persistence Redis instance itself restarts.
 _PROCESSOR_ROSTER_KEY = "map:processors"
 
-# Internal bookkeeping field on the flight:detail hash -- the timestamp of
-# the last packet actually applied for this icao_hex, used for the
-# out-of-order guard (see apply_update). Never returned from get_flight().
+# Internal bookkeeping field on the flight:detail hash -- last-applied
+# timestamp for this icao_hex, used by the out-of-order guard (see
+# apply_update). Never returned from get_flight().
 _LAST_APPLIED_TIMESTAMP_FIELD = "_last_applied_timestamp"
 
-# Fields carried by a `position` UDP message (shared/config.py's
-# map_udp_config() destination; wire format is message-processor's
-# _publish_map_position()). A field absent from a given packet is left
-# untouched on the merged hash, not blanked -- see apply_update.
+# Fields carried by a `position` UDP message. A field absent from a given
+# packet is left untouched on the merged hash, not blanked -- see apply_update.
 POSITION_FIELDS = ("lat", "lon", "alt", "velocity", "hdg", "vs")
 
 
@@ -145,15 +92,11 @@ def flight_trail_key(icao_hex: str) -> str:
 
 
 def processor_status(last_seen: Optional[float], now: float) -> str:
-    """One message processor's liveness classification (final thresholds,
-    see shared/timing.py's MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS /
-    MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS):
-
-    - "green" ("Connected") -- last_seen at most the green threshold ago.
-    - "amber" ("Reconnecting") -- between the green and amber thresholds.
-    - "red" ("Disconnected") -- beyond the amber threshold, or last_seen is
-      None (never seen at all).
-    """
+    """One message processor's liveness classification, using
+    shared/timing.py's MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS /
+    MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS thresholds: "green" (Connected)
+    at or under the green threshold, "amber" (Reconnecting) up to the
+    amber threshold, else "red" (Disconnected), including never-seen."""
     if last_seen is None:
         return "red"
     age = now - last_seen
@@ -182,9 +125,9 @@ def overall_processor_status(statuses: list[str]) -> str:
 def parse_expired_key(key: str) -> Optional[tuple[str, str]]:
     """Classifies a key name reported by a Redis `expired` keyevent
     notification. Returns (kind, icao_hex) where kind is "live", "visible",
-    or "detail", or None for a key this service doesn't act on the expiry
-    of (flight:trail:* expires silently -- it's cleaned up explicitly as a
-    side effect of the "detail" case instead, see MapService._handle_expired_key)."""
+    or "detail", or None for a key this service doesn't act on directly
+    (flight:trail:* is cleaned up explicitly as a side effect of "detail"
+    instead -- see handle_expired_key)."""
     if key.startswith(_LIVE_PREFIX):
         return "live", key[len(_LIVE_PREFIX):]
     if key.startswith(_VISIBLE_PREFIX):
@@ -212,11 +155,9 @@ class FlightStateStore:
         self._apply_update_sha = redis_client.script_load(_LUA_PATH.read_text())
 
     def enable_keyspace_notifications(self) -> None:
-        """Best-effort -- a CONFIG SET, not persisted by this
-        no-persistence Redis instance, so this must be re-applied on every
-        connect/reconnect (see MapService._eviction_loop). 'Ex' = keyevent
-        notifications for expired keys only; that's the only class of
-        event this service needs."""
+        """Best-effort -- a CONFIG SET this no-persistence Redis instance
+        never remembers across restart, so it must be re-applied on every
+        connect/reconnect. 'Ex' = expired-key keyevents only."""
         try:
             self._redis.config_set("notify-keyspace-events", "Ex")
         except Exception as exc:
@@ -226,61 +167,30 @@ class FlightStateStore:
         self, icao_hex: str, msg_type: str, timestamp: float, fields: dict,
     ) -> Optional[dict]:
         """Merges `fields` into icao_hex's current-state hash and refreshes
-        flight:detail's and flight:visible's TTLs, unless `timestamp` is at
-        or before -- for `position` packets only, strictly before -- the
-        last-applied timestamp for this aircraft (see the note on equal
-        timestamps below).
+        flight:detail's and flight:visible's TTLs, unless the packet is
+        older than the last one applied for this aircraft (equal timestamps
+        are accepted, not dropped, since a `position` and a same-tick
+        `metadata` packet for one source message legitimately share a
+        timestamp -- rejecting ties would silently drop that metadata
+        packet). A small tolerance is applied around that comparison (see
+        map_apply_update.lua's TIMESTAMP_EPSILON_SECONDS) because
+        `metadata`'s comparison key round-trips through an ISO-8601 string
+        and can come back a hair below the original float.
 
         flight:live's TTL -- the "stale"/"live" signal -- is refreshed only
-        for `msg_type == "position"`, not `"metadata"` (#1966). Message-
-        processor's `_map_metadata_resend_loop` unconditionally re-sends
-        every active flight's `metadata` datagram every
-        `MAP_METADATA_RESEND_INTERVAL_SECONDS` regardless of whether
-        anything actually changed, purely so a restarted map service can
-        recover a still-active flight's metadata (see
-        message-processor/README.md). That resend carries the same
-        (frozen) `last_message` timestamp as before, so it's accepted here,
-        not dropped (equal timestamps aren't out-of-order) -- but if it
-        refreshed flight:live too, an aircraft with no real position update
-        in minutes would cycle stale/live once per resend interval,
-        completely decoupled from whether any real data arrived. flight:
-        detail/flight:visible keep refreshing on both packet types: that's
-        the legitimate resync ("still know about this aircraft") and
-        keep-on-screen behavior, unrelated to the stale/live distinction.
+        for `msg_type == "position"`, not `"metadata"`: message-processor
+        periodically re-sends an active flight's metadata regardless of
+        whether anything changed, and refreshing flight:live on that resend
+        would cycle stale/live independent of any real data arriving.
+        flight:detail/flight:visible refresh on both packet types.
 
         Returns the full merged, decoded current-state dict on success, or
         None if the packet was dropped as out-of-order.
 
-        Equal timestamps are accepted, not dropped: message-processor's
-        `_publish_map_position`/`_maybe_publish_map_metadata` both stamp
-        their payload from the exact same `received_at` value for one
-        source ADS-B message, so a `position` packet and a same-tick
-        `metadata` packet for a brand-new aircraft legitimately share one
-        timestamp. Rejecting ties (a literal "at or before" reading) would
-        silently drop that metadata packet every time. Only a packet
-        strictly older than the last one applied is treated as
-        out-of-order/reordered.
-
-        A small tolerance is applied around that comparison rather than a
-        bare `<` (see map_apply_update.lua's TIMESTAMP_EPSILON_SECONDS):
-        `position`'s `timestamp` is
-        message-processor's raw float `received_at`, while `metadata`'s
-        comparison key is derived by round-tripping that same float through
-        `datetime.fromtimestamp(...).isoformat()` and back (see
-        map/main.py's `_extract_timestamp`) -- a conversion that only keeps
-        microsecond precision. For one source message whose `position` and
-        `metadata` packets legitimately share a timestamp, that round-trip
-        can come back a hair below the original float, which a bare `<`
-        would misread as "older" and silently drop the metadata packet.
-        The tolerance is many orders of magnitude tighter than any real
-        ADS-B message spacing, so a genuinely reordered/stale packet is
-        still rejected.
-
-        The out-of-order check, the merge HSET, all three TTL refreshes, and
-        the trail RPUSH (position packets only) are all done server-side in one
-        round trip by map_apply_update.lua (shared/lua/), which also
-        returns the merged hash -- see that script for the field-by-field
-        protocol.
+        The out-of-order check, the merge HSET, all three TTL refreshes,
+        and the trail RPUSH (position packets only) are all done
+        server-side in one round trip by map_apply_update.lua
+        (shared/lua/), which also returns the merged hash.
         """
         mapping = {k: json.dumps(v) for k, v in fields.items()}
         field_names = list(mapping.keys())
@@ -327,22 +237,15 @@ class FlightStateStore:
         return self._decode_hash(raw)
 
     def list_flights(self) -> list[dict]:
-        """One decoded current-state dict per currently-*visible* aircraft,
-        i.e. one per flight:visible:{icao_hex} sentinel that currently
-        exists -- matches GET /api/flights exactly (see map/main.py).
+        """One decoded current-state dict per currently-*visible* aircraft
+        (one per flight:visible:{icao_hex} sentinel), matching GET
+        /api/flights exactly. Keyed off flight:visible rather than
+        flight:detail: a hidden-but-not-evicted aircraft has no
+        client-accumulated trail for a freshly connecting client, so a
+        frozen icon with no trail would be worse than omitting it.
 
-        Deliberately keyed off flight:visible rather than flight:detail: a
-        hidden aircraft (past MAP_HIDE_SECONDS but not yet evicted) still
-        has a flight:detail hash and trail, but a client connecting fresh
-        during that gap has no client-accumulated trail for it either --
-        a lone frozen icon with no trail would be worse than omitting the
-        aircraft entirely. It reappears for everyone the moment a
-        `position`/`metadata` event arrives again.
-
-        The SCAN itself may take more than one round trip on a large
-        keyspace (redis-py's scan_iter pages through cursors), but every
-        aircraft's HGETALL is issued as one pipeline -- a single round
-        trip -- instead of one-HGETALL-per-aircraft N+1."""
+        Every aircraft's HGETALL is issued as one pipeline -- a single
+        round trip -- instead of one-HGETALL-per-aircraft N+1."""
         keys = list(self._redis.scan_iter(match=f"{_VISIBLE_PREFIX}*"))
         if not keys:
             return []
@@ -364,15 +267,11 @@ class FlightStateStore:
         flight:visible:*, "remove" for flight:detail:*), or None for a key
         this service doesn't act on.
 
-        The "hide" path deliberately touches nothing else -- flight:detail
-        and flight:trail are left exactly as they are, so a flight that
-        resumes after the hidden gap reappears with its pre-gap trail
-        intact. Only "remove" (flight:detail:{icao_hex} expired) evicts
-        data, proactively deleting flight:trail:{icao_hex} -- it's
-        refreshed onto the same TTL on every update, so it will expire on
-        its own moments later in the normal case, but this guarantees no
-        leftover trail key can survive a detail-key eviction even if the
-        two TTLs ever drift apart."""
+        Only "remove" evicts data, proactively deleting flight:trail:
+        {icao_hex} so no leftover trail key can survive a detail-key
+        eviction even if the two TTLs drift apart. "hide" deliberately
+        touches nothing, so a flight resuming after the gap keeps its
+        pre-gap trail."""
         parsed = parse_expired_key(key)
         if parsed is None:
             return None
@@ -390,27 +289,19 @@ class FlightStateStore:
 
     # ------------------------------------------------------------------
     # Processor roster -- per-message-processor liveness, derived from
-    # *any* map UDP message type carrying a processor_id (heartbeat,
-    # position, or metadata alike). See map/main.py's _handle_packet for
-    # where this is called from, and the module-level docstring above for
-    # the roster's reset semantics.
+    # any map UDP message type carrying a processor_id.
     # ------------------------------------------------------------------
 
     def record_processor_seen(self, processor_id: str, timestamp: float) -> None:
         """Records processor_id as alive as of `timestamp` (the map
-        service's own receipt time -- see map/main.py's _handle_packet,
-        not the sending processor's clock, so cross-host clock skew can
-        never distort the green/amber/red thresholds). A later call simply
-        overwrites the earlier last-seen value; there is no history kept
-        beyond "most recent"."""
+        service's own receipt time, not the sender's clock, so cross-host
+        clock skew can't distort the green/amber/red thresholds)."""
         self._redis.hset(_PROCESSOR_ROSTER_KEY, processor_id, timestamp)
 
     def get_processor_roster(self) -> dict[str, float]:
-        """Every processor_id ever recorded since this Redis instance's
-        roster hash was last reset (i.e. since its own last restart -- see
-        the module docstring), mapped to its last-seen epoch timestamp. A
-        malformed value (should never happen outside direct Redis
-        tampering) is skipped rather than raising."""
+        """Every processor_id recorded since the roster hash was last
+        reset, mapped to its last-seen epoch timestamp. A malformed value
+        is skipped rather than raising."""
         raw = self._redis.hgetall(_PROCESSOR_ROSTER_KEY)
         roster: dict[str, float] = {}
         for processor_id, value in raw.items():

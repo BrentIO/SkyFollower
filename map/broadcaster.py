@@ -1,20 +1,12 @@
 """
 WebSocket fan-out with batching for the map service.
 
-Events (`position`/`metadata` from the UDP listener, `stale`/`remove` from
-the Redis expiry listener) are produced on background threads (see
-map/main.py); ConnectionManager.publish() is the thread-safe entrypoint
-those threads call. A single asyncio task (flush_loop, started from the
-FastAPI app's lifespan) wakes every MAP_WS_BATCH_INTERVAL_SECONDS and sends
-whatever accumulated since the last tick to every connected browser as one
-JSON array frame -- coalescing several updates in the same window into one
-WebSocket frame per connection instead of one frame per update.
-
-publish() only appends to a lock-protected plain list; it never touches
-asyncio primitives itself, so it's safe to call from any thread without
-needing call_soon_threadsafe/run_coroutine_threadsafe plumbing -- the
-asyncio side only ever reads the buffer from within the event loop, on
-flush_loop's own turn.
+Events produced on background threads call ConnectionManager.publish(),
+which only appends to a lock-protected list -- no asyncio primitives, so
+it's safe from any thread without call_soon_threadsafe plumbing. A single
+asyncio task (flush_loop) wakes every MAP_WS_BATCH_INTERVAL_SECONDS and
+sends whatever accumulated to every connected browser as one JSON array
+frame, coalescing several updates into one WebSocket frame per connection.
 """
 
 from __future__ import annotations

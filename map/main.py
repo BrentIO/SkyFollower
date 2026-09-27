@@ -2,28 +2,15 @@
 """
 SkyFollower Map Service
 
-Backend for the live-map frontend (`frontend/`, a separate Vite project --
-see map/README.md). Three independent jobs, plus serving the built
-frontend itself:
+Backend for the live-map frontend (`frontend/`). Three jobs, plus serving
+the built frontend: a UDP listener merging `position`/`metadata`/
+`heartbeat` datagrams from message-processor instances into per-aircraft
+state and a per-processor liveness roster (both in a dedicated Redis
+instance); a Redis keyspace-notification listener turning key expiry into
+`stale`/`remove` WebSocket events; and a FastAPI app exposing
+`GET /api/flights`, `GET /api/processors`, and `WS /ws`.
 
-1. A UDP listener that receives `position`/`metadata`/`heartbeat` datagrams
-   from any/all message-processor instances (message-processor/main.py's
-   `_MapUdpPublisher`), merges `position`/`metadata` into per-aircraft
-   current-state, and records every message's `processor_id` (all three
-   types carry one) into a per-processor liveness roster -- both held in a
-   dedicated Redis instance -- never core Redis.
-2. A Redis keyspace-notification listener that turns key expiry into
-   `stale`/`remove` WebSocket events (no app-level timer loop scanning for
-   expired aircraft -- expiry itself is the signal).
-3. A FastAPI app exposing `GET /api/flights` (a snapshot), `GET
-   /api/processors` (the message-processor liveness roster/status), and
-   `WS /ws` (a live, batched relay of position/metadata/stale/remove
-   events), and serving the frontend's built static assets
-   (`frontend/dist/`, Vite's `base: '/map/'` output) under `/map` with
-   SPA-fallback routing.
-
-One process runs all three; there is exactly one map service instance (no
-MESSAGE_PROCESSOR_ID-style horizontal scaling here -- see map/README.md).
+One process runs all three; there is exactly one map service instance.
 """
 
 from __future__ import annotations
@@ -47,8 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Add the repo root to sys.path so shared/ is importable when this module is
-# run outside Docker (e.g. tests, local `uvicorn map.main:app`). In the
-# Docker image PYTHONPATH=/app already covers this.
+# run outside Docker (PYTHONPATH=/app already covers that case).
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_HERE)
 if _REPO_ROOT not in sys.path:
@@ -75,22 +61,17 @@ from map.state_store import (  # noqa: E402
 
 logger = logging.getLogger("map")
 
-# Same fixed path every other long-running SkyFollower service writes its
-# Docker HEALTHCHECK heartbeat to -- see shared/healthcheck.py.
+# Fixed path every long-running SkyFollower service writes its Docker
+# HEALTHCHECK heartbeat to -- see shared/healthcheck.py.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 
 # Fixed in-container TLS mount point (docker-compose.map.yaml's
-# ./data/map/tls bind mount, populated by scripts/install.sh's --role map
-# cert generation, or an operator's own cert/key dropped in under these
-# same filenames). No env var for this -- same convention as
-# _HEALTHCHECK_HEARTBEAT_PATH above: the path is a fixed part of the
-# container's own layout, not something a deployment ever needs to move.
+# ./data/map/tls bind mount, populated by scripts/install.sh or an
+# operator's own cert/key dropped in under these filenames).
 _TLS_CERT_PATH = "/app/tls/cert.pem"
 _TLS_KEY_PATH = "/app/tls/key.pem"
 
-# Where the daily range-outline snapshots are written
-# (docker-compose.map.yaml's ./data/map/range-outline bind mount). A fixed
-# part of the container layout like the paths above; MAP_RANGE_OUTLINE_DIR
+# Where the daily range-outline snapshots are written. MAP_RANGE_OUTLINE_DIR
 # overrides it only so the test suite can point it at a tmp directory.
 _RANGE_OUTLINE_DIR = os.environ.get("MAP_RANGE_OUTLINE_DIR", "/app/range-outline")
 
@@ -100,33 +81,24 @@ _RANGE_OUTLINE_DIR = os.environ.get("MAP_RANGE_OUTLINE_DIR", "/app/range-outline
 _UDP_RECV_TIMEOUT_SECONDS = 1.0
 _UDP_MAX_DATAGRAM_BYTES = 65535
 
-# Requested kernel receive buffer size for the UDP socket -- the OS caps
-# this at its own configured maximum (e.g. net.core.rmem_max on Linux), so
-# this is a best-effort request, not a guarantee. Bigger than the OS
-# default gives _handle_packet's single-threaded processing more slack to
-# fall behind briefly (a GC pause, a slow Redis round trip) without the
-# kernel silently dropping datagrams that arrive in the meantime.
+# Requested kernel receive buffer size for the UDP socket -- best-effort,
+# the OS caps this at its own configured maximum. Bigger than the default
+# gives _handle_packet's single-threaded processing more slack to fall
+# behind briefly without the kernel dropping datagrams in the meantime.
 _UDP_RECV_BUFFER_BYTES = 1024 * 1024
 
-# Vite's build output (map/frontend/vite.config.ts sets base: '/map/' so
-# built asset URLs already point at this same sub-path). Only present in
-# the Docker image (map/Dockerfile's frontend-build stage) or after a
-# manual `npm run build` in map/frontend/ -- see the mount guard below,
-# which degrades to a 404-only /map rather than failing app startup when
-# it's absent (e.g. bare `pytest map/tests`, `uvicorn map.main:app`
-# outside Docker).
+# Vite's build output. Only present in the Docker image or after a manual
+# `npm run build` -- the mount guard below degrades to a 404-only /map
+# rather than failing app startup when it's absent.
 _FRONTEND_DIST_DIR = os.path.join(_HERE, "frontend", "dist")
 
 
 class _SPAStaticFiles(StaticFiles):
     """Serves the built frontend with real single-page-app fallback: any
-    GET/HEAD under /map/* that doesn't resolve to an actual file in dist/
-    (a deep link into a client-side route, or a plain refresh of one) gets
-    index.html instead of a bare HTTP 404, so client-side routing survives
-    a full page reload. Plain `html=True` alone only covers the mount's
-    own directory index (`/map`/`/map/`) -- it does not fall back to
-    index.html for an arbitrary unmatched sub-path, which is what SPA
-    deep-link support actually requires."""
+    unmatched GET/HEAD under /map/* gets index.html instead of a 404, so
+    client-side routing survives a full page reload. Plain `html=True`
+    alone only covers the mount's own directory index, not an arbitrary
+    unmatched sub-path."""
 
     async def get_response(self, path: str, scope):
         try:
@@ -137,22 +109,15 @@ class _SPAStaticFiles(StaticFiles):
             raise
 
 
-# Module-level state, built in lifespan() -- same convention
-# management-ui/backend/main.py uses (globals rather than app.state), since
-# every route handler and background-thread callback needs a plain
-# reference to these without threading a request/app object through.
+# Module-level state, built in lifespan() -- globals rather than app.state
+# since background-thread callbacks need a plain reference without
+# threading a request/app object through.
 #
-# _connections is rebuilt fresh in lifespan() on every startup, same as
-# _redis/_store -- it is NOT a long-lived singleton. A WebSocket object is
-# tied to the ASGI event loop/portal it was accepted on; reusing one
-# ConnectionManager (and the connections registered in it) across more than
-# one lifespan cycle in the same process would let a connection from a
-# previous, now-torn-down loop generation sit in `_connections` and hang
-# flush_once()'s `await websocket.send_json()` on it forever, starving
-# every other, currently-live connection sharing the same flush loop. In
-# production this never matters (lifespan runs exactly once per process
-# lifetime); it matters a great deal in tests, which construct a fresh
-# TestClient(app) -- and therefore a fresh lifespan cycle -- per test.
+# _connections is rebuilt fresh in lifespan() on every startup, not a
+# long-lived singleton: a WebSocket is tied to the ASGI event loop it was
+# accepted on, so reusing one ConnectionManager across lifespan cycles
+# could hang flush_once()'s send on a connection from a torn-down loop,
+# starving every other connection sharing the flush loop.
 _cfg: dict = {}
 _redis = None
 _store: Optional[FlightStateStore] = None
@@ -161,22 +126,17 @@ _connections = ConnectionManager()
 _shutdown = threading.Event()
 _threads: list[threading.Thread] = []
 # Minimal MQTT presence (Home Assistant discovery + version + started_at),
-# only when MQTT_HOST is configured. No telemetry loop -- see
-# shared/mqtt_presence.py.
+# only when MQTT_HOST is configured -- see shared/mqtt_presence.py.
 _mqtt_presence: Optional[MqttPresence] = None
 
 
 def _extract_timestamp(payload: dict) -> Optional[float]:
     """The out-of-order guard's comparison key for one UDP packet.
 
-    `position`/`heartbeat` packets carry a numeric `ts` (message-processor's
-    `received_at`, or wall-clock time for `heartbeat`) directly. `metadata`
-    packets don't -- they're shaped like message-processor's CompletedFlight
-    notification payload, whose closest equivalent is `last_message` (an
-    ISO-8601 string). Both are stamped from the exact same `received_at`
-    value for one source ADS-B message (see message-processor/main.py's
-    `_update_flight`), so this keeps the two packet types on one comparable
-    clock."""
+    `position`/`heartbeat` packets carry a numeric `ts` directly. `metadata`
+    packets don't -- their closest equivalent is `last_message` (an
+    ISO-8601 string), stamped from the same underlying timestamp so both
+    packet types land on one comparable clock."""
     if "ts" in payload:
         try:
             return float(payload["ts"])
@@ -196,13 +156,10 @@ def _handle_packet(payload: dict) -> None:
     of-order guard + merge, see FlightStateStore.apply_update) and, if
     accepted, publishes the corresponding live WebSocket event.
 
-    Every message type -- `heartbeat`, `position`, and `metadata` alike --
-    carries `processor_id`, and every one of them updates that processor's
-    liveness roster entry here first, before any type-specific handling.
-    This is the traffic-reduction design's other half (see
-    message-processor/main.py's `_map_heartbeat_loop`): a busy processor's
-    ordinary position/metadata datagrams keep it "green" without ever
-    needing a standalone heartbeat."""
+    Every message type carries `processor_id`, and each one updates that
+    processor's liveness roster entry first, before type-specific
+    handling -- so ordinary position/metadata traffic keeps a busy
+    processor "green" without needing a standalone heartbeat."""
     msg_type = payload.get("type")
 
     processor_id = payload.get("processor_id")
@@ -215,10 +172,8 @@ def _handle_packet(payload: dict) -> None:
     if msg_type == "position":
         icao_hex = payload.get("icao_hex")
     elif msg_type == "metadata":
-        # metadata packets are message-processor's CompletedFlight-shape
-        # payload -- icao_hex only ever appears nested inside `aircraft`,
-        # never as a top-level key (see CompletedFlight.aircraft in
-        # shared/models.py, always populated with icao_hex).
+        # icao_hex only ever appears nested inside `aircraft` on a
+        # metadata packet, never as a top-level key.
         icao_hex = (payload.get("aircraft") or {}).get("icao_hex")
     else:
         logger.debug("Ignoring UDP datagram with unknown type %r", msg_type)
@@ -236,9 +191,8 @@ def _handle_packet(payload: dict) -> None:
     if msg_type == "position":
         fields = {k: payload[k] for k in POSITION_FIELDS if k in payload}
     else:
-        # processor_id describes the sending processor, not the aircraft --
-        # excluded here (like type/icao_hex) so it never leaks into the
-        # per-aircraft merged state / GET /api/flights.
+        # processor_id describes the sender, not the aircraft -- excluded
+        # so it never leaks into the per-aircraft merged state.
         fields = {k: v for k, v in payload.items() if k not in ("type", "icao_hex", "processor_id")}
 
     merged = _store.apply_update(icao_hex, msg_type, timestamp, fields)
@@ -246,21 +200,17 @@ def _handle_packet(payload: dict) -> None:
         return  # Dropped as out-of-order.
 
     if msg_type == "position":
-        # Fold the merged current position into the daily range outline --
-        # merged (not the raw packet) so a velocity-only packet still
-        # contributes once lat/lon are known, matching the trail's own
-        # accumulation rule. No-op when no "center" is configured.
+        # Fold the merged (not raw) position into the range outline, so a
+        # velocity-only packet still contributes once lat/lon are known.
         _range_outline.record_position(merged.get("lat"), merged.get("lon"), merged.get("alt"))
         event = {"type": "position", "icao_hex": icao_hex}
         for field in POSITION_FIELDS:
             if field in merged:
                 event[field] = merged[field]
     else:
-        # metadata events carry the full merged current-state -- both
-        # position and metadata fields -- so a client that only just
-        # connected (and so missed any earlier `position` events) still has
-        # everything needed to place and label the aircraft. This is
-        # deliberately the same shape GET /api/flights returns.
+        # metadata events carry the full merged current-state, matching
+        # GET /api/flights' shape, so a client that just connected still
+        # has everything needed to place and label the aircraft.
         event = dict(merged)
         event["type"] = "metadata"
     _connections.publish(event)
@@ -274,8 +224,6 @@ def _udp_loop() -> None:
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, _UDP_RECV_BUFFER_BYTES)
     except OSError as exc:
-        # Best-effort -- a platform/permission that refuses the larger
-        # buffer just keeps the OS default rather than failing startup.
         logger.warning("Could not raise UDP SO_RCVBUF: %r", exc)
     sock.bind((listen_host, listen_port))
     sock.settimeout(_UDP_RECV_TIMEOUT_SECONDS)
@@ -312,9 +260,8 @@ def _eviction_loop() -> None:
     each flight:live/flight:detail expiry into a `stale`/`remove`
     WebSocket event -- eviction is driven entirely by this signal, no
     app-level scan/timer loop. Reconnects (re-enabling keyspace
-    notifications each time, since it's a runtime CONFIG SET this
-    no-persistence Redis instance never remembers across its own restart)
-    on any pubsub error."""
+    notifications each time -- a runtime CONFIG SET this no-persistence
+    Redis instance never remembers across restart) on any pubsub error."""
     while not _shutdown.is_set():
         try:
             _store.enable_keyspace_notifications()
@@ -342,16 +289,11 @@ def _eviction_loop() -> None:
 
 def _healthcheck_loop() -> None:
     """Touches a heartbeat file while genuinely connected to Redis, for
-    Docker's HEALTHCHECK to check the mtime of -- same mechanism/constants
-    as message-processor's own _healthcheck_loop (shared/healthcheck.py).
+    Docker's HEALTHCHECK to check the mtime of -- see shared/healthcheck.py.
 
-    The `mkdir` is inside the same try/except as the ping/touch below (not
-    hoisted above the loop) so a missing/read-only `/app/health` -- always
-    present in the real container via the Dockerfile's COPY + Compose bind
-    mount, but not when this module runs bare (a local `pytest map/tests`
-    run, `uvicorn map.main:app` outside Docker) -- degrades to a silently
-    skipped heartbeat write each cycle instead of crashing this thread
-    outright on its very first iteration."""
+    The `mkdir` stays inside the per-cycle try/except (not hoisted above
+    the loop) so a missing/read-only `/app/health` outside Docker degrades
+    to a skipped write each cycle instead of crashing the thread outright."""
     heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
     while not _shutdown.is_set():
         try:
@@ -364,11 +306,8 @@ def _healthcheck_loop() -> None:
 
 
 def _range_outline_loop() -> None:
-    """Drives the daily range-outline snapshot: writes the in-progress
-    day's file when it has changed, rolls over at UTC midnight even with no
-    traffic, and recovers from a map-redis restart. All the real work is in
-    RangeOutlineStore.tick(); this is just its cadence. No-op cycles when
-    no "center" is configured (RangeOutlineStore.enabled is False)."""
+    """Drives the daily range-outline snapshot on a fixed cadence; all the
+    real work is in RangeOutlineStore.tick() (no-op when disabled)."""
     while not _shutdown.is_set():
         try:
             _range_outline.tick()
@@ -402,8 +341,7 @@ async def lifespan(app: FastAPI):
     )
     _range_outline.load_from_disk()
 
-    # Fresh every startup -- see the module-level comment on _connections
-    # above for why this must never be reused across lifespan cycles.
+    # Fresh every startup -- see the module-level comment on _connections.
     _connections = ConnectionManager()
 
     _shutdown.clear()
@@ -420,9 +358,7 @@ async def lifespan(app: FastAPI):
 
     flush_task = asyncio.ensure_future(_connections.flush_loop())
 
-    # Optional MQTT presence -- inert unless MQTT_HOST is set. Its own paho
-    # network loop runs alongside the background threads above; there is no
-    # periodic publish, so it isn't one of them.
+    # Optional MQTT presence -- inert unless MQTT_HOST is set.
     _mqtt_presence = MqttPresence(
         _cfg.get("mqtt"),
         component="map",
@@ -448,8 +384,7 @@ async def lifespan(app: FastAPI):
     for thread in _threads:
         thread.join(timeout=5)
 
-    # Persist the in-progress day so a restart resumes it rather than
-    # losing everything since the last periodic snapshot.
+    # Persist the in-progress day so a restart resumes it.
     if _range_outline is not None:
         try:
             _range_outline.snapshot_now()
@@ -472,12 +407,9 @@ app = FastAPI(
 
 @app.get("/", include_in_schema=False)
 def redirect_root_to_map() -> RedirectResponse:
-    """Bare `GET /` has no route of its own -- redirect to the frontend
-    SPA's directory index. The trailing slash matters: redirecting to
-    `/map/` (not `/map`) lands directly on `_SPAStaticFiles`'s `html=True`
-    directory-index handling in one hop, rather than a bare `/map` taking a
-    second redirect through Starlette's own mount-without-trailing-slash
-    handling first."""
+    """Redirects to the frontend SPA's directory index. The trailing slash
+    matters: `/map` (no slash) would take a second redirect through
+    Starlette's own mount handling first."""
     return RedirectResponse(url="/map/")
 
 
@@ -492,21 +424,13 @@ def get_flights() -> list[dict]:
 @app.get("/api/flights/{icao_hex}", tags=["flights"])
 def get_flight(icao_hex: str) -> dict:
     """One aircraft's merged current-state (same shape as a GET /api/flights
-    array element) plus a `trail` array: every accumulated
-    `{lat, lon, alt}` point for the current flight, oldest first, `alt`
-    null where unknown.
+    array element) plus a `trail` array: every accumulated `{lat, lon, alt}`
+    point for the current flight, oldest first, `alt` null where unknown.
+    Lets a client reconstruct the whole flight's trail on selection, not
+    just what it has seen since connecting.
 
-    This is the map service's own server-side trail (`flight:trail:{icao_hex}`
-    in its dedicated Redis, one point per accepted `position` packet, capped
-    and lifecycled exactly like the aircraft's `flight:detail` record). The
-    frontend fetches it when an aircraft is selected so the drawn trail
-    reflects the whole flight rather than only what this browser has seen
-    since it connected -- and so it survives a page reload.
-
-    404 when the aircraft isn't currently tracked (never seen, or already
-    evicted past MAP_EVICT_SECONDS of silence). `trail` is `[]` when the
-    aircraft is known but has only ever sent velocity/heading-only position
-    packets (no lat/lon yet)."""
+    404 when the aircraft isn't currently tracked. `trail` is `[]` when the
+    aircraft has only ever sent velocity/heading-only position packets."""
     flight = _store.get_flight(icao_hex)
     if flight is None:
         raise HTTPException(status_code=404, detail=f"aircraft {icao_hex} is not currently tracked")
@@ -516,16 +440,11 @@ def get_flight(icao_hex: str) -> dict:
 
 @app.get("/api/processors", tags=["flights"])
 def get_processor_status() -> dict:
-    """Per-message-processor liveness roster this map instance has derived
-    from UDP `heartbeat`/`position`/`metadata` traffic carrying
-    `processor_id` since its own dedicated Redis last reset (a full map +
-    map-redis restart -- see map/README.md's "Processor Roster" section),
-    plus the aggregated `overall` status the frontend's connection
-    indicator renders. Polled by the frontend rather than pushed over `WS
-    /ws` -- a processor's status can change purely from time passing
-    (green ageing into amber/red) with no new packet to trigger a push, so
-    computing it fresh on each request is both simpler and always
-    accurate."""
+    """Per-message-processor liveness roster derived from UDP traffic
+    carrying `processor_id`, plus the aggregated `overall` status the
+    frontend's connection indicator renders. Polled rather than pushed
+    over `WS /ws` -- status can change purely from time passing (green
+    ageing into amber/red), so it's computed fresh on each request."""
     processors = _store.get_processor_statuses()
     return {
         "overall": overall_processor_status([p["status"] for p in processors]),
@@ -540,11 +459,10 @@ def get_range_outline(date: Optional[str] = None, band: Optional[str] = None) ->
     aircraft received per compass bearing), plus an `envelope` polygon
     (farthest per bearing across all bands).
 
-    No `date` -> today's live outline, accumulating from empty since 00:00
-    UTC. `date=YYYY-MM-DD` -> that day's finalised snapshot from disk
-    (HTTP 404 once it's past the retention window). `band=<label>` narrows
-    to one band; `band=envelope` returns just the envelope. Empty
-    FeatureCollection when no `MAP_CENTER_LATITUDE`/`LONGITUDE` is set."""
+    No `date` -> today's live outline. `date=YYYY-MM-DD` -> that day's
+    finalised snapshot from disk (404 past the retention window).
+    `band=<label>` narrows to one band; `band=envelope` returns just the
+    envelope. Empty FeatureCollection when no center is configured."""
     try:
         return _range_outline.get_outline(date=date, band=band)
     except FileNotFoundError:
@@ -571,15 +489,11 @@ def reset_range_outline() -> None:
 @app.get("/api/config", tags=["config"])
 def get_config() -> dict:
     """Runtime configuration the frontend can't otherwise get at -- Vite
-    bakes VITE_* values into the bundle at `npm run build` time, so a
-    published image built with none set has no way to carry a per-
-    deployment "center" reference point without a runtime channel like this
-    one (see shared/config.py's map_config(), MAP_CENTER_LATITUDE/
-    MAP_CENTER_LONGITUDE, and map/frontend/src/lib/config.ts's loadConfig()).
+    bakes VITE_* values into the bundle at build time, so a per-deployment
+    "center" reference point needs a runtime channel like this one instead.
 
-    A flat top-level object with named sub-keys -- not a bare value -- so a
-    later addition (e.g. stale_seconds/evict_seconds) doesn't need a
-    breaking shape change."""
+    A flat object with named sub-keys, not a bare value, so a later
+    addition doesn't need a breaking shape change."""
     latitude = _cfg.get("map_center_latitude")
     longitude = _cfg.get("map_center_longitude")
     center = None
@@ -592,16 +506,14 @@ def get_config() -> dict:
 async def flights_ws(websocket: WebSocket) -> None:
     """One connection per browser. Never sends a snapshot -- only
     `position`/`metadata`/`stale`/`remove` events, batched by
-    ConnectionManager.flush_loop() (see map/broadcaster.py). Callers should
-    GET /api/flights first for the initial snapshot, then open this for
-    live updates."""
+    ConnectionManager.flush_loop(). Callers should GET /api/flights first
+    for the initial snapshot, then open this for live updates."""
     await websocket.accept()
     _connections.register(websocket)
     try:
         while True:
-            # This service never expects a client message -- just waits
-            # for the connection to close (WebSocketDisconnect) so it can
-            # unregister. The transport layer answers ping/pong itself.
+            # No client message is ever expected -- just wait for the
+            # connection to close so it can be unregistered.
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
@@ -609,15 +521,9 @@ async def flights_ws(websocket: WebSocket) -> None:
         _connections.unregister(websocket)
 
 
-# Registered last, after both API routes above -- a Mount only ever
-# matches paths starting with /map (Starlette compiles it to
-# "/map/{path:path}"), so it can never shadow /api/flights or /ws
-# regardless of registration order, but this ordering keeps the specific
-# routes visually grouped ahead of the catch-all frontend mount. Guarded
-# on the directory actually existing so importing this module (e.g. `pytest
-# map/tests`, `uvicorn map.main:app` outside Docker) never fails just
-# because `npm run build` hasn't been run locally -- the Docker image
-# always has it (see map/Dockerfile's frontend-build stage).
+# Guarded on the directory existing so importing this module never fails
+# just because `npm run build` hasn't been run locally -- the Docker image
+# always has it.
 if os.path.isdir(_FRONTEND_DIST_DIR):
     app.mount(
         "/map",
@@ -635,14 +541,9 @@ else:
 
 def _uvicorn_tls_kwargs() -> dict:
     """uvicorn.run() SSL kwargs when a cert/key pair exists at the fixed
-    TLS mount point (_TLS_CERT_PATH/_TLS_KEY_PATH), else an empty dict.
-
-    Degrades to plain HTTP with a logged warning rather than raising --
-    covers running `python -m map.main` (or bare `uvicorn map.main:app`)
-    standalone outside the installer flow, where no TLS directory was ever
-    generated or mounted. Same "optional, log and carry on" shape as this
-    module's other absent-config paths (e.g. MAP_CENTER_LATITUDE/
-    MAP_CENTER_LONGITUDE unset -- see get_config())."""
+    TLS mount point, else an empty dict. Degrades to plain HTTP with a
+    logged warning rather than raising, for running standalone outside the
+    installer flow where no TLS directory was ever generated."""
     if os.path.isfile(_TLS_CERT_PATH) and os.path.isfile(_TLS_KEY_PATH):
         return {"ssl_certfile": _TLS_CERT_PATH, "ssl_keyfile": _TLS_KEY_PATH}
     logger.warning(

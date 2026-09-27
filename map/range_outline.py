@@ -4,45 +4,24 @@ Daily reception range outline for the map service.
 "How far can this system hear, per compass bearing, per altitude band" --
 built from the same `position` UDP stream the live map runs on. Mirrors
 readsb's actual-range-outline (360 one-degree bearing buckets, per-bucket
-farthest received position), but run centrally so it aggregates *every*
-receiver / external feed rather than one antenna.
+farthest received position), but run centrally so it aggregates every
+receiver/feed rather than one antenna.
 
-Lifecycle:
+The current UTC day's outline lives in one Redis hash (``map:range:outline``,
+field ``"{bearing}:{band}"``, value JSON ``{nm, lat, lon, alt, ts}``),
+snapshotted to ``{snapshot_dir}/{YYYY-MM-DD}.json`` periodically and at UTC
+rollover. On boot, the in-progress day is reloaded from ``{today}.json`` if
+present (mid-day crash recovery). The Redis hash carries a short safety TTL
+so a dead process can't leave stale data in this no-persistence Redis
+forever; the disk files are the real MAP_RANGE_OUTLINE_RETENTION_DAYS store.
 
-- The current UTC day's outline lives in one Redis hash
-  (``map:range:outline``): field ``"{bearing}:{band}"``, value JSON
-  ``{nm, lat, lon, alt, ts}`` = the single farthest position received in
-  that bucket today. It accumulates from empty at 00:00 UTC.
-- Snapshotted to ``{snapshot_dir}/{YYYY-MM-DD}.json`` -- raw buckets, not
-  GeoJSON -- once every MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS when
-  it has changed, and once at the UTC-date rollover (which also clears the
-  Redis hash so the new day starts empty).
-- On boot the in-progress day is reloaded from ``{today}.json`` if present
-  (mid-day crash recovery). A reboot spanning midnight finds no
-  ``{today}.json`` and starts the new day empty, leaving ``{yesterday}.json``
-  as its record.
-- Snapshot files older than MAP_RANGE_OUTLINE_RETENTION_DAYS are deleted on
-  each snapshot write.
+Bucket keys from a since-reverted half-degree-resolution period are
+indistinguishable from whole-degree keys of the same number -- an accepted,
+unmigrated limitation affecting only historical ``?date=`` snapshots until
+they age out of retention.
 
-The Redis hash carries a short safety TTL so a dead process can't leave
-stale data in this no-persistence Redis forever; the disk files are the
-real 30-day store, and a live process refreshes the TTL on every write.
-
-Bearing bucket resolution was briefly doubled to a half-degree index
-(0-719, see #1683) and then reverted back to whole degrees (#1805) after
-the finer resolution rendered more jagged rather than smoother. Disk
-snapshots written during that window are keyed under the half-degree
-scheme; a key like ``"47"`` from that period means 23.5 degrees, not 47
-degrees, and this code has no way to tell the two schemes apart. This is
-an accepted limitation, not migrated -- it only affects historical
-``?date=`` lookups against snapshots from that window, for the remainder
-of their MAP_RANGE_OUTLINE_RETENTION_DAYS retention, after which they're
-deleted and the issue disappears on its own. The live in-progress day is
-unaffected, since it clears and rebuilds fresh at every UTC rollover.
-
-Disabled entirely when no "center" reference point is configured
-(MAP_CENTER_LATITUDE/LONGITUDE) -- there is no origin to measure bearing and
-distance from, same as the frontend's range rings.
+Disabled entirely when no "center" reference point is configured -- there
+is no origin to measure bearing and distance from.
 """
 
 from __future__ import annotations
@@ -63,24 +42,21 @@ logger = logging.getLogger("map.range_outline")
 
 OUTLINE_KEY = "map:range:outline"
 
-# A bucket whose max isn't re-confirmed within a day naturally drops when
-# that day's hash is cleared at rollover. This TTL is only a safety net for
-# "the process died and never rolled over" -- two days of slack past the
-# longest a single day's hash should ever live.
+# Safety net for "the process died and never rolled over" -- two days of
+# slack past the longest a single day's hash should ever live.
 _SAFETY_TTL_SECONDS = 2 * 86400
 
 # readsb rejects positions beyond --max-range (default 300 nm) for decoding;
-# anything past this from center is a bad decode or a relayed position from a
-# far-away feed that doesn't belong in *this* system's range outline.
+# anything past this from center is a bad decode or an out-of-scope relayed
+# feed position.
 MAX_RANGE_NM = 325.0
 
-# Once a bearing bucket has a maximum, a new maximum more than this far
-# beyond it is only accepted if a bearing bucket within _OUTLIER_NEIGHBOUR_DEG
-# already reaches close to the same distance -- otherwise it's treated as a
-# one-off bad decode rather than genuine propagation. (The map UDP feed
-# carries no CPR reliability flags, so this stands in for readsb's
-# odd/even-count check.) The first-ever detection in a direction, into an
-# empty bucket, is always accepted up to MAX_RANGE_NM.
+# A new maximum more than this far beyond a bucket's existing one is only
+# accepted if a neighbouring bucket within _OUTLIER_NEIGHBOUR_DEG already
+# reaches close to the same distance -- otherwise it's treated as a bad
+# decode rather than genuine propagation (a stand-in for readsb's
+# odd/even-count check, since this UDP feed carries no CPR reliability
+# flags). First-ever detection into an empty bucket is always accepted.
 _OUTLIER_JUMP_NM = 50.0
 _OUTLIER_NEIGHBOUR_DEG = 3
 
@@ -162,9 +138,8 @@ class RangeOutlineStore:
 
     def load_from_disk(self) -> None:
         """Called once at startup. Restores the in-progress day from
-        ``{today}.json`` if it exists (a mid-day crash), then prunes files
-        past the retention window. A reboot that spanned midnight finds no
-        ``{today}.json`` and simply starts the new day empty."""
+        ``{today}.json`` if it exists (mid-day crash recovery), then prunes
+        files past the retention window."""
         if not self.enabled:
             return
         with self._lock:
@@ -257,10 +232,9 @@ class RangeOutlineStore:
         with self._lock:
             if not self._dirty:
                 return
-            # Cleared *before* the write, not after: a record_position()
-            # that lands between the HGETALL below and this method returning
-            # re-sets the flag, so its point is picked up by the next tick
-            # rather than silently dropped.
+            # Cleared before, not after, the write: a record_position()
+            # landing in between re-sets the flag, so its point is picked
+            # up by the next tick rather than silently dropped.
             self._dirty = False
             date = self._date
         self._write_snapshot(date)

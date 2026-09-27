@@ -1,27 +1,16 @@
 """
 Integration tests for map/main.py's FastAPI app (GET /api/flights, WS /ws)
 against a live Redis, a real `python -m map.main` subprocess, and a real
-`websockets` client -- exercises the whole stack end to end: a UDP
-datagram in, Redis state merged, a WebSocket event batched and delivered
-out, matching the REST snapshot shape. Not mocked -- this is deliberately
+`websockets` client -- exercises the whole stack end to end. Not mocked --
 the slower, higher-fidelity counterpart to test_udp_handling.py's isolated
 dispatch-logic tests.
 
-A real subprocess + a real `websockets` client is used instead of FastAPI's
-TestClient for the WebSocket tests: TestClient's synchronous
-blocking-portal WebSocket bridge (starlette.testclient) proved unreliable
-in this suite for any wait spanning more than one ~250ms batch window
-(`ws.receive_json()` would hang indefinitely on a real `Condition.wait()`)
-even though the underlying application logic -- proven separately against
-this same real-subprocess setup -- is correct and delivers every event
-within about two seconds. A real server on a real socket sidesteps that
-harness limitation entirely and is arguably the more faithful test besides.
-GET /api/flights, which never hit that issue, still just uses a plain HTTP
-request (urllib, stdlib-only).
+A real subprocess + `websockets` client is used instead of FastAPI's
+TestClient for the WebSocket tests: TestClient's WebSocket bridge hangs
+indefinitely on any wait spanning more than one batch window.
 
 Requires a reachable Redis at REDIS_TEST_HOST:REDIS_TEST_PORT (defaults to
-localhost:6379, matching .github/workflows/run-tests.yaml's redis-stack
-service). Skipped entirely if none is reachable.
+localhost:6379). Skipped entirely if none is reachable.
 """
 
 from __future__ import annotations
@@ -43,12 +32,8 @@ import pytest
 redis = pytest.importorskip("redis")
 websockets = pytest.importorskip("websockets")
 
-# All of this module's tests spawn their own real server subprocess on
-# freshly-chosen ports, so they don't strictly need to share one worker the
-# way test_state_store.py's tests (mutating shared live Redis state) do --
-# but pinning them anyway keeps this suite's live-Redis footprint
-# predictable and matches shared/tests/test_route_airports_lua.py's
-# precedent for live-Redis tests.
+# Pinned to one xdist worker to keep this suite's live-Redis footprint
+# predictable, even though each test spawns its own subprocess.
 pytestmark = pytest.mark.xdist_group(name="map_api")
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -205,14 +190,9 @@ class _Server:
 
 @pytest.fixture
 def server():
-    # map:processors (the processor roster hash) has no TTL by design (see
-    # map/state_store.py) -- unlike flight:live/flight:detail, which TTL
-    # themselves out within this file's MAP_STALE_SECONDS/MAP_EVICT_SECONDS
-    # window regardless of test order, a roster entry from an earlier test
-    # in this module would otherwise sit forever in this shared real Redis
-    # (all of this module's tests use the same db, unlike
-    # test_state_store.py's dedicated db 15) and pollute a later test's
-    # roster/overall-status assertions.
+    # map:processors has no TTL, so a roster entry from an earlier test
+    # would otherwise sit forever in this shared Redis and pollute a later
+    # test's roster/overall-status assertions.
     client = redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
     try:
         client.delete("map:processors")
@@ -225,14 +205,9 @@ def server():
 
 
 def _wait_for_flight(server: _Server, icao_hex: str, timeout: float = 3.0, predicate=None) -> dict:
-    """Polls GET /api/flights until icao_hex appears -- and, if given,
-    `predicate(flight)` is also true. The predicate matters whenever a test
-    sends more than one UDP packet in a row: the aircraft can legitimately
-    appear in the snapshot after the first packet but before the second
-    one has been processed by the (single-threaded, sequential) UDP
-    listener, and a caller checking for a field only the second packet adds
-    needs to keep polling past that first, incomplete sighting rather than
-    asserting against it."""
+    """Polls GET /api/flights until icao_hex appears and, if given,
+    `predicate(flight)` is true -- lets a test sending multiple packets in a
+    row skip past an incomplete first sighting."""
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
