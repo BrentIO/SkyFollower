@@ -7,11 +7,8 @@ interface ImportRuleModalProps {
   onCancel: () => void;
 }
 
-// Counterpart to RulesView's "Export all" -- imports rules from a JSON
-// array (drag-drop, click/tap-to-browse, or direct paste). Structural
-// validation (parseAndValidate) is a whole-file hard gate; per-rule
-// identifier resolution, the area pre-check, and matched_rules
-// create-then-verify live in lib/ruleImport.ts, driven by RulesView.
+// Counterpart to RulesView's "Export all". parseAndValidate is the
+// structural hard gate; per-rule resolution lives in lib/ruleImport.ts.
 export function ImportRuleModal({ open, onImport, onCancel }: ImportRuleModalProps) {
   const [text, setText] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);

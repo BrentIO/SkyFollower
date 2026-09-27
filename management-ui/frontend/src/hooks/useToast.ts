@@ -18,9 +18,7 @@ export const ToastContext = createContext<ToastContextValue | null>(null);
 
 let nextId = 1;
 
-// Owns the toast list; ToastProvider (in ToastContainer.tsx) wraps the app
-// with ToastContext.Provider using this, and any component calls useToast()
-// to enqueue one -- e.g. after a rule save succeeds or fails.
+// Backing state for ToastProvider (ToastContainer.tsx); components enqueue via useToast().
 export function useToastState(): ToastContextValue {
   const [toasts, setToasts] = useState<Toast[]>([]);
 

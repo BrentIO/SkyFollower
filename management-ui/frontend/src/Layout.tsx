@@ -3,17 +3,9 @@ import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { SideNav } from "./components/SideNav";
 
-// Top-level frame: SideNav + routed content area. Generic on purpose so a
-// future areas editor (and later sections) slot into SideNav/App.tsx
-// without touching this file.
-//
-// Below the `md` breakpoint, SideNav is hidden behind a hamburger button
-// in a mobile top bar and slides in as an overlay drawer instead of
-// occupying permanent width -- there's no room for a fixed 192px rail
-// next to the rule editor on a phone-sized viewport. At `md` and above,
-// the drawer markup is simply never rendered (mobileNavOpen state still
-// exists but the button that sets it is hidden), and SideNav sits
-// statically in the flex row as before.
+// Below `md`, SideNav is hidden behind a hamburger and slides in as an overlay
+// drawer instead of taking permanent width, since a fixed rail doesn't fit
+// next to the rule editor on a phone-sized viewport.
 export function Layout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 

@@ -34,14 +34,10 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-// Matches Terra Draw's own default stroke/fill/marker color -- the
-// fallback whenever an area has no simplestyle-spec color of its own.
+// Terra Draw's own default stroke/fill/marker color; the fallback for areas with no color of their own.
 const DEFAULT_SHAPE_COLOR: HexColor = "#3f97e0";
 
-// Area.fill/stroke/marker-color are plain Optional[str] on the backend, not
-// format-validated -- narrows to Terra Draw's HexColor before handing a
-// value to a styling callback, falling back to the default for anything
-// that isn't actually "#..." (a stray non-hex CSS color name, say).
+// Area.fill/stroke/marker-color aren't format-validated on the backend; narrows to HexColor, undefined for non-hex values.
 function asHexColor(value: unknown): HexColor | undefined {
   return typeof value === "string" && value.startsWith("#") ? (value as HexColor) : undefined;
 }
@@ -58,10 +54,7 @@ const STYLE_KEYS = [
 ] as const;
 type StyleFields = Partial<Pick<Area, (typeof STYLE_KEYS)[number]>>;
 
-// Picks only the style keys a typed Area (or Area-shaped draft) actually
-// has set -- used to carry a shape's own color into a duplicate, and into
-// Terra Draw feature properties so the per-feature styling callbacks below
-// (and MapLibre's area-labels text-color expression) can read them.
+// Picks only the style keys actually set, to carry a shape's color into a duplicate or into Terra Draw feature properties.
 function pickStyleFields(source: StyleFields): StyleFields {
   const style: StyleFields = {};
   for (const key of STYLE_KEYS) {
@@ -70,9 +63,7 @@ function pickStyleFields(source: StyleFields): StyleFields {
   return style;
 }
 
-// Same idea as pickStyleFields, but from an untyped GeoJSON Feature's
-// properties (an imported area) -- validates each value's type before
-// accepting it, rather than trusting arbitrary external JSON.
+// Same as pickStyleFields, but from an imported feature's untyped properties -- validates each value's type first.
 function extractStyleFields(props: Record<string, unknown>): StyleFields {
   const style: StyleFields = {};
   if (typeof props.fill === "string") style.fill = props.fill;
@@ -89,11 +80,7 @@ function extractStyleFields(props: Record<string, unknown>): StyleFields {
   return style;
 }
 
-// Per-feature Terra Draw styling callbacks (HexColorStyling supports a
-// constant OR a function of the feature) -- read straight off whichever
-// style properties were set on that feature (see the properties spread at
-// every draw.addFeatures() call site), falling back to Terra Draw's own
-// default color when unset, matching every other unstyled area.
+// Per-feature Terra Draw styling callbacks -- read the feature's own style property, falling back to the default color when unset.
 function featureFillColor(feature: GeoJSONStoreFeatures): HexColor {
   return asHexColor(feature.properties?.fill) ?? DEFAULT_SHAPE_COLOR;
 }
@@ -104,16 +91,12 @@ function featureMarkerColor(feature: GeoJSONStoreFeatures): HexColor {
   return asHexColor(feature.properties?.["marker-color"]) ?? DEFAULT_SHAPE_COLOR;
 }
 
-// The area-labels layer's own color source -- Polygon/LineString match
-// their stroke, Point its marker color, same convention as the shapes
-// themselves.
+// Label color follows the shape's own color: stroke for Polygon/LineString, marker color for Point.
 function areaLabelColor(area: Area): string | undefined {
   return area.geometry.type === "Point" ? area["marker-color"] : area.stroke;
 }
 
-// GeoJSON Feature shape shared by the all-areas and single-area exports --
-// geometry copied as-is, properties carrying the full Area shape minus
-// geometry itself.
+// Shared GeoJSON Feature shape for both the all-areas and single-area exports.
 function areaToFeature(area: Area) {
   return {
     type: "Feature" as const,
@@ -139,19 +122,12 @@ function downloadGeoJson(featureCollection: unknown, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-// Terra Draw's addFeatures() silently drops (doesn't throw for) any
-// feature that fails its mode's validation -- e.g. excessive coordinate
-// precision, self-intersection -- so a "temporary" feature id we just
-// added isn't guaranteed to actually be in the store. removeFeatures()
-// throws for an unknown id, so every cleanup call needs this check first
-// rather than assuming the add succeeded.
+// addFeatures() silently drops features that fail mode validation; removeFeatures() throws for an unknown id, so check presence first.
 function removeFeatureIfPresent(draw: TerraDraw, id: string): void {
   if (draw.getSnapshotFeature(id)) draw.removeFeatures([id]);
 }
 
-// Visits every [lng, lat] coordinate pair in a geometry, regardless of
-// type -- the one thing computeBounds/offsetGeometry actually need, so
-// neither has to duplicate a type switch of its own.
+// Shared coordinate-visiting switch so callers (computeBounds, offsetGeometry) don't each duplicate a type switch.
 function forEachCoordinate(geometry: Area["geometry"], fn: (coord: [number, number]) => void): void {
   switch (geometry.type) {
     case "Polygon":
@@ -166,8 +142,7 @@ function forEachCoordinate(geometry: Area["geometry"], fn: (coord: [number, numb
   }
 }
 
-// Same shape as forEachCoordinate, but transforms instead of just visiting
-// -- offsetGeometry's per-type mapping.
+// Same as forEachCoordinate, but transforms coordinates instead of just visiting them.
 function mapCoordinates(
   geometry: Area["geometry"],
   fn: (coord: [number, number]) => [number, number],
@@ -203,31 +178,19 @@ function computeBounds(areas: Area[]): maplibregl.LngLatBoundsLike | null {
   return found ? [[minLng, minLat], [maxLng, maxLat]] : null;
 }
 
-// Rough average glyph advance width for a bold sans-serif, as a fraction of
-// font size -- avoids depending on canvas measureText with the actual
-// "Noto Sans Bold" (which isn't necessarily loaded as a usable browser
-// font just because MapLibre's glyph server serves it). Biased slightly
-// wide on purpose, so a shape wraps a little early rather than
-// text creeping past its edge.
+// Estimated glyph width for "Noto Sans Bold", since it may not be loaded as a usable browser font for canvas measureText.
+// Biased slightly wide so text wraps early rather than overflowing.
 const LABEL_FONT_SIZE_PX = 14;
 const AVG_GLYPH_WIDTH_RATIO = 0.62;
-// Shapes smaller than this on screen aren't worth wrapping into -- keeps
-// the existing fixed-size/no-wrap behavior for anything genuinely tiny,
-// matching the "still requires zooming in for tiny shapes" decision.
+// Shapes smaller than this on screen keep the fixed-size/no-wrap fallback.
 const MIN_FIT_WIDTH_PX = 40;
 
 function estimateTextWidthPx(text: string): number {
   return text.length * LABEL_FONT_SIZE_PX * AVG_GLYPH_WIDTH_RATIO;
 }
 
-// Screen-space width -- Polygon/LineString only (a Point has no
-// width to fit). Projects the shape's geographic bounding box through the
-// live map (so it reflects the current zoom, not a fixed geographic size)
-// to get an actual on-screen pixel width, then converts to the em-based
-// unit MapLibre's text-max-width layout property expects. Returns
-// undefined (falls back to MapLibre's own default wrap width, 10ems) when
-// the shape is too small to bother fitting, or the name already fits at
-// the default width without needing to wrap tighter.
+// Projects the shape's bounding box through the live map to get its on-screen pixel width, then converts to ems for text-max-width.
+// Returns undefined (MapLibre's 10em default) when too small to fit, or the name already fits without wrapping.
 function computeMaxWidthEms(map: maplibregl.Map, area: Area, name: string): number | undefined {
   if (area.geometry.type === "Point") return undefined;
   const bounds = computeBounds([area]);
@@ -252,10 +215,7 @@ function segmentLength(a: number[], b: number[]): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// Midpoint by cumulative length along the line, not just the middle
-// coordinate index -- a line with an uneven vertex spacing (e.g. one long
-// leg and several short ones near an airport) would otherwise place the
-// label well off-center visually.
+// Midpoint by cumulative length, not the middle coordinate index -- avoids an off-center label when vertex spacing is uneven.
 function lineStringMidpoint(coordinates: number[][]): [number, number] {
   if (coordinates.length === 1) return [coordinates[0][0], coordinates[0][1]];
   const lengths: number[] = [];
@@ -280,12 +240,8 @@ function lineStringMidpoint(coordinates: number[][]): [number, number] {
   return [coordinates[0][0], coordinates[0][1]];
 }
 
-// Area-weighted (shoelace) centroid of a polygon's outer ring -- unlike a
-// plain vertex average, this is unaffected by uneven vertex density (extra
-// points bunched on one edge, a concave shape, an elongated shape), so it
-// stays visually centered regardless of how the shape was drawn. Falls
-// back to the vertex average only for a degenerate (zero-area) ring, where
-// the shoelace formula's 1/(6*area) would divide by zero.
+// Area-weighted (shoelace) centroid -- unaffected by uneven vertex density, unlike a plain vertex average.
+// Falls back to the vertex average for a degenerate (zero-area) ring, where the formula would divide by zero.
 function polygonCentroid(ring: number[][]): [number, number] {
   let area = 0;
   let cx = 0;
@@ -311,9 +267,6 @@ function polygonCentroid(ring: number[][]): [number, number] {
   return [cx / (6 * area), cy / (6 * area)];
 }
 
-// Label anchor point per geometry type: Polygon uses the area-weighted
-// centroid above; LineString uses the by-length midpoint above; Point is
-// trivially itself.
 function labelPosition(geometry: Area["geometry"]): [number, number] {
   switch (geometry.type) {
     case "Polygon": {
@@ -328,13 +281,8 @@ function labelPosition(geometry: Area["geometry"]): [number, number] {
   }
 }
 
-// Screen-space alignment guides -- PowerPoint-style "your shape is
-// lining up with another one" assistance while dragging, no ready-made
-// terra-draw feature for this. `axis: "x"` is a vertical guide line at a
-// constant screen X (a horizontal-alignment match); `axis: "y"` is
-// horizontal at a constant screen Y. `from`/`to` are the perpendicular
-// span the drawn line covers, wide enough to visibly connect the dragged
-// point to whichever other shape it aligned with.
+// Screen-space alignment guides shown while dragging (snap lines; no built-in Terra Draw feature for this).
+// axis "x" = vertical guide at constant screen X; "y" = horizontal at constant screen Y. from/to are the perpendicular span drawn.
 interface AlignmentGuide {
   axis: "x" | "y";
   pos: number;
@@ -344,12 +292,8 @@ interface AlignmentGuide {
 
 const GUIDE_TOLERANCE_PX = 7;
 
-// The dragged shape contributes every vertex plus its centroid (so a
-// single-vertex edit can still line up a far corner even if the shape's
-// overall bounding box barely moved); every *other* area only contributes
-// its bounding-box edges and centroid, per the issue's spec -- comparing
-// against every other shape's individual vertices too would be far
-// noisier without being any more useful for this purpose.
+// Dragged shape contributes every vertex plus its centroid; other areas only contribute bounding-box edges and centroid
+// (comparing against every other shape's individual vertices would be noisier without being more useful).
 function computeAlignmentGuides(map: maplibregl.Map, draggedArea: Area, otherAreas: Area[]): AlignmentGuide[] {
   const draggedPoints: maplibregl.Point[] = [];
   forEachCoordinate(draggedArea.geometry, (coord) => draggedPoints.push(map.project(coord)));
@@ -386,9 +330,7 @@ function computeAlignmentGuides(map: maplibregl.Map, draggedArea: Area, otherAre
   return guides;
 }
 
-// Merges guides that landed on (near enough) the same line -- a shape
-// with several vertices near the same alignment would otherwise draw the
-// same line many times over.
+// Merges guides landing on (near enough) the same line, so one alignment isn't drawn many times over.
 function dedupeAlignmentGuides(guides: AlignmentGuide[]): AlignmentGuide[] {
   const merged = new Map<string, AlignmentGuide>();
   for (const g of guides) {
@@ -404,11 +346,7 @@ function dedupeAlignmentGuides(guides: AlignmentGuide[]): AlignmentGuide[] {
   return Array.from(merged.values());
 }
 
-// Terra Draw feature properties.mode must equal the owning mode's own
-// name ("polygon"/"linestring"/"point") -- addFeatures() validates against
-// it (see offsetGeometry's own comment on validation) -- so every place a
-// feature is added to the map needs the mode name matching its actual
-// geometry type, not a hardcoded "polygon".
+// Terra Draw requires properties.mode to match the owning mode's name; addFeatures() validates against it.
 function geometryToModeName(type: Area["geometry"]["type"]): "polygon" | "linestring" | "point" {
   switch (type) {
     case "Polygon":
@@ -420,29 +358,20 @@ function geometryToModeName(type: Area["geometry"]["type"]): "polygon" | "linest
   }
 }
 
-// Narrows an arbitrary GeoJSON geometry (as returned by Terra Draw's own
-// getSnapshotFeature -- typed loosely since it also handles modes/
-// geometries this app never uses) down to the three types Area actually
-// supports.
+// Narrows Terra Draw's loosely-typed geometry (it supports modes/geometries this app never uses) to the three types Area supports.
 function isAreaGeometryType(type: string): type is Area["geometry"]["type"] {
   return type === "Polygon" || type === "LineString" || type === "Point";
 }
 
-// Reads a just-finished draw's actual geometry type off Terra Draw's own
-// snapshot -- falls back to "Polygon" if the feature vanished (rejected by
-// mode validation) or reports an unsupported type; the naming modal never
-// opens for those cases anyway (see handleNameConfirm's own check), so this
-// is only ever seen transiently before pendingDrawFeatureId is cleared.
+// Falls back to "Polygon" if the feature vanished (rejected by mode validation) or reports an unsupported type;
+// transient only, before pendingDrawFeatureId is cleared.
 function snapshotGeometryType(draw: TerraDraw | null, featureId: string): Area["geometry"]["type"] {
   const type = draw?.getSnapshotFeature(featureId)?.geometry.type;
   return type && isAreaGeometryType(type) ? type : "Polygon";
 }
 
-// Terra Draw's select-mode drag/vertex-edit flags per drawing-mode name --
-// shared by the initial TerraDrawSelectMode construction and every later
-// setSelectDraggable() call so the two can never drift apart. A Point
-// feature has no midpoints/vertices distinct from the feature itself, so
-// it only needs the feature-level draggable flag.
+// Shared by the initial TerraDrawSelectMode construction and every setSelectDraggable() call so the two can't drift apart.
+// Point has no midpoints/vertices distinct from the feature itself, so it only needs the feature-level draggable flag.
 function selectModeFlags(locked: boolean) {
   const coordinates = { midpoints: !locked, draggable: !locked, deletable: !locked };
   return {
@@ -452,15 +381,10 @@ function selectModeFlags(locked: boolean) {
   };
 }
 
-// Floor offset for degenerate (near-zero-extent) shapes, in degrees --
-// keeps a duplicate visibly distinct even for a tiny polygon, without
-// this dominating the offset of a large one.
+// Floor offset (degrees) so a duplicate of a tiny/degenerate shape is still visibly distinct.
 const MIN_OFFSET_DEGREES = 0.0008;
 
-// Terra Draw's default coordinatePrecision is 9 decimal places; it
-// silently rejects (not throws -- see offsetGeometry below) any feature
-// with a coordinate needing more than that many digits to round-trip
-// exactly. Round well under that ceiling so this never collides with it.
+// Terra Draw's default coordinatePrecision is 9 decimal places (silently rejects features exceeding it); stay well under that ceiling.
 const OFFSET_COORDINATE_PRECISION = 7;
 
 function roundCoordinate(value: number, precision: number): number {
@@ -468,21 +392,9 @@ function roundCoordinate(value: number, precision: number): number {
   return Math.round(value * factor) / factor;
 }
 
-// Offsets every coordinate by a fixed fraction of the shape's own
-// bounding-box size (floored so it's still visible for a small polygon),
-// so a duplicate lands overlapping-but-distinguishable from its source
-// and is immediately grabbable rather than sitting exactly on top of it.
-//
-// Coordinates are rounded after offsetting -- floating-point addition
-// routinely produces a result needing 14+ decimal digits (e.g.
-// -81.28992976386266 + 0.003 === -81.28692976386266, a 14-digit tail)
-// even though both inputs individually satisfy Terra Draw's precision
-// limit. Terra Draw's addFeatures() validates each feature against its
-// mode's rules (including this precision check) and, on failure, simply
-// drops it from the store without throwing -- so an un-rounded offset
-// here doesn't error, it just silently produces a duplicate that was
-// never actually added, which then crashes the *next* step (removing
-// the "temporary" feature that was never really there).
+// Offsets coordinates by a fraction of the shape's bounding-box size (floored for small shapes) so a duplicate is distinguishable, not stacked on its source.
+// Rounds after offsetting: floating-point addition can produce 14+ decimal digits even from precision-safe inputs, and Terra Draw silently
+// drops (rather than errors on) any feature exceeding its coordinate precision limit, which would otherwise crash the next cleanup step.
 function offsetGeometry(geometry: Area["geometry"]): Area["geometry"] {
   let minLng = Infinity;
   let minLat = Infinity;
@@ -494,9 +406,7 @@ function offsetGeometry(geometry: Area["geometry"]): Area["geometry"] {
     if (lat < minLat) minLat = lat;
     if (lat > maxLat) maxLat = lat;
   });
-  // A Point's bbox is zero-sized (min === max on both axes), so the
-  // fraction term is always 0 and only the MIN_OFFSET_DEGREES floor
-  // applies -- still a visible, deliberate offset, not a no-op.
+  // A Point's bbox is zero-sized, so only the MIN_OFFSET_DEGREES floor applies -- still a deliberate offset, not a no-op.
   const dLng = Math.max((maxLng - minLng) * 0.15, MIN_OFFSET_DEGREES);
   const dLat = Math.max((maxLat - minLat) * 0.15, MIN_OFFSET_DEGREES);
   return mapCoordinates(geometry, ([lng, lat]) => [
@@ -527,11 +437,8 @@ export function AreasView() {
   const drawRef = useRef<TerraDraw | null>(null);
 
   const [areas, setAreas] = useState<Area[]>([]);
-  // Mirrors `areas` for read access inside async flows (like the import
-  // batch below) where the closed-over `areas` value is stale by the time
-  // the batch's awaits resolve -- state setters queued during the batch
-  // (one per created area) have committed and re-rendered by then, so this
-  // ref reflects the full post-import set without re-fetching from the API.
+  // Mirrors `areas` for read access inside async flows (e.g. the import batch below), where the closed-over `areas`
+  // value would otherwise be stale by the time the awaits resolve.
   const areasRef = useRef<Area[]>(areas);
   useEffect(() => {
     areasRef.current = areas;
@@ -547,35 +454,22 @@ export function AreasView() {
   const [deleteTarget, setDeleteTarget] = useState<Area | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [pendingDrawFeatureId, setPendingDrawFeatureId] = useState<string | null>(null);
-  // Only set by duplicateArea(), to suggest "<name> copy" in the naming
-  // modal -- a freshly drawn shape leaves this null and the modal starts
-  // blank as before.
+  // Set only by duplicateArea(), to suggest "<name> copy" in the naming modal; a fresh draw leaves this null.
   const [pendingNameSuggestion, setPendingNameSuggestion] = useState<string | null>(null);
-  // Drives the naming modal's "Name this area/line/point" title -- set
-  // alongside pendingDrawFeatureId at both call sites that open it.
+  // Drives the naming modal's "Name this area/line/point" title.
   const [pendingGeometryType, setPendingGeometryType] = useState<Area["geometry"]["type"]>("Polygon");
-  // locked value to apply once the pending feature is actually created --
-  // always false for a fresh draw/duplicate (existing behavior), but an
-  // imported feature's properties.locked, when present, must survive
-  // through to createArea() even if the identifier/name still need the
-  // AreaNameModal detour.
+  // Locked value applied once the pending feature is created; false for a fresh draw/duplicate, but must carry
+  // an imported feature's properties.locked through even via the AreaNameModal detour.
   const [pendingLocked, setPendingLocked] = useState(false);
-  // Style fields to apply once the pending feature is actually created --
-  // empty for a fresh draw, copied from the source area for a duplicate,
-  // extracted from the imported feature's own properties for an import.
+  // Style fields applied once the pending feature is created: empty for a fresh draw, copied for a duplicate,
+  // extracted from properties for an import.
   const [pendingStyle, setPendingStyle] = useState<StyleFields>({});
   const [importModalOpen, setImportModalOpen] = useState(false);
-  // Set together, right before ImportConflictModal opens: the raw imported
-  // batch (needed to actually run the import once the operator confirms
-  // their skip/rename choices) and the colliding identifiers it contains.
-  // Both null/empty = the modal is closed. Only ever populated by the
-  // multi-feature batch path -- a single-feature import still falls
-  // through to AreaNameModal exactly as before.
+  // Set together right before ImportConflictModal opens: the raw batch plus its colliding identifiers. Both null/empty = modal closed.
+  // Only populated by the multi-feature batch path; a single-feature import still falls through to AreaNameModal.
   const [pendingImportFeatures, setPendingImportFeatures] = useState<ImportedFeature[] | null>(null);
   const [conflictIdentifiers, setConflictIdentifiers] = useState<string[]>([]);
-  // Screen-space alignment guides -- only ever non-empty while a
-  // shape is actively being dragged/reshaped; cleared the moment the drag
-  // ends (draw's "finish" event) or selection otherwise changes.
+  // Non-empty only while a shape is actively dragged/reshaped; cleared when the drag ends or selection changes.
   const [guideLines, setGuideLines] = useState<AlignmentGuide[]>([]);
 
   const dirty = draft !== null && original !== null && JSON.stringify(draft) !== JSON.stringify(original);
@@ -588,12 +482,7 @@ export function AreasView() {
     }
   }
 
-  // The area-labels source's single source of truth -- called
-  // whenever anything that affects a label's position or fit changes: the
-  // saved area list, an in-progress drag/vertex edit (via
-  // handleDrawChangeRef below, passing the in-progress geometry in place
-  // of the saved one), and zoom (screen-space width changes even though
-  // the shape's geographic size doesn't).
+  // Called whenever anything affecting label position/fit changes: the saved area list, an in-progress drag/vertex edit, or zoom.
   function refreshLabelSource(areasForLabels: Area[]) {
     const map = mapRef.current;
     if (!map) return;
@@ -619,21 +508,14 @@ export function AreasView() {
     });
   }
 
-  // Substitutes the in-progress draft's geometry for its saved counterpart
-  // in the areas list -- shared by handleDrawChangeRef's live-drag refresh
-  // and the zoom handler, both of which need "what's on screen right now"
-  // rather than "what's actually saved" while an edit is in progress.
+  // Substitutes the in-progress draft's geometry into the areas list -- used where "what's on screen now" is needed over "what's saved".
   function areasWithDraftGeometry(): Area[] {
     if (!draft) return areas;
     return areas.map((a) => (a.identifier === draft.identifier ? { ...a, geometry: draft.geometry } : a));
   }
 
-  // Terra Draw's event listeners are registered exactly once, when the
-  // map's 'load' event fires (see the mount effect below), so they'd
-  // otherwise close over that first render's state forever. Each handler
-  // here is redefined every render and stashed in a ref; the one-time
-  // listener always calls through `<name>Ref.current(...)`, so it always
-  // sees the current render's state without needing to be re-registered.
+  // Terra Draw's listeners are registered once (map's 'load' event), so they'd otherwise close over that render's state forever.
+  // Each handler here is redefined every render and stashed in a ref; the listener calls `<name>Ref.current(...)` to see current state.
   const handleDrawFinishRef = useRef((featureId: string) => {
     setPendingNameSuggestion(null);
     setPendingGeometryType(snapshotGeometryType(drawRef.current, featureId));
@@ -649,23 +531,15 @@ export function AreasView() {
     setPendingDrawFeatureId(featureId);
   };
 
-  // setDraft's functional-updater form (not a `{...draft, geometry}`
-  // spread of the closed-over `draft`) matters here specifically: a
-  // geometry-target change event can arrive in the same tick as another
-  // draft field just changed via a properties-target update (e.g. the
-  // color <input>s below calling updateFeatureProperties, or handleDiscard
-  // resetting style fields then immediately calling updateFeatureGeometry)
-  // -- spreading the stale closure draft would silently discard that other
-  // change instead of layering geometry on top of the current state.
+  // Uses setDraft's functional-updater form, not a spread of the closed-over `draft`: a geometry-change event can land in the same
+  // tick as a properties-target update (e.g. a color picker), and spreading the stale closure would silently discard that change.
   const handleDrawChangeRef = useRef((ids: string[]) => {
     if (!draft || !ids.includes(draft.identifier)) return;
     const feature = drawRef.current?.getSnapshotFeature(draft.identifier);
     if (!feature || !isAreaGeometryType(feature.geometry.type)) return;
     const geometry = feature.geometry as Area["geometry"];
     setDraft((prev) => (prev ? { ...prev, geometry } : prev));
-    // Live-track the label position/fit while dragging or reshaping -- not
-    // just after Save, which is all the areas-list effect below would
-    // otherwise cover.
+    // Live-tracks label position/fit while dragging, not just after Save.
     refreshLabelSource(areas.map((a) => (a.identifier === draft.identifier ? { ...a, geometry } : a)));
     const map = mapRef.current;
     if (map) {
@@ -708,12 +582,8 @@ export function AreasView() {
     });
   };
 
-  // computeMaxWidthEms's fit is screen-space, not geographic -- a
-  // shape's on-screen width changes with zoom even though its real size
-  // doesn't, so labels need re-fitting on zoom too, not just when a
-  // shape's geometry or the saved area list changes. Rotation/pitch are
-  // both locked (see the map constructor/disableRotation calls below), so
-  // zoom is the only view change that affects projected width.
+  // Label fit is screen-space; a shape's projected width changes with zoom even though its geometry doesn't.
+  // Rotation/pitch are locked, so zoom is the only view change that affects it.
   const handleZoomRef = useRef(() => {
     refreshLabelSource(areasWithDraftGeometry());
   });
@@ -721,13 +591,8 @@ export function AreasView() {
     refreshLabelSource(areasWithDraftGeometry());
   };
 
-  // Terra Draw's select-mode drag/vertex-edit flags are configured per
-  // drawing-mode name ("polygon"), not per feature -- there's no built-in
-  // way to lock one shape while leaving others draggable. Since only one
-  // area is ever selected/editable at a time in this UI, updateModeOptions()
-  // is called every time selection changes (see call sites below) to
-  // dynamically re-target those global flags at whichever area just became
-  // selected, which has the same effect as a true per-feature lock.
+  // Terra Draw's drag/vertex-edit flags are per-mode, not per-feature. Since only one area is ever selected at a time,
+  // re-targeting these global flags on every selection change (call sites below) has the same effect as a true per-feature lock.
   function setSelectDraggable(locked: boolean) {
     drawRef.current?.updateModeOptions("select", { flags: selectModeFlags(locked) });
   }
@@ -740,14 +605,8 @@ export function AreasView() {
       style: MAP_STYLE,
       center: [0, 0],
       zoom: 1,
-      // Locked to a flat, north-up 2D view -- areas are drawn/edited as
-      // plain lat/lng polygons, so neither a 3D tilt (pitch) nor a
-      // rotated (non-north-up) compass bearing makes drawing easier, only
-      // more disorienting. maxPitch: 0 is the hard guarantee against
-      // pitch (no gesture path can exceed it); the rest, here and via the
-      // two disableRotation() calls below, block every gesture path that
-      // could change pitch or bearing (mouse drag, touch, keyboard) at
-      // the source, rather than just the primary (mouse drag) one.
+      // Locked to a flat, north-up 2D view -- pitch/rotation only disorient area drawing/editing, never help it.
+      // maxPitch: 0 blocks pitch outright; these plus the disableRotation() calls below block every gesture path that could change bearing.
       maxPitch: 0,
       pitchWithRotate: false,
       dragRotate: false,
@@ -756,9 +615,7 @@ export function AreasView() {
     mapRef.current = map;
     map.touchZoomRotate.disableRotation(); // keep pinch-zoom, drop two-finger twist-to-rotate
     map.keyboard.disableRotation(); // keep pan/zoom shortcuts, drop Shift+Left/Right rotate
-    // showCompass: false -- rotation is locked (see the constructor
-    // options above and the two disableRotation() calls), so a
-    // reset-bearing compass button has nothing to do.
+    // Rotation is locked, so a reset-bearing compass control has nothing to do.
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
     map.on("load", () => {
@@ -772,20 +629,11 @@ export function AreasView() {
         source: "area-labels",
         layout: {
           "text-field": ["get", "name"],
-          // Without an explicit text-font, MapLibre falls back to the
-          // style-spec default ("Open Sans Regular, Arial Unicode MS
-          // Regular"), which OpenFreeMap's glyph server doesn't serve for
-          // this style (only the Noto Sans family) -- causing a 404 per
-          // glyph range for every rendered character. Bold confirmed
-          // servable (200, real glyph data) before switching from Regular,
-          // to match LookupView.tsx's route-stop label weight/size.
+          // MapLibre's style-spec default font isn't served by OpenFreeMap's glyph server for this style (only Noto Sans),
+          // causing 404s per glyph. Matches LookupView.tsx's label weight/size.
           "text-font": ["Noto Sans Bold"],
           "text-size": 14,
-          // Polygon labels sit centered on the (now area-weighted centroid)
-          // anchor point. LineString/Point labels anchor below the line/
-          // marker they name instead -- "center" there would draw the text
-          // directly on top of the line or marker, same underlying bug for
-          // both geometry types.
+          // LineString/Point anchor below what they label, not centered -- "center" would draw text directly on top of the line/marker.
           "text-anchor": ["match", ["get", "geometryType"], "LineString", "top", "Point", "top", "center"],
           "text-offset": [
             "match",
@@ -796,17 +644,10 @@ export function AreasView() {
             ["literal", [0, 0.6]],
             ["literal", [0, 0]],
           ],
-          // Wraps to computeMaxWidthEms's per-area value when the
-          // shape is wide enough to be worth fitting into; MapLibre's own
-          // default (10ems) otherwise -- effectively the "current
-          // fixed-size behavior" fallback for a too-small shape or a Point.
+          // Falls back to MapLibre's default (10ems) for a too-small shape or a Point, where computeMaxWidthEms has no value to give.
           "text-max-width": ["coalesce", ["get", "maxWidthEms"], 10],
         },
-        // Each label feature carries its own area's stroke/marker-color as
-        // `color` (see labelsFeatureCollection/areaLabelColor) -- falls
-        // back to DEFAULT_SHAPE_COLOR (#3f97e0, Terra Draw's own default
-        // stroke/fill/marker color) for an area with no custom style, same
-        // color every unstyled shape actually renders in.
+        // Falls back to DEFAULT_SHAPE_COLOR for an area with no custom style, matching what an unstyled shape actually renders in.
         paint: {
           "text-color": ["coalesce", ["get", "color"], DEFAULT_SHAPE_COLOR],
           "text-halo-color": "#ffffff",
@@ -814,18 +655,11 @@ export function AreasView() {
         },
       });
 
-      // Terra Draw's MapLibre adapter must be created after the map's
-      // style has loaded (per its own adapter guide), so the whole
-      // instance is built here rather than immediately after the Map
-      // itself.
+      // Terra Draw's MapLibre adapter must be created after the map's style has loaded, so the instance is built here, not right after the Map.
       const draw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map }),
-        // Terra Draw's default id strategy only accepts 36-character
-        // (UUID-shaped) ids, which area identifiers like "LI" aren't --
-        // this lets an area's identifier double as its Terra Draw
-        // feature id directly, the same 1:1 mapping used before
-        // switching drawing libraries, rather than maintaining a
-        // separate id-translation table.
+        // Terra Draw's default id strategy only accepts UUID-shaped ids, which area identifiers like "LI" aren't;
+        // this lets an identifier double as the feature id directly.
         idStrategy: {
           isValidId: (id): id is string => typeof id === "string" && id.length > 0,
           getId: () => uuidv4(),
@@ -833,21 +667,11 @@ export function AreasView() {
         modes: [
           new TerraDrawSelectMode({
             flags: selectModeFlags(false),
-            // Terra Draw's own Delete/Escape key handling bypasses this
-            // app's state entirely -- Delete would remove the feature from
-            // the map without calling the delete API or going through the
-            // confirm modal (leaving the map out of sync with the saved
-            // area list), and it doesn't consult the draggable/deletable
-            // flags used below to enforce locking. Disabled so every
-            // deletion goes through handleDeleteConfirmed. rotate/scale are
-            // no-ops already (rotateable/scaleable are never set below) but
-            // disabled too for clarity.
+            // Terra Draw's own Delete key bypasses this app's state entirely (removes the feature without the delete API/confirm
+            // modal, ignoring the locked flags below), so it's disabled in favor of handleDeleteConfirmed.
             keyEvents: { deselect: null, delete: null, rotate: null, scale: null },
-            // Selected-state colors are separate style keys from the base
-            // mode's own (selectedPolygonColor vs. fillColor, etc.) --
-            // without overriding these too, a feature's custom color would
-            // visibly flip to Terra Draw's default the moment it's
-            // selected/dragged.
+            // Selected-state colors are separate style keys from the base mode's own; without overriding these too,
+            // a custom color would flip to Terra Draw's default on selection.
             styles: {
               selectedPolygonColor: featureFillColor,
               selectedPolygonOutlineColor: featureStrokeColor,
@@ -868,43 +692,21 @@ export function AreasView() {
       });
       drawRef.current = draw;
       draw.start();
-      // Terra Draw's adapter adds its own Polygon/LineString/Point layers
-      // inside register(), called here by start() -- after "area-labels"
-      // was already added above, which otherwise leaves the label layer
-      // buried under Terra Draw's fill/stroke/marker layers. Layers are
-      // only ever added once (subsequent renders/mode switches just call
-      // setData on the existing sources), so a single moveLayer() to the
-      // top, right after start(), holds for the life of the map.
+      // Terra Draw's start() adds its own layers above "area-labels", burying it; move it to the top once here (layers are only ever added once).
       map.moveLayer("area-labels");
       draw.setMode("select");
 
       draw.on("finish", (id, context) => {
-        // "finish" also fires for completed drags in select mode
-        // (dragFeature/dragCoordinate/dragCoordinateResize) -- only a
-        // brand new polygon (action "draw") should prompt for a name.
+        // "finish" also fires for completed drags; only a brand-new shape (action "draw") should prompt for a name.
         if (context.action === "draw") handleDrawFinishRef.current(String(id));
       });
-      // Alignment guides are only meaningful mid-drag. "finish"
-      // looked like the natural place to clear them (it's documented to
-      // also fire for completed drags), but empirically does NOT fire for
-      // every whole-feature drag (confirmed: a plain fill-drag, as opposed
-      // to a vertex/coordinate drag, never emits it here) -- so guides
-      // could get stuck visible after a drag "finish" silently doesn't
-      // fire. A raw mouseup/touchend on the map's own canvas container is
-      // a guaranteed catch-all for "the drag gesture just ended"
-      // regardless of Terra Draw's internal event semantics; clearing an
-      // already-empty guide list on every unrelated click is a harmless
-      // no-op.
+      // "finish" doesn't reliably fire for a whole-feature drag (confirmed empirically), so guides could get stuck visible.
+      // mouseup/touchend on the canvas is a catch-all for "drag ended" regardless of Terra Draw's event semantics; a no-op if already empty.
       const clearGuideLines = () => setGuideLines([]);
       map.getCanvasContainer().addEventListener("mouseup", clearGuideLines);
       map.getCanvasContainer().addEventListener("touchend", clearGuideLines);
       draw.on("change", (ids, type, context) => {
-        // A properties-only update (e.g. this view's own color-picker
-        // calling updateFeatureProperties -- see the color <input>s below)
-        // also fires type "update", indistinguishable from a geometry drag
-        // without checking context.target: without this check,
-        // handleDrawChangeRef's stale-draft-closure geometry sync would
-        // clobber whatever the properties update just set on draft.
+        // A properties-only update (e.g. the color picker) also fires type "update"; context.target distinguishes it from an actual geometry drag.
         if (type === "update" && context?.target === "geometry") {
           handleDrawChangeRef.current(ids.map(String));
         }
@@ -956,9 +758,7 @@ export function AreasView() {
     };
   }, [mapReady, showToast]);
 
-  // Keeps the label source (committed areas -- handleDrawChangeRef covers
-  // in-progress edits separately) in sync whenever the saved area list
-  // changes.
+  // Keeps the label source in sync with the saved area list; in-progress edits are covered separately by handleDrawChangeRef.
   useEffect(() => {
     if (!mapReady) return;
     refreshLabelSource(areas);
@@ -981,12 +781,7 @@ export function AreasView() {
     });
   }
 
-  // Duplicates the currently selected (and possibly in-progress-edited)
-  // shape: clones its on-map geometry with a visible offset, then reuses
-  // the exact same naming-modal -> create-area flow as a freshly drawn
-  // shape (handleNameConfirm doesn't care how the pending feature got onto
-  // the map). Preserves the source's geometry type (a duplicated
-  // LineString stays a LineString, etc.).
+  // Clones the selected shape's geometry with a visible offset, then reuses the same naming-modal -> create-area flow as a fresh draw.
   function duplicateArea() {
     if (!draft) return;
     const sourceGeometry = draft.geometry;
@@ -1014,9 +809,7 @@ export function AreasView() {
     });
   }
 
-  // Client-side only -- areas is already the full in-memory area list
-  // (populated by listAreas() on load, kept in sync on create/update/delete),
-  // so there's no server round trip needed to build the export file.
+  // Client-side only; `areas` is already the full in-memory list, kept in sync on create/update/delete.
   function exportAllAreas() {
     downloadGeoJson(
       { type: "FeatureCollection", features: areas.map(areaToFeature) },
@@ -1024,9 +817,7 @@ export function AreasView() {
     );
   }
 
-  // Exports just the selected area, from draft rather than the saved areas
-  // list -- same source Duplicate already reads from, so an in-progress,
-  // unsaved edit is reflected rather than stale server data.
+  // Exports from draft, not the saved list, so an in-progress unsaved edit is reflected.
   function exportSelectedArea() {
     if (!draft) return;
     downloadGeoJson(
@@ -1035,18 +826,9 @@ export function AreasView() {
     );
   }
 
-  // Shared tail end of "a pending draw-map feature becomes a real, saved
-  // Area" -- used both by handleNameConfirm (identifier/name came from the
-  // AreaNameModal) and handleImportFeature's direct-create path (identifier/
-  // name already resolved from the imported feature's own properties, no
-  // modal needed). `locked` is a parameter rather than always `false`
-  // because imports must be able to preserve properties.locked -- every
-  // other caller (draw/duplicate) still just passes `false`.
-  // `suppressToast` is set by the multi-feature import loop, which reports
-  // one summary toast for the whole batch instead of a line per feature.
-  // The return value tells that loop whether this feature was created
-  // (true) or fell through / failed (false) -- every other caller ignores
-  // it and behaves exactly as before.
+  // Shared tail end of "pending draw-map feature becomes a saved Area", used by handleNameConfirm and handleImportFeature's direct-create path.
+  // `locked` is a parameter (not always false) so imports can preserve properties.locked. `suppressToast`/the return value support the
+  // batch import loop's single summary toast.
   async function createAreaFromPendingFeature(
     tempId: string,
     identifier: string,
@@ -1060,9 +842,7 @@ export function AreasView() {
 
     const feature = draw.getSnapshotFeature(tempId);
     if (!feature) {
-      // Never actually made it into the store -- addFeatures() rejected
-      // it during validation (see offsetGeometry/removeFeatureIfPresent).
-      // Nothing to clean up, and nothing to save.
+      // Never made it into the store -- addFeatures() rejected it during validation. Nothing to clean up or save.
       if (!opts?.suppressToast) {
         showToast("error", "That shape could not be created -- its geometry was rejected.");
       }
@@ -1123,12 +903,8 @@ export function AreasView() {
     await createAreaFromPendingFeature(tempId, identifier, name, locked, style);
   }
 
-  // Entry point from ImportAreaModal. One feature keeps the original
-  // behaviour exactly -- a single conflict is one confirm click, no reason
-  // to change it. More than one collides against the existing identifiers;
-  // any collision stops here and shows ImportConflictModal instead of
-  // importing immediately, otherwise the batch runs straight through
-  // exactly as before that modal existed.
+  // Entry point from ImportAreaModal. A single feature keeps the original single-conflict behavior; multiple features check for
+  // identifier collisions first and show ImportConflictModal if any exist, otherwise the batch runs straight through.
   function handleImportFeatures(features: ImportedFeature[]) {
     if (features.length === 1) {
       handleImportFeature(features[0]);
@@ -1187,19 +963,14 @@ export function AreasView() {
     }
     showToast(result.failed.length === 0 ? "success" : "error", `${parts.join("; ")}.`);
 
-    // Match the initial-load fit-bounds behaviour: pan/zoom to the current
-    // area set (existing + newly imported) so an import doesn't require a
-    // page refresh to see areas outside the current viewport. Nothing to
-    // fit to if every feature in the batch failed/was skipped.
+    // Matches the initial-load fit-bounds behavior, so imported areas outside the current viewport are visible without a refresh.
     if (result.created.length > 0) {
       const bounds = computeBounds(areasRef.current);
       if (bounds) mapRef.current?.fitBounds(bounds, { padding: 40 });
     }
   }
 
-  // Recomputes every conflict row's rename preview via the real batch
-  // resolver, over the whole pending import, so it can never diverge from
-  // what importAreasBatch would actually produce for the same choices.
+  // Recomputes the rename preview via the real batch resolver, so it can never diverge from what importAreasBatch would actually produce.
   function computeAreaConflictPreview(choices: Map<string, ConflictChoice>): Map<string, string> {
     if (!pendingImportFeatures) return new Map();
     const skipIdentifiers = new Set(
@@ -1235,11 +1006,7 @@ export function AreasView() {
     setConflictIdentifiers([]);
   }
 
-  // Places an imported feature onto the draw map exactly like a fresh draw
-  // or a duplicate, then either creates it immediately (name + a usable,
-  // non-duplicate identifier both present in the feature's properties) or
-  // falls through to the existing AreaNameModal -- reusing its identifier
-  // validation/duplicate rejection rather than reimplementing it here.
+  // Creates immediately if the feature has a usable name + non-duplicate identifier; otherwise falls through to AreaNameModal to reuse its validation.
   function handleImportFeature(feature: ImportedFeature) {
     requestSwitch(() => {
       const draw = drawRef.current;
@@ -1307,9 +1074,7 @@ export function AreasView() {
     }
   }
 
-  // Saves immediately rather than going through the dirty/Save flow -- a
-  // direct state flip like delete, not an in-progress geometry/name edit
-  // the user might want to discard.
+  // Saves immediately rather than through the dirty/Save flow -- a direct state flip, not an in-progress edit to discard.
   async function toggleLock() {
     if (!draft) return;
     setSaving(true);
@@ -1333,10 +1098,7 @@ export function AreasView() {
     setDraft(clone(original));
     drawRef.current?.updateFeatureGeometry(original.identifier, original.geometry);
     setGuideLines([]);
-    // Explicitly clears every style key back to original's value (or
-    // undefined if original never set it) -- a live color-picker preview
-    // change (see the color <input>s below) must fully revert on Discard,
-    // not just whichever keys happen to still be set.
+    // Clears every style key back to original's value (or undefined), so a live color-picker preview fully reverts on Discard.
     const revertedStyle: Record<string, string | number | undefined> = {};
     for (const key of STYLE_KEYS) revertedStyle[key] = original[key];
     drawRef.current?.updateFeatureProperties(original.identifier, revertedStyle);
@@ -1413,31 +1175,13 @@ export function AreasView() {
     </div>
   );
 
-  // The map pane renders exactly once regardless of breakpoint -- MapLibre
-  // is attached to mapContainerRef, so this element can be repositioned via
-  // CSS (sticky mobile header vs. static desktop pane) but never duplicated
-  // or remounted per selection.
+  // Renders exactly once regardless of breakpoint; repositioned via CSS but never duplicated/remounted, since MapLibre is attached to mapContainerRef.
   const mapPane = (
     <div className="relative h-[400px] overflow-hidden rounded-md border border-slate-200 md:order-2 md:h-auto md:flex-1 dark:border-slate-700">
-      {/*
-        h-full/w-full, not absolute + inset-0: MapLibre attaches its own
-        `maplibregl-map` class directly to this div (it's the `container`
-        passed to `new maplibregl.Map()`), and that class sets
-        `position: relative`. Since maplibregl-map's rule happens to land
-        later in the built CSS than Tailwind's `.absolute`, it wins the
-        cascade (equal specificity, later source order) and silently
-        overrides `position: absolute` -- without which `inset-0` no
-        longer stretches this div to fill its parent, so it collapses to
-        near-zero height instead. height/width: 100% has no such
-        conflict with maplibregl-map's own position: relative.
-      */}
+      {/* h-full/w-full, not absolute+inset-0: MapLibre's own `maplibregl-map` class sets position:relative and lands later in the
+          built CSS than Tailwind's .absolute, silently overriding it and collapsing this div to near-zero height. */}
       <div ref={mapContainerRef} className="h-full w-full" />
-      {/* Alignment guides -- screen-space, so a plain SVG overlay
-          sharing this same relatively-positioned container (matching
-          map.project()'s own pixel coordinate origin exactly) is
-          simpler and more precise than round-tripping through
-          unproject() into a MapLibre GeoJSON layer. pointer-events-none
-          so it never blocks clicks on the map/controls beneath it. */}
+      {/* Screen-space SVG overlay matches map.project()'s pixel origin directly, simpler than round-tripping through a MapLibre GeoJSON layer. */}
       {guideLines.length > 0 && (
         <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
           {guideLines.map((g, i) => (
@@ -1459,14 +1203,8 @@ export function AreasView() {
 
   return (
     <div className="flex flex-col gap-4 md:h-full md:flex-row md:gap-6">
-      {/* Mobile sticky header: drawing toolbar + map, pinned to the top of
-          the viewport so both stay visible while the area list scrolls
-          underneath, no matter which item is selected or how long the list
-          is. `md:contents` gives this wrapper no box of its own at the
-          desktop breakpoint -- its children fall back to being ordinary
-          flex items of the row below, restoring the original side-by-side
-          desktop layout (toolbar above the list, map in its own pane) via
-          the `order` utilities on the list column and on mapPane above. */}
+      {/* Mobile: sticky toolbar+map header above a scrolling list. `md:contents` removes this wrapper's own box at desktop width, so its
+          children become ordinary flex items reordered by the `order` utilities on the list column and mapPane. */}
       <div className="sticky top-0 z-10 flex flex-col gap-2 bg-slate-50 pb-3 dark:bg-slate-900 md:contents">
         <div className="md:hidden">{toolbar}</div>
         {mapPane}
@@ -1503,11 +1241,7 @@ export function AreasView() {
                         placeholder="Display name"
                         className="rounded-md border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-900"
                       />
-                      {/* Color control(s) matching the geometry type --
-                          fill+stroke for Polygon, stroke only for LineString
-                          (no fill to speak of), marker color for Point.
-                          Live-previewed on the map via updateFeatureProperties,
-                          not just applied on Save. */}
+                      {/* Color control(s) matching geometry type; live-previewed on the map via updateFeatureProperties, not just on Save. */}
                       {draft.geometry.type === "Polygon" && (
                         <div className="flex gap-2">
                           <label className="flex flex-1 items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
@@ -1564,10 +1298,6 @@ export function AreasView() {
                           />
                         </label>
                       )}
-                      {/* Large, clearly-grouped touch targets: Save is the
-                          full-width primary action, Discard/Duplicate and
-                          Lock-or-Unlock/Export are paired secondary rows,
-                          and Delete stands alone at the bottom. */}
                       <button
                         type="button"
                         onClick={handleSave}

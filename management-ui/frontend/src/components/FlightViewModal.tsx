@@ -40,14 +40,8 @@ const TRACE_POINTS_SOURCE = "trace-points";
 const TRACE_POINTS_CIRCLE_LAYER = "trace-points-circle";
 const TRACE_POINTS_LABEL_LAYER = "trace-points-label";
 
-// Lucide's `Waypoints` glyph -- reads as "individual sample points along a
-// path" at a glance, distinct from NavigationControl's zoom/compass glyphs
-// above it. This control isn't a React component (MapLibre controls render
-// outside React's tree), so the icon is inlined as raw markup rather than
-// mounted via lucide-react; path data copied from lucide-react's Waypoints
-// icon node (stroke icon, default stroke-width 2) so geometry matches the
-// rest of the app. `display:block; margin:auto` keeps it optically centered
-// in the button regardless of the button's own text-align/line-height.
+// Lucide's `Waypoints` glyph, inlined as raw markup since this MapLibre
+// control renders outside React's tree (path data copied from lucide-react).
 const TRACE_POINTS_ICON_SVG = `
 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto">
   <path d="m10.586 5.414-5.172 5.172" />
@@ -61,12 +55,9 @@ const TRACE_POINTS_ICON_SVG = `
 
 const TRACE_POINTS_COLOR = "#0ea5e9"; // Tailwind sky-500
 
-// The app's first custom maplibregl.IControl -- every map elsewhere uses
-// only the stock NavigationControl. Plain DOM (not React) since MapLibre
-// controls render outside React's tree; toggle state lives entirely inside
-// this instance rather than component state, so it resets for free every
-// time the modal reopens and rebuilds the map (see the map-creation effect
-// below) instead of needing an explicit reset.
+// Plain DOM (not React) since MapLibre controls render outside React's
+// tree; toggle state lives on the instance so it resets for free whenever
+// the modal reopens and rebuilds the map.
 class TracePointsControl implements maplibregl.IControl {
   private _map: maplibregl.Map | undefined;
   private _button: HTMLButtonElement | undefined;
@@ -80,9 +71,7 @@ class TracePointsControl implements maplibregl.IControl {
     this._button.type = "button";
     this._button.title = "Toggle trace points";
     this._button.setAttribute("aria-label", "Toggle trace points");
-    // Flex-center the glyph in the button's content box (matches the
-    // stacked zoom +/- buttons above it) rather than relying on the SVG's
-    // own margin:auto against the button's default inline-block layout.
+    // Flex-center the glyph, matching the stacked zoom +/- buttons above it.
     this._button.style.display = "flex";
     this._button.style.alignItems = "center";
     this._button.style.justifyContent = "center";
@@ -105,12 +94,7 @@ class TracePointsControl implements maplibregl.IControl {
     const button = this._button;
     if (!map || !button) return;
     this._active = !this._active;
-    // Inline style rather than a new CSS class/file -- this is the only
-    // custom control in the app, so a stylesheet just for its active state
-    // isn't worth it. Inactive = blue glyph on the stock maplibre white;
-    // active inverts to a solid blue button with a white glyph, so the
-    // on/off state reads at a glance. maplibre-gl.css's own :hover tint
-    // (a semi-transparent overlay) still applies on top of either background.
+    // Active state inverts to a solid blue button with a white glyph.
     button.style.color = this._active ? "#fff" : TRACE_POINTS_COLOR;
     button.style.background = this._active ? TRACE_POINTS_COLOR : "";
     const visibility = this._active ? "visible" : "none";
@@ -135,9 +119,7 @@ function Label({ children }: { children: ReactNode }) {
   return <span className="text-sm text-slate-500 dark:text-slate-400">{children}</span>;
 }
 
-// Origin/destination ICAO code carries the same green/red pill used for
-// Origin/Destination in /lookup's route view, and matches this modal's own
-// map start (green) / end (red) markers.
+// Green/red pill matches this modal's own map start/end markers.
 function AirportBlock({ airport, role }: { airport: FlightViewAirport; role: "origin" | "destination" }) {
   const location = airportLocation(airport);
   return (
@@ -260,9 +242,8 @@ export function FlightViewModal({ token, onClose }: FlightViewModalProps) {
           "text-anchor": "bottom-left",
           "text-offset": [0.6, -0.6],
           "text-justify": "left",
-          // false is MapLibre's own default -- explicit here since this
-          // collision behavior *is* the decluttering mechanism (see
-          // symbol-sort-key below), not an incidental setting.
+          // Explicit (matches MapLibre's default) since this collision
+          // behavior is the decluttering mechanism, not an incidental setting.
           "text-allow-overlap": false,
           "text-ignore-placement": false,
           "symbol-sort-key": ["get", "sortKey"],

@@ -60,31 +60,25 @@ const RECEIVER_SOURCE_OPTIONS: readonly { value: string; label: string }[] = [
   { value: "EXTERNAL", label: "External" },
 ];
 
-// WAKE_TURBULENCE_CATEGORIES stores the exact lowercase strings
-// message-processor/rules_engine.py validates against -- this only formats
-// the dropdown's visible text; the submitted `value` is always the original
-// lowercase form.
+// Formats the dropdown's visible text; the submitted `value` stays the
+// original lowercase form WAKE_TURBULENCE_CATEGORIES validates against.
 function titleCase(category: WakeTurbulenceCategory): string {
   return category.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // Light-to-heavy by weight, not alphabetical. Super, rotorcraft, and high
-// performance were dropped entirely (not remapped): Super has no code point
-// in the live ADS-B/UAT category data this field is now sourced from, and
-// rotorcraft/high-performance are a different axis (emitter type) rather
-// than a wake-turbulence weight class.
+// performance are dropped: Super has no code point in the live category
+// data this field is sourced from, and the other two are an emitter-type
+// axis, not a weight class.
 const WAKE_TURBULENCE_ORDER: readonly WakeTurbulenceCategory[] = ["light", "medium", "heavy"];
 
-// Catches drift if WAKE_TURBULENCE_CATEGORIES (the actual validated set,
-// from message-processor/rules_engine.py) ever changes without this
+// Catches drift if WAKE_TURBULENCE_CATEGORIES changes without this
 // hand-written order being updated to match.
 if (WAKE_TURBULENCE_ORDER.length !== WAKE_TURBULENCE_CATEGORIES.length) {
   throw new Error("WAKE_TURBULENCE_ORDER is out of sync with WAKE_TURBULENCE_CATEGORIES");
 }
 
-// Units shown alongside the value input itself for the condition types
-// where a bare number would otherwise be ambiguous. Types not listed here
-// (text, dropdown, or otherwise self-explanatory values) get no suffix.
+// Units for condition types where a bare number would be ambiguous.
 const UNIT_LABELS: Partial<Record<ConditionType, string>> = {
   altitude: "Feet",
   heading: "Degrees",
@@ -92,12 +86,8 @@ const UNIT_LABELS: Partial<Record<ConditionType, string>> = {
   vertical_speed: "Feet/min",
 };
 
-// Client-side min/max, mirroring real-world limits (not just "non-negative
-// integer") -- altitude/velocity/vertical_speed bound flight envelopes no
-// aircraft SkyFollower tracks can exceed, aircraft_powerplant_count bounds
-// at a generous upper limit for any fixed-wing/rotorcraft. The backend's
-// own validators (message-processor/rules_engine.py) don't enforce an
-// upper bound at all -- this is purely a UI fast-fail nicety.
+// Client-side min/max mirroring real-world flight envelope limits, purely
+// a UI fast-fail nicety -- the backend enforces no upper bound.
 const NUMERIC_BOUNDS: Partial<Record<ConditionType, { min: number; max: number }>> = {
   altitude: { min: 0, max: 65000 },
   velocity: { min: 0, max: 1334 },
@@ -105,9 +95,6 @@ const NUMERIC_BOUNDS: Partial<Record<ConditionType, { min: number; max: number }
   vertical_speed: { min: -10000, max: 10000 },
 };
 
-// Small text appended to the right of the value input itself (not the
-// "Value" label) for the condition types where a bare number would
-// otherwise be ambiguous.
 function UnitSuffix({ type }: { type: ConditionType }) {
   const unit = UNIT_LABELS[type];
   if (!unit) return null;
@@ -115,18 +102,14 @@ function UnitSuffix({ type }: { type: ConditionType }) {
 }
 
 // Dropdown order is alphabetical by display label, independent of
-// CONDITION_TYPES' declaration order (which mirrors CLAUDE.md's Conditions
-// table and message-processor/rules_engine.py's evaluation-priority
-// grouping -- neither is meant to dictate UI ordering).
+// CONDITION_TYPES' declaration order (which isn't meant to dictate UI order).
 const SORTED_CONDITION_TYPES = [...CONDITION_TYPES].sort((a, b) =>
   TYPE_LABELS[a].localeCompare(TYPE_LABELS[b]),
 );
 
-// When the condition type changes, the operator must still be valid for the
-// new type (e.g. switching from `heading` (equals-only) to `altitude`
-// (minimum/maximum-only) would otherwise leave an operator the new type
-// rejects), and the stale value from the old type rarely makes sense
-// under the new one either.
+// Resets operator and value on type change, since neither is guaranteed
+// valid under the new type (e.g. heading's equals-only vs. altitude's
+// minimum/maximum-only operators).
 function retypeCondition(type: ConditionType): Condition {
   return { type, operator: OPERATORS_BY_TYPE[type][0], value: defaultValueFor(type) };
 }
@@ -139,9 +122,7 @@ export function ConditionForm({
   areaOptions,
   autoFocusType,
 }: ConditionFormProps) {
-  // condition.type is "" for a freshly-added row that hasn't had a type
-  // chosen yet (see RuleForm.tsx's newCondition()) -- deliberately not
-  // defaulted to a real type, so there's nothing to fall back to here.
+  // condition.type is "" for a freshly-added row with no type chosen yet.
   const validOperators = condition.type ? OPERATORS_BY_TYPE[condition.type] : [];
 
   function setValue(value: string | string[]) {
@@ -280,10 +261,7 @@ function ConditionValueInput({
       return <DateConditionInput value={value as string} onValueChange={onValueChange} />;
 
     case "squawk":
-      // Squawk codes are 4-digit octal -- a transponder can never send 8
-      // or 9 in any position, so those are stripped along with anything
-      // non-numeric (matching message-processor/rules_engine.py's
-      // _validate_squawk).
+      // Octal digits only -- a transponder never sends 8 or 9 in any position.
       return (
         <input
           type="text"
@@ -361,10 +339,8 @@ function ConditionValueInput({
         <div className="input flex max-h-32 flex-col gap-1 overflow-y-auto">
           {RECEIVER_SOURCE_OPTIONS.map((option) => {
             const checked = selected.includes(option.value);
-            // Capped at 2: all 3 sources selected is equivalent to no
-            // filter at all, so the backend rejects it -- disable the
-            // remaining unchecked box once 2 are already selected rather
-            // than let the user hit that rejection on save.
+            // Capped at 2: all 3 selected is equivalent to no filter, which
+            // the backend rejects, so disable the last box pre-emptively.
             const disabled = !checked && selected.length >= 2;
             return (
               <label
@@ -425,9 +401,6 @@ function ConditionValueInput({
       }
 
       // Checked items float to the top, alphabetical within each group.
-      // Recomputed every render from `selected`, so toggling a box
-      // re-groups it immediately -- expected for a checklist (a discrete
-      // click), unlike sorting a text field while it's being typed into.
       const sortedOptions = [...otherRuleOptions].sort((a, b) => {
         const aChecked = selected.includes(a.identifier);
         const bChecked = selected.includes(b.identifier);
@@ -528,21 +501,10 @@ function HeadingInput({
   );
 }
 
-// A compass-style visual for the min/max heading range -- min/max is
-// stored as "the arc going clockwise from min to max" (message-processor/
-// rules_engine.py's _eval_heading: `lo > hi` means the arc wraps through
-// 0/360, e.g. 340-020 is northbound). Entering the pair backwards silently
-// selects the *other* (usually much larger) arc instead, so this shades
-// the arc that will actually be matched -- min reversed relative to max is
-// exactly why this exists: 340-013 (through north) looks, as bare numbers,
-// like it could be backwards for 013-340 (the wide southern arc).
-//
-// Sized close to a standard input row height (~36px, `.input`'s
-// border+padding+text-sm) rather than towering over the Type/Operator
-// selects next to it, while still leaving room for legible N/E/S/W labels
-// just outside the circle -- a few px taller than the inputs beside it,
-// but nowhere near the original 64px version that visibly threw off the
-// row's alignment.
+// Min/max is the arc going clockwise from min to max, so min > max wraps
+// through 0/360 (e.g. 340-020 is northbound). Shades the arc that will
+// actually be matched, since entering the pair backwards silently selects
+// the other, usually much larger, arc instead.
 function HeadingCompass({ value }: { value: string }) {
   const [min = "", max = ""] = value.split(",");
   const size = 40;
@@ -605,9 +567,8 @@ function HeadingCompass({ value }: { value: string }) {
   );
 }
 
-// Converts a `datetime-local` input value (always in the browser's local
-// timezone, no offset of its own) to `YYYY-MM-DDTHH:MMZ`, per the spec's
-// "UI converts local time to UTC (Z) before saving."
+// Converts a `datetime-local` value (browser's local timezone, no offset
+// of its own) to `YYYY-MM-DDTHH:MMZ` before saving.
 function localToUtcZ(local: string): string {
   const asDate = new Date(local);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -617,9 +578,8 @@ function localToUtcZ(local: string): string {
   );
 }
 
-// Reverse of localToUtcZ, for populating the datetime-local input when
-// editing an existing datetime condition (any ISO 8601 offset parses fine
-// via the Date constructor, not just Z, and so does a bare date-only value).
+// Reverse of localToUtcZ, for populating the input when editing an existing
+// condition. Any ISO 8601 offset (or a bare date) parses via Date, not just Z.
 function isoToLocalInput(iso: string): string {
   const asDate = new Date(iso);
   if (Number.isNaN(asDate.getTime())) return "";

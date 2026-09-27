@@ -1,9 +1,8 @@
 import type { AreaGeometry } from "../api/areas";
 import { IDENTIFIER_PATTERN, sanitizeIdentifier } from "../components/AreaNameModal";
 
-// A single feature pulled out of an imported GeoJSON FeatureCollection,
-// already structurally validated (geometry is one of the supported types).
-// The parent view resolves identifier/name/locked/style from `properties`.
+// Structurally validated (geometry is a supported type); the parent view
+// resolves identifier/name/locked/style from `properties`.
 export interface ImportedFeature {
   type: "Feature";
   geometry: AreaGeometry;
@@ -11,25 +10,17 @@ export interface ImportedFeature {
 }
 
 export interface ParseResult {
-  // Non-null means the whole file is rejected -- nothing is imported, not
-  // even the features that were individually fine. Set for malformed JSON,
-  // a non-FeatureCollection root, an empty feature list, or any one feature
-  // with an unsupported/missing geometry type.
+  // Non-null rejects the whole file -- nothing is imported, even features
+  // that were individually valid.
   error: string | null;
   features: ImportedFeature[];
 }
 
-// Polygon, LineString, Point -- the geometry types AreasView can actually
-// render and store. A MultiPolygon, GeometryCollection, etc. is rejected.
+// Geometry types AreasView can render and store; anything else is rejected.
 export const SUPPORTED_GEOMETRY_TYPES = new Set<string>(["Polygon", "LineString", "Point"]);
 
-// Structural validation of the pasted / dropped GeoJSON. This is a
-// whole-file hard gate: it either returns every feature (all with a
-// supported geometry type) or an error and nothing. It is exactly as
-// strict as the original single-feature importer -- the only thing removed
-// is the "features.length must be 1" restriction. Blank input is the
-// pristine no-op state (no error, no features), not an error, so a modal
-// the user hasn't touched yet doesn't show a red banner.
+// Whole-file hard gate: returns every feature or an error and nothing. Blank
+// input is the pristine no-op state (no error, no features), not an error.
 export function parseAndValidate(text: string): ParseResult {
   if (!text.trim()) return { error: null, features: [] };
 
@@ -77,15 +68,9 @@ export function parseAndValidate(text: string): ParseResult {
   return { error: null, features };
 }
 
-// Precision (decimal places) every imported coordinate is rounded to
-// before the feature reaches Terra Draw's draw.addFeatures(). Mapping tools
-// routinely export 15-decimal-place coordinates; Terra Draw silently drops
-// (does not throw for) any feature whose coordinates exceed its
-// coordinatePrecision ceiling, which defaults to 9 -- the same rejection
-// AreasView's offsetGeometry already rounds to avoid for duplicated areas.
-// 5 places (~1.1 m at mid latitudes) matches shared/models.py's
-// Position._cap_coordinate_precision, the cap the pipeline imposes on every
-// ingested ADS-B position -- one coordinate-precision convention app-wide.
+// Terra Draw silently drops features exceeding its coordinatePrecision ceiling
+// (default 9), and mapping tools routinely export 15-decimal coordinates. 5
+// places matches the pipeline's own coordinate-precision cap app-wide.
 export const IMPORT_COORDINATE_PRECISION = 5;
 
 function roundToPrecision(value: number, precision: number): number {
@@ -93,11 +78,7 @@ function roundToPrecision(value: number, precision: number): number {
   return Math.round(value * factor) / factor;
 }
 
-// Returns a copy of `geometry` with every coordinate's longitude and
-// latitude rounded to IMPORT_COORDINATE_PRECISION. Any third ordinate
-// (elevation) is preserved untouched. Pure -- does not mutate the input.
-// Applied by both of AreasView's import entry points (single-feature and
-// batch) before the feature is handed to Terra Draw.
+// Pure; preserves any third ordinate (elevation) untouched.
 export function roundGeometryPrecision(geometry: AreaGeometry): AreaGeometry {
   const round = (c: number[]): number[] => [
     roundToPrecision(c[0], IMPORT_COORDINATE_PRECISION),
@@ -114,10 +95,8 @@ export function roundGeometryPrecision(geometry: AreaGeometry): AreaGeometry {
   }
 }
 
-// Lower-case noun used only when synthesising a name/identifier for a
-// feature that carries neither -- e.g. "Imported polygon 1". Distinct from
-// api/areas' geometryDisplayNoun ("Area"/"Line"/"Point"), which is the
-// user-facing label language for toasts and the naming modal's title.
+// Used only to synthesize a name/identifier, e.g. "Imported polygon 1".
+// Distinct from api/areas' user-facing geometryDisplayNoun.
 export function geometryImportNoun(type: AreaGeometry["type"]): string {
   switch (type) {
     case "Polygon":
@@ -135,18 +114,12 @@ export interface ResolvedFeatureIdentity {
   locked: boolean;
 }
 
-// Per-identifier operator choice for an import conflict: keep only the
-// existing area (skip the imported duplicate entirely) or keep both (auto
-// suffix the imported one). Drives ImportConflictModal. Mirrors
-// ruleImport's ImportConflictChoice.
+// Per-identifier choice for an import conflict: skip the duplicate, or keep
+// both via an auto-suffixed rename. Drives ImportConflictModal.
 export type ImportConflictChoice = "skip" | "rename";
 
-// The distinct imported `properties.identifier` values that already exist
-// among `existingIdentifiers`, in file order, deduplicated. A feature with
-// no usable identifier of its own (missing, or resolved from its name) can
-// never collide, so it never appears here. Feeds ImportConflictModal's row
-// list -- an import with an empty result here proceeds straight through
-// with no modal.
+// Distinct imported identifiers that collide with `existingIdentifiers`, in file
+// order. Feeds ImportConflictModal; an empty result skips the modal entirely.
 export function collidingIdentifiers(
   features: ImportedFeature[],
   existingIdentifiers: string[],
@@ -165,21 +138,10 @@ export function collidingIdentifiers(
   return out;
 }
 
-// Auto-resolves the identifier/name for one feature in a multi-feature
-// import, so bulk import never has to stop and prompt (the single-feature
-// path still falls through to AreaNameModal -- that stays unchanged).
-//
-// - `index` is the feature's 1-based position in the file, used only for a
-//   synthesised name.
-// - `taken` is every identifier already claimed: existing areas plus every
-//   feature resolved earlier in this same batch. The returned identifier is
-//   added to it, so two colliding entries inside one file don't collide
-//   with each other either.
-//
-// A missing, pattern-invalid, or already-taken identifier gets an
-// incrementing `_2` / `_3` suffix; the paired name gets the matching
-// `(2)` / `(3)`. A feature with neither name nor identifier gets a fully
-// synthesised `"Imported {geometry} {index}"` pair.
+// Auto-resolves one feature's identifier/name in a multi-feature import so bulk
+// import never has to prompt. `taken` covers existing areas plus features already
+// resolved in this batch, and gains this result too, so in-file collisions also get
+// an incrementing `_2`/`(2)` suffix.
 export function resolveFeatureIdentity(
   feature: ImportedFeature,
   index: number,
@@ -221,16 +183,9 @@ export interface ResolvedFeatureImportEntry {
   identity: ResolvedFeatureIdentity;
 }
 
-// Resolves every non-skipped feature's final identity for the batch,
-// honoring per-identifier skip choices for entries that collide with an
-// existing area. A feature whose `properties.identifier` (trimmed) is in
-// `skipIdentifiers` is left out of the result entirely -- resolveFeatureIdentity
-// never sees it, and it never occupies a slot in `taken` -- exactly as if it
-// were absent from the file. Every other feature resolves via
-// resolveFeatureIdentity exactly as before skip/rename existed. Shared by
-// importAreasBatch (the real import) and ImportConflictModal's live rename
-// preview (identical inputs, identical output), so the preview can never
-// diverge from what actually gets created.
+// A feature whose identifier is in `skipIdentifiers` is left out entirely, as if
+// absent from the file. Shared by importAreasBatch and ImportConflictModal's
+// live preview so the preview can never diverge from the real import.
 export function resolveImportIdentities(
   features: ImportedFeature[],
   existingIdentifiers: string[],
@@ -252,13 +207,8 @@ export interface BatchImportResult {
   failed: { identifier: string }[];
 }
 
-// Drives a multi-feature import: resolve each non-skipped feature's
-// identity in file order (so earlier resolutions feed the collision set for
-// later ones), then create it. `createOne` returns false (or throws) for a
-// backend rejection or network error on that one feature -- best-effort
-// applies here and only here: the rest of the batch still gets created, and
-// the caller reports a summary. Structural validity was already a
-// whole-file gate in parseAndValidate; this step never relaxes that.
+// Best-effort: a `createOne` failure for one feature doesn't stop the rest of
+// the batch; the caller gets a created/failed summary.
 export async function importAreasBatch(
   features: ImportedFeature[],
   existingIdentifiers: string[],

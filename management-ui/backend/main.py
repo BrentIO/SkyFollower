@@ -2,18 +2,12 @@
 """
 SkyFollower Management UI Backend
 
-FastAPI service that is the sole write path for the rules and areas
-configuration read by every message processor (config:rules / config:areas
-in Redis, polled every 30 seconds). No authentication — single-instance,
-trusted-network deployment.
+FastAPI service; sole write path for the rules/areas configuration
+(config:rules / config:areas in Redis) read by every message processor.
+No authentication -- single-instance, trusted-network deployment.
 
-Named "management" to leave room for a future, separate UI for viewing live
-aircraft movement, distinct from this configuration-focused one.
-
-Runs on port 8000, bound to 127.0.0.1 only inside the container. The
-Dockerfile is a multi-stage build: a node stage produces the static React
-frontend bundle, and the final stage runs both uvicorn and nginx --
-nginx serves the built frontend at / and proxies /api/* to this process.
+Runs on port 8000, bound to 127.0.0.1 inside the container; nginx serves
+the built frontend and proxies /api/* here.
 """
 
 from __future__ import annotations
@@ -50,10 +44,8 @@ from redis.commands.search.query import Query as RedisSearchQuery
 from sqlglot import exp
 from uuid_extensions import uuid7
 
-# Add the repo root to sys.path so shared/ is importable when this module is
-# run outside Docker (e.g. tests, local `uvicorn main:app`, OpenAPI export).
-# In the Docker image PYTHONPATH=/app already covers this and _REPO_ROOT
-# below resolves to "/", which is simply never used.
+# Makes shared/ importable when run outside Docker (tests, local uvicorn).
+# In the Docker image PYTHONPATH=/app already covers this.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
 if _REPO_ROOT not in sys.path:
@@ -87,17 +79,13 @@ try:
     from message_processor.rules_engine import RulesEngine
 except ModuleNotFoundError as exc:
     if exc.name != "message_processor":
-        # Some other module rules_engine.py imports (e.g. shapely) is
-        # missing -- that's a real dependency problem, not the local-dev
-        # package-name workaround below, so don't mask it.
+        # A missing dependency other than message_processor itself -- a real
+        # problem, not the local-dev workaround below, so don't mask it.
         raise
 
-    # message-processor/ can't be imported as a normal package here -- the
-    # hyphen in the directory name isn't a valid Python identifier -- so
-    # register it under the dotted name 'message_processor' via importlib,
-    # the same workaround message-processor/tests/*.py use. In the Docker
-    # image the directory is copied to message_processor/ (underscore), so
-    # the plain import above already succeeds there and this never runs.
+    # message-processor/ (hyphen, not a valid identifier) can't be imported
+    # normally, so register it under 'message_processor' via importlib. In
+    # Docker the directory is copied with an underscore, so this never runs.
     import importlib.util
 
     _mp_dir = os.path.join(_REPO_ROOT, "message-processor")
@@ -118,52 +106,24 @@ logger = logging.getLogger("management-ui-backend")
 
 
 # ---------------------------------------------------------------------------
-# Schema models -- matching SkyFollower-legacy's rules.example.json /
-# areas.example.geojson shape (condition values are strings even for
-# numeric fields, e.g. altitude "10000", military "true"; only
-# matched_rules is a real array). These ARE the actual route parameter
-# types for create/update (see create_rule/update_rule/create_area/
-# update_area below) -- FastAPI/Pydantic validates a request body against
-# them at the ingress boundary, returning a structured 422 for a bad shape
-# (missing field, wrong type, an operator not valid for a condition's
-# type, etc.) before the route function ever runs.
+# Schema models -- condition values are strings even for numeric fields,
+# matching SkyFollower-legacy's convention. Pydantic validates requests
+# here; RulesEngine (message-processor/rules_engine.py) is a second,
+# independent layer underneath -- the only validation for config:rules/
+# config:areas written any other way, and it catches cross-references
+# these models can't (e.g. an `area` condition must name a real area).
 #
-# RulesEngine (message-processor/rules_engine.py) remains a second,
-# independent enforcement layer underneath this one -- not made redundant
-# by it. It's the only validation applied to config:rules/config:areas
-# written some other way than through this API (a hand-edited Redis
-# value, a restored backup, a future integration writing directly to
-# Redis), and it enforces things a single condition's fields can't express
-# on their own (e.g. an `area` condition's value must name an area that
-# actually exists in config:areas).
-#
-# One known, deliberate gap versus RulesEngine's own leniency: RulesEngine
-# tolerates a disabled placeholder rule with only {"enabled": false} and
-# nothing else (no identifier, no conditions), silently skipping it rather
-# than validating it. Rule below requires identifier/conditions
-# unconditionally, so that placeholder shape can no longer be created or
-# updated through this API -- only by writing directly to Redis. No
-# current caller (UI or tests) relies on submitting that shape through the
-# API, so this is treated as an acceptable narrowing, not a regression.
+# Known gap: RulesEngine tolerates a placeholder rule with only
+# {"enabled": false}; this API's Rule model requires identifier/conditions,
+# so that shape can only be written directly to Redis.
 # ---------------------------------------------------------------------------
 
-_IDENTIFIER_PATTERN = r"^\S+$"  # non-empty, no whitespace anywhere
+_IDENTIFIER_PATTERN = r"^\S+$"
 
-# Named example payloads, keyed for Swagger UI's example picker (the
-# dropdown legacy's swagger.yml used via components/examples). Reused below
-# both as each model's JSON-Schema-level `examples` (schema.examples --
-# Swagger UI doesn't turn this into a picker on its own, it's just visible
-# in the schema/model view) and, in _custom_openapi(), as real OpenAPI
-# Example Objects at the request/response content level (content.
-# application/json.examples -- this is what actually drives the picker).
-#
-# First three rule examples adapted from SkyFollower-legacy's
-# rules.example.json (the third example's "callsign" condition type is
-# renamed "ident", matching this repo's Conditions table -- legacy predates
-# that rename). Fourth demonstrates force_archive and a datetime-range date
-# condition (YYYY-MM-DDTHH:MMZ, not just YYYY-MM-DD). The area example is
-# the "LI" polygon from legacy's areas.example.geojson, referenced by the
-# "Grandma's Flight Home" rule example.
+# Named example payloads for Swagger UI's "try it out" picker. Reused below
+# both as each model's JSON-Schema `examples` (schema view only) and, in
+# _custom_openapi(), as real OpenAPI Example Objects at the request/response
+# content level -- that's what actually drives the picker.
 _RULE_EXAMPLES: dict[str, dict] = {
     "All aircraft below 10,000": {
         "name": "All aircraft below 10,000",
@@ -285,10 +245,8 @@ _AREA_EXAMPLES: dict[str, dict] = {
 
 
 def _validate_int_range(value: str, minimum: int, maximum: int, label: str) -> str:
-    """Shared by the numeric-range condition types below -- `value` stays a
-    plain `str` on the wire (matching SkyFollower-legacy's convention), so
-    the bound check parses it rather than using a `Field(ge=..., le=...)`
-    constraint, which only applies to actual numeric field types."""
+    """Shared bound check for numeric-range conditions whose `value` is a
+    plain str on the wire, so Field(ge=..., le=...) doesn't apply."""
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -301,24 +259,13 @@ def _validate_int_range(value: str, minimum: int, maximum: int, label: str) -> s
 class _ConditionBase(BaseModel):
     """
     Shared base for the per-type condition models below. Each subclass
-    fixes its own `type` literal and restricts `operator` to the set that
-    type actually supports -- see CLAUDE.md's Conditions table and
-    message-processor/rules_engine.py's per-type `_validate_*` methods,
-    which every subclass's `operator` here must keep matching.
+    fixes its own `type` literal and restricts `operator` to what
+    message-processor/rules_engine.py's per-type validators actually accept.
 
-    `value` is a plain `str` on every subclass (or `list[str]` for
-    `matched_rules`) -- matching SkyFollower-legacy's convention of a
-    string even for numeric fields (altitude "10000", heading "340,020"
-    for min,max wrap-around, military "true"/"false"). Where RulesEngine
-    enforces a bound or charset on `value`, the matching subclass below
-    mirrors it (numeric range via a `field_validator`, charset via
-    `Field(pattern=...)`) so Swagger documents the same constraint and a
-    bad request gets a `422` at ingress instead of only a `400` from
-    RulesEngine two calls deep. Every other type's `value` stays
-    unconstrained beyond `str`/`list[str]` -- this project doesn't
-    duplicate every RulesEngine check here, only the ones the frontend
-    also fast-fails on (see `management-ui/frontend/src/components/
-    RuleForm.tsx`'s `validateCondition`).
+    `value` is always str (or list[str] for matched_rules), matching
+    SkyFollower-legacy's convention of stringifying even numeric fields.
+    Where RulesEngine enforces a bound/charset, the matching subclass mirrors
+    it so a bad request gets a 422 here instead of only a 400 downstream.
     """
 
     model_config = {"extra": "forbid"}
@@ -327,12 +274,9 @@ class _ConditionBase(BaseModel):
 class AltitudeCondition(_ConditionBase):
     type: Literal["altitude"]
     operator: Literal["minimum", "maximum"]
-    # Numeric range on a string field can't be a JSON Schema minimum/maximum
-    # keyword (those only apply to type: integer/number), so the 0-65000
-    # bound is expressed as a regex instead: single digit, 2-4 digits with
-    # no leading zero (10-9999), 10000-59999, 60000-64999, or exactly 65000.
-    # field_validator below is a redundant safety net against a regex bug,
-    # not the primary enforcement.
+    # JSON Schema min/max only apply to numeric types, so the 0-65000 bound
+    # is expressed as a regex instead. field_validator below is a redundant
+    # safety net against a regex bug, not the primary enforcement.
     value: str = Field(
         pattern=r"^([0-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65000)$",
         description="Altitude in feet, as a string. Must be an integer 0-65000.",
@@ -347,8 +291,7 @@ class AltitudeCondition(_ConditionBase):
 class VelocityCondition(_ConditionBase):
     type: Literal["velocity"]
     operator: Literal["minimum", "maximum"]
-    # 0-1334: single digit, 2-3 digits with no leading zero (10-999),
-    # 1000-1299, 1300-1329, or 1330-1334.
+    # 0-1334 knots, expressed as a regex (see AltitudeCondition above).
     value: str = Field(
         pattern=r"^([0-9]|[1-9][0-9]|[1-9][0-9]{2}|1[0-2][0-9]{2}|13[0-2][0-9]|133[0-4])$",
         description="Velocity in knots, as a string. Must be an integer 0-1334.",
@@ -363,8 +306,7 @@ class VelocityCondition(_ConditionBase):
 class VerticalSpeedCondition(_ConditionBase):
     type: Literal["vertical_speed"]
     operator: Literal["minimum", "maximum"]
-    # -10000-10000: optional leading '-', then single digit, 2-4 digits
-    # with no leading zero (10-9999), or exactly 10000.
+    # -10000 to 10000 ft/min, expressed as a regex (see AltitudeCondition).
     value: str = Field(
         pattern=r"^-?([0-9]|[1-9][0-9]{1,3}|10000)$",
         description="Vertical speed in ft/min, as a string (negative = descending). "
@@ -412,9 +354,8 @@ class MilitaryCondition(_ConditionBase):
 class ReceiverSourceCondition(_ConditionBase):
     type: Literal["receiver_source"]
     operator: Literal["equals"]
-    # 1-2 of "1090"/"978"/"EXTERNAL", no duplicates -- all 3 would be
-    # equivalent to no filter at all (every flight has at least one), so
-    # RulesEngine rejects that as dead weight rather than a real filter.
+    # 1-2 of "1090"/"978"/"EXTERNAL", no duplicates -- all 3 is equivalent to
+    # no filter (every flight has at least one), so RulesEngine rejects it.
     value: list[Literal[RECEIVER_SOURCE_TAGS]] = Field(min_length=1, max_length=2)
 
     @field_validator("value")
@@ -440,27 +381,24 @@ class AircraftTypeDesignatorCondition(_ConditionBase):
 class AircraftRegistrationCondition(_ConditionBase):
     type: Literal["aircraft_registration"]
     operator: Literal["equals"]
-    # Letters/numbers/hyphens only, no leading/trailing hyphen -- first/last
-    # char anchored to [0-9A-Za-z] inherently requires 2+ characters and
-    # rules out a leading/trailing hyphen (interior hyphens like "RA-12345"
-    # are fine). Case-insensitive since rules_engine.py's
-    # _validate_aircraft_registration uppercases before matching, so
-    # lowercase input is equally valid there.
+    # Letters/digits/hyphens, no leading/trailing hyphen (interior hyphens
+    # like "RA-12345" are fine); case-insensitive since rules_engine.py
+    # uppercases before matching.
     value: str = Field(pattern=r"^[0-9A-Za-z][0-9A-Za-z-]*[0-9A-Za-z]$")
 
 
 class AircraftIcaoHexCondition(_ConditionBase):
     type: Literal["aircraft_icao_hex"]
     operator: Literal["equals"]
-    # Exactly 6 hex characters, case-insensitive (rules_engine.py's
-    # _validate_aircraft_icao_hex uppercases before matching).
+    # Exactly 6 hex chars, case-insensitive (rules_engine.py uppercases
+    # before matching).
     value: str = Field(pattern=r"^[0-9A-Fa-f]{6}$")
 
 
 class AircraftPowerplantCountCondition(_ConditionBase):
     type: Literal["aircraft_powerplant_count"]
     operator: Literal["equals", "minimum", "maximum"]
-    # 0-99: single digit, or two digits with no leading zero (10-99).
+    # 0-99, expressed as a regex (see AltitudeCondition above).
     value: str = Field(
         pattern=r"^([0-9]|[1-9][0-9])$",
         description="Number of engines, as a string. Must be an integer 0-99.",
@@ -490,10 +428,9 @@ class AreaCondition(_ConditionBase):
     value: str
 
 
-# Discriminated union keyed by `type` -- Swagger renders this as a `oneOf`
-# with each variant's own accurate `operator` enum, instead of the single
-# flat model this replaces, which allowed all 5 operators on every type
-# regardless of whether RulesEngine would ever actually accept them.
+# Discriminated union keyed by `type` -- Swagger renders each variant's own
+# accurate `operator` enum, instead of one flat model allowing every
+# operator on every type regardless of what RulesEngine actually accepts.
 Condition = Annotated[
     Union[
         AltitudeCondition, VelocityCondition, VerticalSpeedCondition, HeadingCondition,
@@ -511,15 +448,12 @@ Condition = Annotated[
 class Rule(BaseModel):
     """
     A notification rule. Fires at most once per flight per `identifier`.
-    `identifier` is the routing key used in /api/rules/{identifier} and must
-    not contain spaces; `name` is a free-text display label and may.
-    Documents the shape of a normal (enabled) rule -- RulesEngine
-    additionally tolerates a disabled placeholder rule with only
-    `enabled: false` and nothing else, silently skipping it rather than
-    validating it; that leniency is a narrow exception this model doesn't
-    allow, so that shape can no longer be created/updated through this API
-    (only by writing directly to Redis) -- see the "Schema models" comment
-    above.
+    `identifier` is the /api/rules/{identifier} routing key and must not
+    contain spaces; `name` is a free-text label and may.
+
+    Documents a normal (enabled) rule only -- RulesEngine additionally
+    tolerates a disabled placeholder rule with just {"enabled": false},
+    which this model doesn't allow (see the Schema models note above).
     """
 
     model_config = {"json_schema_extra": {"examples": list(_RULE_EXAMPLES.values())}}
@@ -533,10 +467,9 @@ class Rule(BaseModel):
 
 
 class RuleWithTriggerCounts(Rule):
-    """`Rule` plus its trigger-count read-outs. Response-only: these two
-    fields are computed fresh from Redis on every GET (see
-    `_rule_trigger_counts`), never accepted on POST/PUT -- the create/update
-    endpoints keep the plain `Rule` body model."""
+    """`Rule` plus its trigger-count read-outs, computed fresh from Redis on
+    every GET (see `_rule_trigger_counts`). Response-only -- POST/PUT still
+    use the plain `Rule` body model."""
 
     triggered_lifetime: int = Field(
         default=0, description="Times this rule has fired since it was created."
@@ -562,11 +495,9 @@ class PointGeometry(BaseModel):
 
 
 # Discriminated union keyed by `type`, same pattern as Condition above.
-# message-processor/rules_engine.py's `area` condition only ever evaluates
-# Polygon areas (`_load_areas` skips anything else with a debug log) -- that
-# does not change here. LineString/Point areas are valid to draw, name,
-# save, and display in the areas editor, but are simply not selectable as
-# an `area` condition's value.
+# message-processor/rules_engine.py's `area` condition only evaluates Polygon
+# areas -- LineString/Point areas can be drawn/saved/displayed but are never
+# selectable as an `area` condition's value.
 AreaGeometry = Annotated[
     Union[PolygonGeometry, LineStringGeometry, PointGeometry],
     Field(discriminator="type"),
@@ -575,12 +506,11 @@ AreaGeometry = Annotated[
 
 class Area(BaseModel):
     """
-    A named GeoJSON area (Polygon, LineString, or Point). Only a Polygon
-    area is usable as a rules' `area` condition's value (matched against
-    `identifier`, not `name`) -- message-processor/rules_engine.py skips
-    any other geometry type there. `identifier` is the routing key used in
-    /api/areas/{identifier} and must not contain spaces; `name` is a
-    free-text display label and may.
+    A named GeoJSON area (Polygon, LineString, or Point). Only a Polygon is
+    usable as a rule's `area` condition value (matched against `identifier`,
+    not `name`) -- rules_engine.py skips any other geometry type there.
+    `identifier` is the /api/areas/{identifier} routing key and must not
+    contain spaces; `name` is a free-text label and may.
     """
 
     model_config = {
@@ -591,21 +521,14 @@ class Area(BaseModel):
     identifier: str = Field(pattern=_IDENTIFIER_PATTERN)
     name: str = ""
     geometry: AreaGeometry
-    # Prevents the shape from being dragged/vertex-edited on the map while
-    # true; does not restrict name edits or deletion. Toggling this saves
-    # immediately (see AreasView.tsx's toggleLock) rather than going
-    # through the dirty/Save flow, since it's a direct state flip like
-    # delete, not an in-progress geometry edit.
+    # Prevents drag/vertex-editing on the map while true. Toggling saves
+    # immediately (see AreasView.tsx's toggleLock), not via the dirty/Save
+    # flow.
     locked: bool = False
     # simplestyle-spec (https://github.com/mapbox/simplestyle-spec)
-    # properties, matching legacy SkyFollower's areas.geojson convention.
-    # All optional -- an area with none of them set falls back to
-    # AreasView.tsx's default color scheme (its per-feature Terra Draw
-    # styling callbacks coalesce to the same default Terra Draw itself
-    # already uses, #3f97e0, when a field is absent). fill/marker-size/
-    # marker-symbol aren't cross-validated against geometry type here,
-    # matching simplestyle itself -- a Point with a stray `fill` set is
-    # simply never read by anything, not rejected.
+    # properties, matching legacy's areas.geojson convention. All optional --
+    # unset falls back to AreasView.tsx's default styling. Not cross-
+    # validated against geometry type, matching simplestyle itself.
     fill: Optional[str] = None
     fill_opacity: Optional[float] = Field(default=None, alias="fill-opacity")
     stroke: Optional[str] = None
@@ -622,10 +545,8 @@ class ErrorDetail(BaseModel):
     detail: str
 
 
-# Named 400 examples, same picker mechanism as _RULE_EXAMPLES/_AREA_EXAMPLES
-# above -- these are exact detail messages RulesEngine actually raises (see
-# message-processor/rules_engine.py's _parse_rule/_validate_area), not
-# invented text, so they show real failure modes.
+# Named 400 examples, same picker mechanism as _RULE_EXAMPLES above -- exact
+# detail messages RulesEngine actually raises, not invented text.
 _RULE_ERROR_EXAMPLES: dict[str, dict] = {
     "Rule has no conditions": {
         "detail": "Rule #0 invalid: rule 'bad-rule' has no conditions",
@@ -645,37 +566,31 @@ _AREA_ERROR_EXAMPLES: dict[str, dict] = {
 
 _redis: Optional[redis_lib.Redis] = None
 _engine: Optional[RulesEngine] = None
-# SHA-1 digests of shared/lua/merge_aircraft.lua and route_airports.lua,
-# loaded once at startup (see lifespan() below) so every lookup call is a
-# single EVALSHA round trip -- same pattern message-processor/main.py uses.
+# SHA-1 digests loaded once at startup so every lookup is a single EVALSHA
+# round trip -- same pattern message-processor/main.py uses.
 _merge_aircraft_sha: Optional[str] = None
 _route_airports_sha: Optional[str] = None
 
 # Archive search -- Athena/Glue query layer over the archive's Parquet
-# index. _fernet is generated fresh at every process startup, held only in
-# memory, never written to the environment or disk -- see "Flight fetch" in
-# _encrypt_s3_key/_decrypt_token below for why.
+# index. _fernet is generated fresh per process, held only in memory, never
+# written to disk (see _encrypt_s3_key/_decrypt_token below).
 _s3_client: Optional[object] = None
 _athena_client: Optional[object] = None
 _s3_bucket: str = ""
 _athena_cfg: dict = {}
 _fernet: Optional[Fernet] = None
 
-# Minimal MQTT presence (Home Assistant discovery + version + started_at),
-# started in lifespan() only when MQTT_HOST is configured. No telemetry
-# loop -- see shared/mqtt_presence.py.
+# Minimal MQTT presence, started in lifespan() only when MQTT_HOST is
+# configured. No telemetry loop -- see shared/mqtt_presence.py.
 _mqtt_presence: Optional[MqttPresence] = None
 
 
 # ---------------------------------------------------------------------------
-# config:rules/config:areas are the only two Redis keys in the whole schema
-# holding user-authored state with no automatic regeneration path (every
-# other key is either repopulated by a runner or transient operational
-# state -- see CLAUDE.md's Redis Key Schema). Redis's own AOF is the only
-# persistence for them today; these two functions add a second, independent
-# copy on a host-mounted volume, so a lost/corrupted Redis volume doesn't
-# mean losing every rule and area a user has authored. Read at call time
-# (not cached at import time) so DATA_DIR can be overridden per-test.
+# config:rules/config:areas are the only Redis keys holding user-authored
+# state with no automatic regeneration path. These functions add a second,
+# independent backup copy on a host-mounted volume, so a lost/corrupted
+# Redis volume doesn't mean losing every rule/area. Read at call time (not
+# cached) so DATA_DIR can be overridden per-test.
 # ---------------------------------------------------------------------------
 
 def _data_dir() -> str:
@@ -691,10 +606,9 @@ def _areas_backup_path() -> str:
 
 
 def _write_backup_file(path: str, body: str) -> None:
-    """Atomically write `body` to `path` (temp file + os.replace) so a crash
-    mid-write can't leave a truncated backup behind. Best-effort: a failure
-    here is logged, not raised -- the Redis write this follows already
-    succeeded, so a backup problem shouldn't turn a successful save into a
+    """Atomically write `body` to `path` (temp file + os.replace). Best-
+    effort: failures are logged, not raised -- the Redis write this follows
+    already succeeded, so a backup problem shouldn't surface as a
     user-facing error."""
     directory = os.path.dirname(path)
     try:
@@ -712,30 +626,13 @@ def _write_backup_file(path: str, body: str) -> None:
 
 
 def _reconcile_backup_with_redis(key: str, version_key: str, backup_path: str, label: str) -> None:
-    """Reconciles config:rules/config:areas between Redis and its on-disk
-    backup file at startup, in whichever single direction fills a gap.
-    Redis is always authoritative when it has data:
-
-    - Redis has `key`, backup file exists: nothing to do -- except ensure
-      `version_key` exists (see below).
-    - Redis has `key`, backup file is missing -- an existing deployment
-      upgrading to this feature has real data in Redis but has never
-      written a backup file (only _save_rules_array/_save_areas_array do
-      that, on save): seed the file from Redis's current value so it
-      doesn't stay empty until the next edit. Never overwrites a backup
-      file that already exists.
-    - Redis has `key` but not `version_key` -- a deployment from before the
-      version key existed, a partially-restored volume, or a manual seed:
-      compute sha256(body) and set it. Without this a message processor
-      polls forever with `redis.get(version_key) == self._rules_version ==
-      None` and never loads the rules that are sitting in `key`.
-    - Redis is missing `key`, backup file exists: restore Redis from the
-      file (and its `:version` hash, so RulesEngine's poll-based reload
-      picks it up) -- a lost/corrupted Redis volume, or a fresh one.
-    - Both missing: nothing to do -- same empty-array behavior as today.
-
-    The body and its version hash are always written together in one
-    transaction (see _redis_set_config_pair for why).
+    """Reconcile config:rules/config:areas between Redis and its on-disk
+    backup at startup, filling whichever side is missing data (Redis wins
+    when both exist). Also backfills a missing `version_key` from Redis's
+    current value -- otherwise a message processor's poll-based reload
+    never picks up rules/areas already sitting in `key`. Body and version
+    hash are always written together in one transaction (see
+    _redis_set_config_pair).
     """
     existing = _redis.get(key)
     if existing is not None:
@@ -770,29 +667,20 @@ def _reconcile_backup_with_redis(key: str, version_key: str, backup_path: str, l
     logger.info("Restored %s from backup file %s (Redis key was missing).", label, backup_path)
 
 
-# In the Docker image, shared/ is copied flat alongside this file (WORKDIR
-# /app has both main.py and shared/ directly under it -- see
-# management-ui/Dockerfile), so _HERE/shared/lua is correct there; _REPO_ROOT
-# resolves to "/" in that image (see the comment above _REPO_ROOT) and is
-# only useful outside Docker, where shared/ is two directories up from this
-# file's actual location instead.
+# In the Docker image shared/ sits alongside this file; outside Docker it's
+# two directories up (via _REPO_ROOT).
 _LUA_DIR = pathlib.Path(_HERE) / "shared" / "lua"
 if not _LUA_DIR.is_dir():
     _LUA_DIR = pathlib.Path(_REPO_ROOT) / "shared" / "lua"
 
 
-# Every RediSearch index management-ui queries (via _search_one() below),
-# plus enough of its schema to create it empty. Each index is otherwise
-# only created lazily by the data runner that owns it, the first time that
-# runner actually runs (e.g. runners/mictronics/main.py's own
-# _ensure_search_index) -- on a fresh install, or if that runner just
-# hasn't had a scheduled run yet, the index simply doesn't exist and
-# querying it raises a raw "No such index" Redis error. lifespan() below
-# creates all three unconditionally at startup instead, so a query against
-# an unpopulated index returns a normal empty result instead of an error.
-# Field/prefix values must stay in sync with each owning runner's schema
-# (runners/mictronics/main.py, runners/us-faa-registry/main.py and its
-# per-country siblings, runners/ourairports/main.py).
+# Every RediSearch index management-ui queries (see _search_one below),
+# with enough schema to create it empty. Otherwise each index is only
+# created lazily by its owning data runner's first run; creating all three
+# here means a query before that run returns empty results instead of a
+# "No such index" error. Field/prefix values must match each owning
+# runner's own schema (runners/mictronics, runners/us-faa-registry and its
+# per-country siblings, runners/ourairports).
 _SEARCH_INDEX_SCHEMAS: list[tuple[str, str, list[tuple[str, str]]]] = [
     (
         AIRCRAFT_MICTRONICS_SEARCH_INDEX,
@@ -809,10 +697,8 @@ _SEARCH_INDEX_SCHEMAS: list[tuple[str, str, list[tuple[str, str]]]] = [
 
 
 def _ensure_search_index(r: redis_lib.Redis, index: str, prefix: str, tag_fields: list[tuple[str, str]]) -> None:
-    """Create `index` (empty, if unpopulated) if it doesn't already exist --
-    the same lazy-creation pattern each owning data-runner performs on its
-    own first run, just performed unconditionally here so management-ui
-    never has to wait on that runner having executed first."""
+    """Create `index` (empty) if it doesn't already exist, so management-ui
+    never has to wait on its owning data runner having executed first."""
     try:
         r.ft(index).info()
     except Exception:
@@ -845,9 +731,8 @@ async def lifespan(app: FastAPI):
 
     _s3_bucket = config.get("s3", {}).get("bucket", "")
     _athena_cfg = config.get("athena", {})
-    # No credential arguments: boto3 reads AWS_ACCESS_KEY_ID,
-    # AWS_SECRET_ACCESS_KEY and AWS_DEFAULT_REGION from its own default
-    # credential chain, which an instance role can also satisfy.
+    # No credential arguments: boto3 reads its own default credential chain
+    # (env vars or an instance role).
     session = boto3.Session()
     _s3_client = session.client("s3")
     _athena_client = session.client("athena")
@@ -855,9 +740,7 @@ async def lifespan(app: FastAPI):
 
     _reconcile_stuck_archive_searches()
 
-    # Optional MQTT presence -- inert unless MQTT_HOST is set. Same
-    # lifespan-managed lifecycle as the resources above: started here,
-    # cleanly stopped (retained OFFLINE, no last-will) on shutdown.
+    # Optional MQTT presence -- inert unless MQTT_HOST is set.
     _mqtt_presence = MqttPresence(
         config.get("mqtt"),
         component="management-ui",
@@ -899,8 +782,7 @@ def _named_examples(examples: dict[str, dict]) -> dict[str, dict]:
 
 # (path, method, response status code) for every route whose single-item
 # response body is a Rule/Area -- these get the same named example picker
-# as the matching request body, so "try it out" and the response preview
-# both offer the same choices.
+# as the matching request body.
 _RULE_RESPONSE_LOCATIONS = [
     ("/api/rules/{identifier}", "get", "200"),
     ("/api/rules", "post", "201"),
@@ -914,28 +796,13 @@ _AREA_RESPONSE_LOCATIONS = [
 
 
 def _custom_openapi() -> dict:
-    """
-    Replace the auto-generated request/response body schema on every
-    POST/PUT/single-item-GET route with a clean $ref to Rule/Area, and add
-    named OpenAPI Example Objects so Swagger UI shows a picker (its "try it
-    out" panel only offers a picker from content.application/json.examples
-    -- an Example Object map at the request/response body level -- not from
-    a schema's own JSON-Schema-level `examples` array, which Rule/Area also
-    carry for other tooling but which Swagger UI doesn't turn into a
-    selector on its own). Also adds the same kind of named-example picker to
-    each route's 400 response (real RulesEngine failure messages, not
-    invented text), and fills in field descriptions on FastAPI's own
-    built-in ValidationError model (used for every route's 422), which
-    ships with no descriptions of its own.
-
-    FastAPI already infers the correct $ref for each request body from the
-    route's actual parameter type (Rule/Area -- see the Schema models
-    comment above), so the `schema=` overwrite below is a no-op replace
-    with the same value FastAPI would already generate; it's kept so this
-    loop's other job -- injecting the named `examples` Swagger UI's "try it
-    out" picker actually reads from (content.application/json.examples,
-    not a schema's own JSON-Schema-level `examples`) -- has a single place
-    to overwrite both at once via a plain dict assignment.
+    """Replace the auto-generated request/response schema on every
+    POST/PUT/single-item-GET route with a $ref to Rule/Area, and add named
+    OpenAPI Example Objects so Swagger UI's "try it out" picker shows them
+    (it only reads content.application/json.examples, not a schema's own
+    JSON-Schema `examples`). Also adds named 400-response examples (real
+    RulesEngine failure messages) and fills in field descriptions on
+    FastAPI's built-in ValidationError model, which ships with none.
     """
     if app.openapi_schema:
         return app.openapi_schema
@@ -973,10 +840,6 @@ def _custom_openapi() -> dict:
             _named_examples(_AREA_ERROR_EXAMPLES)
         )
 
-    # FastAPI's own built-in ValidationError model (used for the 422s every
-    # route gets automatically) ships with no field descriptions -- add
-    # them so the schema explains what loc/msg/type/input/ctx actually mean
-    # instead of just their bare types.
     validation_error_props = schema["components"]["schemas"]["ValidationError"]["properties"]
     validation_error_props["loc"]["description"] = (
         "Path to the invalid field, e.g. [\"body\", \"identifier\"] or [\"path\", \"identifier\"]"
@@ -1040,17 +903,13 @@ def _redis_json_get(key: str) -> Optional[dict]:
 
 _NOT_FOUND = {404: {"description": "Not found", "model": ErrorDetail}}
 _CONFLICT = {409: {"description": "Identifier already exists", "model": ErrorDetail}}
-# Distinct from _CONFLICT: raised by delete_area when a rule's `area`
-# condition still references the area being deleted, rather than a
-# duplicate-identifier clash -- see delete_area's referential-integrity
-# check below.
+# Distinct from _CONFLICT: raised by delete_area's referential-integrity
+# check when a rule's `area` condition still references the deleted area.
 _AREA_IN_USE = {409: {"description": "Area is referenced by one or more rules", "model": ErrorDetail}}
 _REDIS_ERROR = {500: {"description": "Redis error", "model": ErrorDetail}}
 _VALIDATION_ERROR = {400: {"description": "Validation error", "model": ErrorDetail}}
-# Distinct from _REDIS_ERROR: only raised by _search_one() when the specific
-# failure is "index does not exist yet" (see its docstring) rather than a
-# genuine connectivity/auth failure -- routes that call _search_one() add
-# this alongside _REDIS_ERROR, not instead of it.
+# Distinct from _REDIS_ERROR: raised by _search_one() specifically when the
+# index doesn't exist yet, added alongside _REDIS_ERROR, not instead of it.
 _SEARCH_INDEX_UNAVAILABLE = {
     503: {"description": "Search index not ready yet -- data hasn't been loaded", "model": ErrorDetail}
 }
@@ -1069,8 +928,7 @@ def _redis_evalsha(sha: str, *args: str) -> Optional[str]:
 
 
 # Same character set every data runner's own _escape_tag applies before a
-# RediSearch TagField query -- there's no shared helper for this today, so
-# this duplicates that logic rather than reaching into a runner module.
+# RediSearch TagField query -- duplicated here since there's no shared helper.
 _TAG_SPECIAL_CHARS = ",.<>{}[]\"':;!@#$%^&*()-+=~"
 
 
@@ -1085,16 +943,9 @@ def _search_one(index: str, field: str, value: str) -> Optional[str]:
     try:
         result = _redis.ft(index).search(RedisSearchQuery(f"@{field}:{{{_escape_tag(value)}}}").paging(0, 1))
     except redis_lib.RedisError as exc:
-        # lifespan() proactively creates all three search indices at
-        # startup, so this should be rare -- a safety net for an index
-        # created after that point (e.g. concurrently, or by a future
-        # .ft(...) call site lifespan() doesn't cover). redis-py/RediSearch
-        # expose no dedicated exception type for "index doesn't exist" --
-        # it surfaces as a generic ResponseError/RedisError whose message
-        # is literally "No such index <name>" (the same string Redis
-        # itself returns), so this checks message text rather than
-        # exception type. That's inherently a little fragile against
-        # future Redis/RediSearch wording changes.
+        # redis-py/RediSearch expose no dedicated exception for "index
+        # doesn't exist" -- it surfaces as a generic RedisError whose message
+        # is literally "No such index <name>", so this checks message text.
         if "no such index" in str(exc).lower():
             raise HTTPException(
                 status_code=503,
@@ -1109,15 +960,10 @@ def _search_one(index: str, field: str, value: str) -> Optional[str]:
 
 
 def _flatten_aircraft_doc(doc: dict) -> dict:
-    """merge_aircraft.lua's output nests type/manufacturer/powerplant fields
-    under an `aircraft` sub-object, mirroring how the
-    mictronics/country-registry runners store them (see their own
-    build_aircraft_record functions) -- AircraftRecord's shape is flat,
-    matching the legacy AROI /registration/icao_hex/{hex} response, so
-    promote them to the top level before parsing. setdefault() so a field
-    already present at the top level (there aren't any today, but a future
-    runner change shouldn't silently reorder precedence) is never
-    overwritten by the nested copy."""
+    """merge_aircraft.lua nests type/manufacturer/powerplant fields under an
+    `aircraft` sub-object; AircraftRecord's shape is flat, so promote them
+    to the top level. setdefault() avoids overwriting any field already
+    present at the top level."""
     nested = doc.pop("aircraft", None)
     if isinstance(nested, dict):
         for key, value in nested.items():
@@ -1127,18 +973,12 @@ def _flatten_aircraft_doc(doc: dict) -> dict:
 
 class RouteLookup(BaseModel):
     """
-    Resolved route for a flight ident. `ident` echoes the path parameter
-    used to resolve it, so the frontend doesn't have to separately remember
-    what it searched for. `origin`/`destination` are the first/last airport
-    in the resolved sequence (a quick-glance header); `stops` is the full
-    sequence in order, duplicates preserved (e.g. a round trip returns the
-    same airport at both ends). `operator` is resolved from the ident's
-    ICAO airline-designator prefix (same logic as message-processor's
-    `_enrich_operator`) and is best-effort -- a route still resolves
-    without one. When the route itself is unknown but the operator
-    resolves (e.g. a part-135 operator with no scheduled-service route
-    data), `origin`/`destination`/`stops` are omitted rather than the
-    endpoint 404ing.
+    Resolved route for a flight ident. `origin`/`destination` are the
+    first/last airport in the resolved sequence; `stops` is the full
+    sequence, duplicates preserved. `operator` is resolved from the ident's
+    ICAO airline-designator prefix and is best-effort -- when the route
+    itself is unknown but the operator resolves, origin/destination/stops
+    are simply omitted rather than 404ing.
     """
 
     ident: str
@@ -1150,8 +990,8 @@ class RouteLookup(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Rules storage helpers -- config:rules stores the full array as one JSON
-# blob (that's what message processors poll and hot-reload), so every
-# per-item operation below is read-full-array, splice, validate, write-back.
+# blob, so every per-item operation is read-full-array, splice, validate,
+# write-back.
 # ---------------------------------------------------------------------------
 
 def _load_rules_array() -> list[dict]:
@@ -1165,14 +1005,10 @@ _RULE_TRIGGER_WINDOW_DAYS = 30
 
 
 def _rule_trigger_counts(identifiers: list[str]) -> dict[str, tuple[int, int]]:
-    """`(triggered_lifetime, triggered_last_30_days)` for each rule
-    identifier, computed fresh: two MGETs total regardless of rule count --
-    one for every rule's lifetime key, one for every rule's 30 most recent
-    daily keys (today back through 29 days ago). A missing key counts as 0.
-    The 30-day figure is a true trailing window (summed daily keys), not a
-    fixed-boundary reset. Fails soft -- a Redis error yields (0, 0) for
-    every rule rather than failing the whole rule list, since this is a
-    display-only figure alongside the real rule data."""
+    """(triggered_lifetime, triggered_last_30_days) per rule identifier: two
+    MGETs total regardless of rule count. The 30-day figure is a true
+    trailing window (summed daily keys), not a fixed-boundary reset. Fails
+    soft -- a Redis error yields (0, 0) for every rule."""
     if not identifiers:
         return {}
     today = datetime.now(timezone.utc).date()
@@ -1201,11 +1037,9 @@ def _with_trigger_counts(rule: dict, counts: dict[str, tuple[int, int]]) -> dict
 
 
 def _delete_rule_trigger_keys(identifier: str) -> None:
-    """Remove a deleted rule's trigger-count keys, so a later rule created
-    with the same identifier starts at zero rather than inheriting history.
-    The lifetime key plus every possible daily key over the 31-day TTL
-    window (today back 31 days); DEL on a nonexistent key is a safe no-op.
-    Fails soft -- a leftover key just expires on its own TTL."""
+    """Remove a deleted rule's trigger-count keys so a rule later created
+    with the same identifier starts at zero. Fails soft -- a leftover key
+    just expires on its own TTL."""
     today = datetime.now(timezone.utc).date()
     keys = [rule_trigger_lifetime_key(identifier)]
     keys += [
@@ -1322,16 +1156,14 @@ def delete_rule(identifier: str):
 
 # ---------------------------------------------------------------------------
 # Areas storage helpers -- config:areas stores a GeoJSON FeatureCollection
-# (what RulesEngine.load_areas_json and the message processor expect); the
-# API exposes a flattened [{identifier, name, geometry}, ...] array instead,
-# translated to/from that FeatureCollection at this boundary.
+# (what RulesEngine.load_areas_json expects); the API exposes a flattened
+# [{identifier, name, geometry}, ...] array instead, translated to/from that
+# FeatureCollection at this boundary.
 # ---------------------------------------------------------------------------
 
-# simplestyle-spec property names (https://github.com/mapbox/simplestyle-spec)
-# -- the exact keys Area's style fields alias to, and also the keys they
-# live under in the persisted GeoJSON Feature's `properties`, so a feature
-# round-tripped through _area_to_feature/_feature_to_area stays valid
-# simplestyle GeoJSON the whole way, not just a SkyFollower-internal shape.
+# simplestyle-spec property names -- the keys Area's style fields alias to,
+# and the keys they live under in the persisted GeoJSON Feature's
+# `properties`, so a round-tripped feature stays valid simplestyle GeoJSON.
 _AREA_STYLE_KEYS = (
     "fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity",
     "marker-color", "marker-size", "marker-symbol",
@@ -1346,10 +1178,7 @@ def _feature_to_area(feature: dict) -> dict:
         "geometry": feature.get("geometry", {}),
         "locked": bool(props.get("locked", False)),
     }
-    # Omitted (not None) when absent, matching simplestyle-spec convention
-    # and area.model_dump(exclude_none=True)'s shape -- an area that never
-    # set a style property looks identical whether it just got created or
-    # round-tripped through storage.
+    # Omitted (not None) when absent, matching simplestyle-spec convention.
     for key in _AREA_STYLE_KEYS:
         if key in props:
             area[key] = props[key]
@@ -1389,16 +1218,10 @@ def _save_areas_array(areas: list[dict], expect_identifier: Optional[str] = None
     if not _engine.load_areas_json(body):
         raise HTTPException(status_code=400, detail=_engine.last_error or "Invalid areas")
 
-    # _load_areas() is deliberately lenient at the per-feature level (a bad
-    # individual feature is silently dropped, not a hard failure -- see
-    # message-processor/rules_engine.py), so a successful reload doesn't
-    # guarantee the item this call cares about actually survived it. But
-    # RulesEngine only ever stages Polygon areas at all -- a LineString/
-    # Point area is *never* present in _engine._areas by design, not
-    # because anything went wrong, so this safety net only means something
-    # for a Polygon area. Pydantic's own Area/AreaGeometry validation
-    # (already run before this function is ever called) is the only and
-    # authoritative check for LineString/Point areas.
+    # _load_areas() is lenient per-feature (a bad feature is dropped, not a
+    # hard failure), so a successful reload doesn't guarantee this item
+    # survived it. This safety net only matters for a Polygon -- RulesEngine
+    # never stages LineString/Point areas at all, by design.
     if expect_identifier is not None:
         saved = next((a for a in areas if a.get("identifier") == expect_identifier), None)
         is_polygon = saved is not None and saved.get("geometry", {}).get("type") == "Polygon"
@@ -1486,10 +1309,9 @@ def delete_area(identifier: str):
     if len(remaining) == len(areas):
         raise HTTPException(status_code=404, detail=f"Area '{identifier}' not found")
 
-    # Referential integrity: an area condition pointing at a deleted area
-    # would otherwise be silently invalid, and message-processor's
-    # RulesEngine._load_rules treats any invalid rule as fatal to the whole
-    # reload -- reject the delete rather than let that happen downstream.
+    # Referential integrity: RulesEngine._load_rules treats any invalid rule
+    # as fatal to the whole reload, so reject the delete rather than leave a
+    # dangling `area` condition.
     referencing_rules = [
         rule.get("identifier")
         for rule in _load_rules_array()
@@ -1512,9 +1334,8 @@ def delete_area(identifier: str):
 # ---------------------------------------------------------------------------
 # Reference-data lookup (aircraft/operator/airport/route) -- static enrichment
 # already held in Redis for rule evaluation, exposed read-only for browsing.
-# Distinct from a future live-aircraft-position UI (see this module's
-# docstring) and from the Athena archive search below (historical flights,
-# not current Redis state).
+# Distinct from the Athena archive search below (historical flights, not
+# current Redis state).
 # ---------------------------------------------------------------------------
 
 @app.get(
@@ -1538,8 +1359,7 @@ def get_aircraft(
             raise HTTPException(status_code=404, detail=f"No aircraft data found for '{icao_hex}'")
         return JSONResponse(content=json.loads(raw))
 
-    # Mictronics first (broader coverage), then the country-registry index --
-    # a registration can exist in either, or both.
+    # Mictronics first (broader coverage), then the country-registry index.
     doc_id = _search_one(AIRCRAFT_MICTRONICS_SEARCH_INDEX, "registration", registration)
     if doc_id is None:
         doc_id = _search_one(AIRCRAFT_REGISTRY_SEARCH_INDEX, "registration", registration)
@@ -1586,19 +1406,15 @@ def get_airport(code: str):
         if doc_id is not None:
             doc = _redis_json_get(doc_id)
     # Any other length can't match either key shape -- falls through to the
-    # same 404 a genuine miss gets, rather than a separate 400: Redis can't
-    # distinguish "malformed code" from "well-formed but unknown" any better
-    # than it can the misses described in this issue's Miss semantics.
+    # same 404 a genuine miss gets, rather than a separate 400.
     if not doc:
         raise HTTPException(status_code=404, detail=f"No airport data found for '{code}'")
     return JSONResponse(content=doc)
 
 
-# No-hyphen registration prefixes -- mirrors the frontend's
-# lookupClassifier.ts NO_HYPHEN_REGISTRATION_PREFIX. Combined with "contains
-# a digit" (checked separately, since some of these prefixes are also valid
-# airline-designator leads), this tells get_route() a bare registration like
-# "N659DL" isn't a flight ident worth an operator-prefix lookup.
+# No-hyphen registration prefixes (mirrors frontend lookupClassifier.ts).
+# Combined with "contains a digit", tells get_route() a bare registration
+# like "N659DL" isn't a flight ident worth an operator-prefix lookup.
 _NO_HYPHEN_REGISTRATION_PREFIX = re.compile(r"^(N|HL|JA)", re.IGNORECASE)
 
 
@@ -1612,19 +1428,13 @@ def get_route(ident: str):
     raw = _redis_evalsha(_route_airports_sha, normalize_flight_ident(ident.upper()))
     airports = json.loads(raw) if raw else []
 
-    # Best-effort operator enrichment -- same ICAO airline-designator
-    # extraction message-processor's _enrich_operator uses (letters before
-    # the first digit). A too-short/missing prefix or no matching
-    # operator:{designator} record just omits `operator`; it never fails
-    # the route lookup itself. Resolved unconditionally (even when the
-    # route itself is unknown) so a part-135 operator's flight numbers --
-    # which never get scheduled-service route data -- still resolve to
-    # their operator instead of a flat 404.
-    #
-    # Skipped for a bare no-hyphen registration shape (e.g. "N659DL",
-    # "HL7404"): those aren't flight idents, and their letters-before-digits
-    # prefix isn't an airline designator. Mirrors the frontend's
-    # lookupClassifier.ts isRegistration() no-hyphen branch.
+    # Best-effort operator enrichment via ICAO airline-designator prefix
+    # (letters before the first digit), same as message-processor's
+    # _enrich_operator. Resolved unconditionally (even when the route itself
+    # is unknown) so a part-135 operator's flight numbers -- which never get
+    # scheduled-service route data -- still resolve to an operator instead
+    # of a flat 404. Skipped for a bare no-hyphen registration shape (e.g.
+    # "N659DL"), which isn't a flight ident.
     operator = None
     if not (_NO_HYPHEN_REGISTRATION_PREFIX.match(ident) and re.search(r"\d", ident)):
         prefix = re.split(r"[^a-zA-Z]", ident)[0]
@@ -1646,29 +1456,22 @@ def get_route(ident: str):
 
 
 # ---------------------------------------------------------------------------
-# Archive search -- Athena/Glue query layer over the archive's Parquet
-# index (see archive-processor's Parquet Index section and
-# specs/data-dictionary.yaml's archive_parquet_index record for the 9
-# underlying columns). A search record lives at archive_search:{uuid} in
-# Redis for a fixed 7 days from creation (never refreshed on access).
+# Archive search -- Athena/Glue query layer over the archive's Parquet index
+# (see specs/data-dictionary.yaml's archive_parquet_index record). A search
+# record lives at archive_search:{uuid} in Redis for a fixed 7 days.
 #
-# Two independent read paths over the same search, deliberately shaped
-# differently:
-#  - The PAGED VIEW (get_archive_search_results) is served from a bounded,
-#    in-process LRU (_result_cache) holding at most _RESULT_ROW_CAP rows per
-#    search -- one get_query_results call ever, no S3 read at all. See
-#    _fetch_and_cache_results.
-#  - DOWNLOAD (download_archive_search) always goes straight to S3 via a
-#    presigned URL, for every result size, via a second, separate query
-#    that never selects s3_key -- see _build_download_query and
-#    _run_or_get_download_query_execution. The backend never reads those
-#    result bytes.
+# Two independent read paths over the same search:
+#  - PAGED VIEW (get_archive_search_results): a bounded in-process LRU
+#    (_result_cache) holding at most _RESULT_ROW_CAP rows -- one
+#    get_query_results call, no S3 read. See _fetch_and_cache_results.
+#  - DOWNLOAD (download_archive_search): always S3-direct via a presigned
+#    URL, via a second query that never selects s3_key -- see
+#    _build_download_query / _run_or_get_download_query_execution.
 # ---------------------------------------------------------------------------
 
-# ARCHIVE_SEARCH_TTL_SECONDS must expire a search's Redis record before the
-# Athena results file it points at is aged out of the results bucket by that
-# bucket's own lifecycle policy -- otherwise a still-listed search would
-# resolve to a deleted S3 object. Keep this comfortably under that lifecycle.
+# Must expire a search's Redis record before the Athena results file it
+# points at is aged out by the results bucket's own lifecycle policy --
+# otherwise a still-listed search would resolve to a deleted S3 object.
 ARCHIVE_SEARCH_TTL_SECONDS = 7 * 86400
 _PAGE_SIZE = 100
 _PAGE_SIZE_MIN = 25
@@ -1677,69 +1480,56 @@ ATHENA_POLL_BACKOFF_SECONDS = [1, 2, 4, 8, 16]
 ATHENA_POLL_DEADLINE_SECONDS = 120
 _RESULT_CACHE_MAX_ENTRIES = 10
 # The paged view's whole memory budget is these two numbers multiplied
-# together (10 x 500 rows =~ 4MB worst case) -- raise one only after
-# reconsidering the other, or the unbounded-memory failure this pair exists
-# to prevent comes back. Requesting _RESULT_ROW_CAP + 1 rows from Athena
-# makes "does a 501st row exist" answerable from a single get_query_results
-# call: getting back more than _RESULT_ROW_CAP data rows means the true
-# match count is larger, without ever running a separate COUNT query.
+# (10 x 500 rows =~ 4MB worst case) -- raise one only after reconsidering
+# the other. Requesting _RESULT_ROW_CAP + 1 rows makes "does a 501st row
+# exist" answerable from a single get_query_results call, without a
+# separate COUNT query.
 _RESULT_ROW_CAP = 500
 _DOWNLOAD_PRESIGN_TTL_SECONDS = 15 * 60
 
-# Column order here is exactly what the Athena SELECT below returns, so
-# _row_from_athena_result_row can map each result row positionally without
-# needing to consult the header row Athena also returns as row 0. s3_key IS
-# selected (needed server-side to mint each row's fetch token and derive its
-# flight UUID -- see _row_from_athena_result_row) but is never included in
-# the dict a response actually returns to the browser.
+# Column order matches the Athena SELECT below exactly, so
+# _row_from_athena_result_row can map each row positionally. s3_key is
+# selected (needed to mint each row's fetch token) but never returned to
+# the browser.
 _SEARCH_SELECT_COLUMNS = [
     "icao_hex", "registration", "type_designator", "military",
     "operator_designator", "ident", "first_message", "last_message", "s3_key",
 ]
 
-# Columns the download endpoint's own sanitized query selects -- everything
-# _SEARCH_SELECT_COLUMNS has except s3_key, which must never be selected
-# there at all (see _build_download_query): the object S3 hands the browser
-# is what this list produces, so the storage layout can only leak here by
-# being added back to this list.
+# Everything _SEARCH_SELECT_COLUMNS has except s3_key, which must never be
+# selected by the download query (see _build_download_query) -- the
+# storage layout can only leak here by being added back to this list.
 _DOWNLOAD_SELECT_COLUMNS = [
     "icao_hex", "registration", "type_designator", "military",
     "operator_designator", "ident", "first_message", "last_message",
 ]
 
-# Columns a results-page request may sort by -- every field
-# ArchiveSearchResultRow exposes to the browser except uuid/token, which are
-# server-derived rather than a real Athena column a user would sort on.
+# Every field ArchiveSearchResultRow exposes except uuid/token, which are
+# server-derived rather than a real Athena column.
 _SORTABLE_COLUMNS = (
     "icao_hex", "registration", "type_designator", "military",
     "operator_designator", "ident", "first_message", "last_message",
 )
 
-# Cheap early rejection before ever calling Athena -- not a real security
-# boundary (the querying IAM identity is already read-only on just this one
-# table), purely so a mistake produces an instant, clear 400 instead of a
-# slower, more opaque Athena AccessDenied. Word-boundary so a legitimate
-# value that happens to contain one of these words (e.g. ident = 'INSERT1')
-# doesn't false-positive.
+# Cheap early rejection before calling Athena -- not a real security
+# boundary (the IAM identity is already read-only on this one table), just
+# a clearer 400 than an opaque Athena AccessDenied. Word-boundary so a
+# value containing one of these words (e.g. ident = 'INSERT1') doesn't
+# false-positive.
 _FORBIDDEN_WHERE_CLAUSE_RE = re.compile(
     r"\b(DROP|CREATE|ALTER|INSERT|DELETE|UPDATE|GRANT)\b", re.IGNORECASE
 )
 
-# Athena (Presto/Trino) follows strict ANSI SQL: double quotes denote an
-# identifier (column/table reference), single quotes denote a string
-# literal. A clause like operator_designator = "DAL" is parsed as a
-# comparison against a column named DAL, not the string 'DAL' -- an easy
-# mistake since most languages treat both quote styles as equivalent for
-# strings. Flag any double-quoted, identifier-shaped token that isn't
-# actually one of the known searchable columns, since it's almost
-# certainly a mistaken string literal rather than a legitimate quoted
-# column reference.
+# Athena (Presto/Trino) follows strict ANSI SQL: double quotes denote a
+# column reference, single quotes a string literal. `operator_designator =
+# "DAL"` parses as a comparison against a column named DAL, not 'DAL'.
+# Flag any double-quoted, identifier-shaped token that isn't an actual
+# searchable column, since it's almost certainly a mistaken string literal.
 _DOUBLE_QUOTED_RE = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"')
 
 # Strips Athena's "line 1:241:" offset out of a StateChangeReason -- it
-# points into the generated query (partition predicate + where_clause), not
-# anything the operator actually typed, so echoing it back is not
-# actionable (see _friendly_athena_error).
+# points into the generated query, not anything the operator typed, so
+# echoing it back is not actionable (see _friendly_athena_error).
 _ATHENA_LINE_COL_RE = re.compile(r"\bline\s+\d+:\d+:\s*", re.IGNORECASE)
 
 _AWS_ERROR = {502: {"description": "AWS (Athena/S3) error", "model": ErrorDetail}}
@@ -1749,8 +1539,7 @@ class ArchiveSearchCreate(BaseModel):
     name: str = Field(..., min_length=1)
     where_clause: str = Field(..., min_length=1)
     # Both optional -- an omitted bound defaults to the full archive range
-    # (_ARCHIVE_EPOCH .. tomorrow UTC) at creation time. UTC calendar dates,
-    # matching the year/month/day partition columns they narrow.
+    # (_ARCHIVE_EPOCH .. tomorrow UTC) at creation time.
     start_date: Optional[date] = None
     end_date: Optional[date] = None
 
@@ -1761,46 +1550,40 @@ class ArchiveSearchSummary(BaseModel):
     status: Literal["RUNNING", "COMPLETE", "FAILED", "ABORTED"]
     submitted_at: str
     expires_at: str
-    # Only ever set for FAILED (Athena's own StateChangeReason) or ABORTED
-    # (this backend's own deadline/restart message) -- absent otherwise.
+    # Set only for FAILED (Athena's StateChangeReason) or ABORTED (this
+    # backend's own deadline/restart message).
     error: Optional[str] = None
 
 
 class ArchiveSearchDetail(ArchiveSearchSummary):
     where_clause: str
     # The RESOLVED range actually queried (explicit input intersected with
-    # whatever _derive_bounds could prove from where_clause, clamped to
-    # _ARCHIVE_EPOCH..tomorrow UTC) -- not the raw optional request fields.
-    # Optional here only so a record written before this field existed still
-    # deserializes (see get_archive_search's .get() reads).
+    # whatever _derive_bounds could prove), not the raw request fields.
+    # Optional so a record written before this field existed still
+    # deserializes.
     start_date: Optional[date] = None
     end_date: Optional[date] = None
-    # What the operator actually typed, captured before the
-    # _ARCHIVE_EPOCH/tomorrow substitution -- None means the field was left
-    # blank. Optional here for the same backward-compatibility reason as
-    # start_date/end_date above.
+    # What the operator actually typed, before the _ARCHIVE_EPOCH/tomorrow
+    # substitution -- None means the field was left blank.
     requested_start_date: Optional[date] = None
     requested_end_date: Optional[date] = None
 
 
 class ArchiveSearchResultsPage(BaseModel):
     rows: list[ArchiveSearchResultRow]
-    # The cached match count, not just len(rows) -- rows is only this page's
-    # slice. Exact whenever `truncated` is False; when True, this is the
-    # _RESULT_ROW_CAP cache size, not the real (unknown, unread) match count.
+    # The cached match count, not just len(rows). Exact when `truncated` is
+    # False; when True, this is the _RESULT_ROW_CAP cache size, not the
+    # real (unread) match count.
     total_rows: int
-    # True when more than _RESULT_ROW_CAP rows actually matched -- the exact
-    # count beyond the cap is deliberately never computed (that would mean
-    # reading the whole result just to count it). See Download for the full
-    # set in this case.
+    # True when more than _RESULT_ROW_CAP rows matched -- the exact count
+    # beyond the cap is never computed. See Download for the full set.
     truncated: bool = False
 
 
 class ArchiveSearchResultRow(BaseModel):
-    """One archive_parquet_index row, minus s3_key (never sent to the
-    browser -- see "Flight fetch" below) plus the flight's own uuid (parsed
-    server-side from s3_key, not a column in the index itself) and an
-    encrypted, opaque token in s3_key's place."""
+    """One archive_parquet_index row, minus s3_key, plus the flight's own
+    uuid (parsed server-side from s3_key) and an encrypted, opaque token in
+    s3_key's place."""
 
     uuid: str
     icao_hex: str = Field(title="ICAO Hex")
@@ -1837,27 +1620,19 @@ def _validate_where_clause(where_clause: str) -> None:
 
 
 # Lower bound of the archive. Built from shared.glue_projection.YEAR_RANGE
-# (the same source specs/aws/cloudformation.yaml's Glue table and
-# shared/tests/test_cloudformation_template.py are checked against) rather
-# than a hand-copied literal, so this can never silently drift out of sync
-# with projection.year.range -- a range wider than the projection can't
-# match anything, so widening one always means widening both.
+# rather than a hand-copied literal, so it can never drift out of sync with
+# the Glue table's own projection.year.range.
 #
-# Deliberately NOT tightened to the real earliest flight (2022-07-11, per the
-# S3 migration open item). Being earlier than the data costs a handful of
-# extra empty partition LISTs; being LATER than the data silently drops rows
-# with no error. Keep this aligned with the projection's lower bound, not
-# with when the archive actually starts, so the two stay coupled to each
-# other and to nothing else.
+# Deliberately NOT tightened to the real earliest flight: being earlier than
+# the data costs a few extra empty partition LISTs, but being later than the
+# data silently drops rows with no error.
 _ARCHIVE_EPOCH = date(_GLUE_YEAR_RANGE[0], 1, 1)
 
-# Columns _derive_bounds will read a bound from. first_message gives both a
-# lower and upper bound -- it's a single instant, so any comparison against
-# it constrains both sides of the range from that one predicate.
-# last_message only ever gives an upper bound: last_message <= T implies
-# first_message <= T (the flight can't end after it starts... after T), but
-# last_message >= T says nothing about how early the flight could have
-# started. Do not add a lower-bound use of last_message.
+# Columns _derive_bounds reads a bound from. first_message gives both a
+# lower and upper bound (a single instant). last_message only ever gives an
+# upper bound: last_message <= T implies first_message <= T, but
+# last_message >= T says nothing about how early the flight started. Do not
+# add a lower-bound use of last_message.
 _LOWER_BOUND_COLUMNS = ("first_message",)
 _UPPER_BOUND_COLUMNS = ("first_message", "last_message")
 
@@ -1865,18 +1640,10 @@ _UPPER_BOUND_COLUMNS = ("first_message", "last_message")
 def _partition_predicate(start: date, end: date) -> str:
     """OR-joined clauses on the year/month/day partition columns covering
     `[start, end]` inclusive, using the coarsest clause that exactly covers
-    each span (a whole year, then whole months within a year, then a day
-    range within a month) so a wide range doesn't degenerate into 1,000+
-    single-day ORs. year is unpadded 4-digit; month/day are zero-padded to
-    2 digits, matching projection.month.digits/projection.day.digits in
-    specs/aws/cloudformation.yaml -- an unpadded 'month=9' matches no
-    partition Athena actually generates.
-
-    "Whole month" is judged against the real last day of that month
-    (calendar.monthrange), not the 31st -- partition projection generates
-    day=01..31 unconditionally regardless of the month's real length, so a
-    surplus day prefix (e.g. day=30 in February) just LISTs an empty
-    location rather than causing a mismatch.
+    each span (whole year, then whole months, then a day range) so a wide
+    range doesn't degenerate into 1,000+ single-day ORs. month/day are
+    zero-padded to match projection.month.digits/day.digits in
+    specs/aws/cloudformation.yaml.
     """
     clauses = []
     cur = start
@@ -1926,9 +1693,8 @@ def _partition_predicate(start: date, end: date) -> str:
 
 
 def _literal_date(node: exp.Expression) -> Optional[date]:
-    """First string literal under `node`, read as a leading YYYY-MM-DD --
-    tolerant of a full timestamp literal ('2026-09-01 00:00:00') since that's
-    the only literal shape this UI's WHERE clauses actually use."""
+    """First string literal under `node`, read as a leading YYYY-MM-DD
+    (tolerant of a full timestamp literal like '2026-09-01 00:00:00')."""
     for lit in node.find_all(exp.Literal):
         if lit.is_string:
             try:
@@ -1940,9 +1706,8 @@ def _literal_date(node: exp.Expression) -> Optional[date]:
 
 def _comparison_sides(node: exp.Binary) -> tuple[Optional[str], Optional[date], bool]:
     """(column_name, literal_date, flipped) for a binary comparison node --
-    `flipped` is True when the literal appears on the left (e.g.
-    ""timestamp '...' <= first_message""), so the caller can invert which
-    side of the comparison the column is really on."""
+    `flipped` is True when the literal appears on the left, e.g.
+    "timestamp '...' <= first_message"."""
     left, right = node.this, node.expression
     if isinstance(left, exp.Column):
         return left.name, _literal_date(right), False
@@ -1951,18 +1716,14 @@ def _comparison_sides(node: exp.Binary) -> tuple[Optional[str], Optional[date], 
     return None, None, False
 
 
-# first_message/last_message are the only timestamp-typed columns a WHERE
-# clause here can compare against (see specs/data-dictionary.yaml's
-# archive_parquet_index record) -- every other column is a string, so
-# there's never a reason to coerce a literal compared against them.
+# The only timestamp-typed columns a WHERE clause here can compare against
+# -- every other column is a string, so there's never a literal to coerce.
 _TIMESTAMP_COMPARISON_COLUMNS = ("first_message", "last_message")
 
 
 def _normalize_timestamp_literal(raw: str) -> Optional[str]:
     """A bare string literal's value, read as a Trino TIMESTAMP(3) literal
-    body ('YYYY-MM-DD HH:MM:SS[.mmm]'), or None if it doesn't parse as any
-    recognizable date/timestamp -- the caller leaves those untouched rather
-    than guessing (see _friendly_athena_error for what happens next)."""
+    body ('YYYY-MM-DD HH:MM:SS[.mmm]'), or None if it doesn't parse."""
     s = raw.strip()
     if s.endswith(("Z", "z")):
         s = s[:-1] + "+00:00"
@@ -1981,8 +1742,8 @@ def _normalize_timestamp_literal(raw: str) -> Optional[str]:
 
 def _is_already_timestamp_typed(literal: exp.Expression) -> bool:
     """True for the string literal inside a `TIMESTAMP '...'` typed literal
-    -- sqlglot parses that ANSI syntax as CAST(literal AS TIMESTAMP). Already
-    correct; must not be touched."""
+    (sqlglot parses that as CAST(literal AS TIMESTAMP)) -- already correct;
+    must not be touched."""
     parent = literal.parent
     return (
         isinstance(parent, exp.Cast)
@@ -1995,9 +1756,8 @@ def _is_already_timestamp_typed(literal: exp.Expression) -> bool:
 def _collect_timestamp_literal_replacements(tree: exp.Expression) -> list[tuple[int, int, str]]:
     """(start, end, replacement) triples for every bare string literal
     compared against first_message/last_message that parses as a
-    date/timestamp -- start/end are the literal's own character offsets
-    (from sqlglot's node .meta) into the original where_clause text, end
-    inclusive of the closing quote."""
+    date/timestamp -- start/end are character offsets into the original
+    where_clause text, end inclusive of the closing quote."""
     replacements: list[tuple[int, int, str]] = []
 
     def _maybe_replace(literal: Optional[exp.Expression]) -> None:
@@ -2036,17 +1796,11 @@ def _collect_timestamp_literal_replacements(tree: exp.Expression) -> list[tuple[
 def _coerce_timestamp_literals(where_clause: str) -> str:
     """Rewrites every first_message/last_message comparison's bare string
     literal into a proper `TIMESTAMP '...'` literal, so a pasted ISO
-    timestamp (with 'T'/'Z'), a bare date, or a space-separated
-    date-time-sans-seconds all work instead of raising Athena's opaque
-    TYPE_MISMATCH (see #1439). Applied via direct character-offset splicing
-    into the original text rather than a full sqlglot re-serialization, so
-    anything not touched -- an already-correct `TIMESTAMP '...'` literal, a
-    literal on an unrelated column, the clause's own formatting/casing --
-    comes back byte-for-byte untouched.
-
-    where_clause is returned unchanged if it fails to parse (a genuinely
-    invalid clause is _validate_where_clause's problem, not this
-    function's) or has nothing to coerce.
+    timestamp, bare date, or space-separated date-time all work instead of
+    raising Athena's opaque TYPE_MISMATCH. Applied via direct character-
+    offset splicing rather than a full sqlglot re-serialization, so anything
+    not touched comes back byte-for-byte untouched. Returned unchanged if
+    where_clause fails to parse or has nothing to coerce.
     """
     try:
         tree = sqlglot.parse_one(where_clause, dialect="trino")
@@ -2069,25 +1823,18 @@ def _coerce_timestamp_literals(where_clause: str) -> str:
 
 def _derive_bounds(where_clause: str) -> tuple[Optional[date], Optional[date]]:
     """The widest date range that can contain every row `where_clause` could
-    possibly match, read off its own first_message/last_message predicates
-    -- or (None, None) if nothing could be proven, meaning the caller must
-    fall back to the full archive range. This is an optimisation layered on
-    top of a WHERE clause that is already fully evaluated by Athena; getting
-    it wrong must never drop a row that where_clause itself would have
-    matched, so every bail-out below is deliberately conservative.
+    match, read off its own first_message/last_message predicates -- or
+    (None, None) if nothing could be proven, meaning the caller falls back
+    to the full archive range. This is an optimisation layered on top of a
+    WHERE clause already fully evaluated by Athena, so every bail-out below
+    is deliberately conservative: it must never drop a row where_clause
+    itself would have matched.
 
-    Only sound inside a pure AND conjunction, where every conjunct is a
-    necessary condition on a matching row. An OR or a NOT breaks that --
-    `first_message > X OR icao_hex = 'ABC'` can match rows outside the
-    range implied by the first_message predicate alone -- so either one
-    anywhere in the clause bails out to (None, None) rather than risk
-    narrowing past a row Athena would have returned.
-
-    Uses sqlglot rather than a regex specifically so a column reference is
-    never confused with the same text inside a string literal --
-    e.g. ident = 'first_message > 2020-01-01' has zero real column
-    predicates on it, and a regex scanning the raw text would get that
-    wrong silently (fewer rows, no error) rather than just not narrowing.
+    Only sound inside a pure AND conjunction -- an OR or a NOT anywhere in
+    the clause bails out to (None, None), since either can make a row match
+    outside the range implied by any single conjunct. Uses sqlglot rather
+    than a regex so a column reference is never confused with the same text
+    inside a string literal.
     """
     try:
         tree = sqlglot.parse_one(where_clause, dialect="trino")
@@ -2111,11 +1858,8 @@ def _derive_bounds(where_clause: str) -> tuple[Optional[date], Optional[date]]:
                 if high is not None:
                     hi = high if hi is None else min(hi, high)
 
-    # >=/> give a lower bound; <=/< give an upper bound -- unless the
-    # column turns out to be on the literal's side of the operator
-    # (`flipped`), which inverts which bound the comparison actually
-    # establishes (""timestamp '...' <= first_message"" is a LOWER bound
-    # on first_message, even though <= normally reads as an upper one).
+    # >=/> give a lower bound; <=/< give an upper bound -- unless `flipped`
+    # inverts it (e.g. "timestamp '...' <= first_message" is a LOWER bound).
     for comparison_cls, implies in ((exp.GTE, "lo"), (exp.GT, "lo"), (exp.LTE, "hi"), (exp.LT, "hi")):
         for node in tree.find_all(comparison_cls):
             column, literal, flipped = _comparison_sides(node)
@@ -2142,15 +1886,13 @@ def _derive_bounds(where_clause: str) -> tuple[Optional[date], Optional[date]]:
 def _resolve_search_range(
     where_clause: str, explicit_start: Optional[date], explicit_end: Optional[date]
 ) -> tuple[Optional[date], Optional[date]]:
-    """Intersects three independent constraints on the query's date range --
-    the archive's own bounds, what where_clause's own predicates can prove
+    """Intersects three constraints on the query's date range -- the
+    archive's own bounds, what where_clause's own predicates can prove
     (widened by a day each side as boundary/timezone insurance), and
-    whatever the operator explicitly set -- and returns the tightest result.
-    (None, None) signals an empty intersection (e.g. an explicit range that
-    doesn't overlap what where_clause could ever match): a real, zero-row
-    answer, distinguished by the caller from explicit_start > explicit_end,
-    which is a 400 on the operator's own input rather than a derived
-    emptiness.
+    whatever the operator explicitly set -- and returns the tightest
+    result. (None, None) signals an empty intersection: a real, zero-row
+    answer, distinguished by the caller from explicit_start > explicit_end
+    (a 400 on the operator's own input).
     """
     derived_lo, derived_hi = _derive_bounds(where_clause)
     today = datetime.now(timezone.utc).date()
@@ -2175,33 +1917,28 @@ def _resolve_search_range(
 
 
 def _build_search_query(partition_predicate: str, where_clause: str) -> str:
-    """The SELECT list and FROM table are always backend-controlled, never
-    influenced by user input -- where_clause only ever fills the second
-    WHERE fragment, parenthesized so it can't prematurely close the clause
-    and inject a sibling SQL construct. partition_predicate is backend-
-    generated too (see _partition_predicate) -- its only purpose is
-    pruning Athena's partition scan; it must always be a superset of what
-    where_clause alone would match, never a narrower filter."""
+    """SELECT list and FROM table are backend-controlled; where_clause only
+    fills the parenthesized WHERE fragment, so it can't prematurely close
+    the clause and inject a sibling SQL construct. partition_predicate must
+    always be a superset of what where_clause alone would match, never a
+    narrower filter -- it exists only to prune Athena's partition scan."""
     columns = ", ".join(_SEARCH_SELECT_COLUMNS)
     table = f'{_athena_cfg["database"]}.{_athena_cfg["table"]}'
     return f"SELECT {columns} FROM {table} WHERE ({partition_predicate}) AND ({where_clause})"
 
 
-# Anchors on the UUID immediately preceding ".json.gz", so it matches both
-# the legacy `{icao_hex}_{ident}_{uuid}.json.gz` key shape and the current,
-# simplified `{uuid}.json.gz` shape -- the Python-side _UUID_FROM_S3_KEY_RE
-# below uses the identical pattern so the two derivations can never disagree.
+# Anchors on the UUID immediately preceding ".json.gz", matching both the
+# legacy `{icao_hex}_{ident}_{uuid}.json.gz` key shape and the current
+# `{uuid}.json.gz` shape. _UUID_FROM_S3_KEY_RE below reuses this pattern so
+# the SQL-side and Python-side derivations can never disagree.
 _UUID_FROM_S3_KEY_PATTERN = r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.json\.gz$"
 
 
 def _build_download_query(partition_predicate: str, where_clause: str) -> str:
-    """Same partition-predicate/where_clause contract as _build_search_query
-    (see its docstring) -- the difference is entirely in the SELECT list.
-    s3_key is never selected here, so the archive's storage layout (bucket,
-    date-folder prefix, filename) can never reach the browser via this
-    query's result object; the flight uuid is instead derived from s3_key
-    in SQL via regexp_extract, using the same pattern
-    _UUID_FROM_S3_KEY_PATTERN names for the Python-side equivalent."""
+    """Same contract as _build_search_query, except s3_key is never
+    selected -- the archive's storage layout can never reach the browser
+    via this query's result. The flight uuid is instead derived from
+    s3_key in SQL via regexp_extract."""
     columns = ", ".join(_DOWNLOAD_SELECT_COLUMNS)
     table = f'{_athena_cfg["database"]}.{_athena_cfg["table"]}'
     uuid_expr = f"regexp_extract(s3_key, '{_UUID_FROM_S3_KEY_PATTERN}', 1)"
@@ -2228,13 +1965,10 @@ def _search_summary(uuid: str, record: dict) -> dict:
 
 
 def _iter_active_searches() -> list[tuple[str, dict]]:
-    """SMEMBERS archive_search:index + a GET per uuid -- O(active
-    searches), not the O(entire keyspace) SCAN MATCH archive_search:*
-    this replaced (see archive_search_index_key's own docstring for why).
-    Self-heals the index: a uuid whose backing archive_search:{uuid} key
-    has already expired (7-day TTL) is SREMed from the index right here,
-    since a plain Redis SET has no way to be notified when TTL expiry
-    removes a member's backing key out from under it."""
+    """SMEMBERS archive_search:index + a GET per uuid -- O(active searches),
+    not O(entire keyspace). Self-heals the index: a uuid whose backing key
+    has already TTL-expired is SREMed from the index right here, since a
+    plain Redis SET has no way to be notified of that on its own."""
     index_key = archive_search_index_key()
     try:
         uuids = _redis.smembers(index_key)
@@ -2266,12 +2000,10 @@ def _get_search_record(uuid: str) -> dict:
 
 
 def _update_search_record(uuid: str, **fields) -> None:
-    """Conditional SET ... XX KEEPTTL -- only writes if the key still
-    exists (a no-op otherwise), and never resets/extends the fixed 7-day
-    TTL set at creation. Guards against the background polling thread
-    resurrecting a record the user already deleted: every write it makes
-    goes through this same function, so a delete that lands between this
-    thread's last GET and its next write is never undone by that write."""
+    """Conditional SET ... XX KEEPTTL -- a no-op if the key no longer
+    exists, and never resets/extends the fixed 7-day TTL. Guards against
+    the background polling thread resurrecting a record the user already
+    deleted."""
     key = archive_search_key(uuid)
     try:
         raw = _redis.get(key)
@@ -2285,10 +2017,8 @@ def _update_search_record(uuid: str, **fields) -> None:
 
 
 def _reconcile_stuck_archive_searches() -> None:
-    """On startup, any archive_search:* record still RUNNING had its
-    polling thread die with the previous process -- nothing is left alive
-    to ever finish that job, so mark it ABORTED rather than leaving it
-    stuck RUNNING forever."""
+    """On startup, any record still RUNNING had its polling thread die with
+    the previous process -- mark it ABORTED rather than leaving it stuck."""
     for uuid, record in _iter_active_searches():
         if record.get("status") == "RUNNING":
             _update_search_record(
@@ -2299,9 +2029,9 @@ def _reconcile_stuck_archive_searches() -> None:
 
 def _friendly_athena_error(reason: str) -> str:
     """Prepend a plain-language hint to a TYPE_MISMATCH between a timestamp
-    column and a bare string literal -- the single most common mistake
-    this UI's WHERE clause box invites (#1439) -- and strip the misleading
-    line 1:NNN offset. Any other StateChangeReason is returned unchanged."""
+    column and a bare string literal -- the most common mistake this UI's
+    WHERE clause box invites -- and strip the misleading line 1:NNN offset.
+    Any other StateChangeReason is returned unchanged."""
     if "TYPE_MISMATCH" not in reason:
         return reason
     lowered = reason.lower()
@@ -2317,18 +2047,16 @@ def _friendly_athena_error(reason: str) -> str:
 
 
 def _poll_search_execution(uuid: str, query_execution_id: str) -> None:
-    """One thread per in-flight search. Exponential backoff (1s, 2s, 4s,
-    8s, 16s, then capped at 30s) for up to 2 minutes wall-clock total --
-    if the deadline is hit without reaching a terminal state, this gives
-    up (ABORTED) independent of whether Athena itself might still be
-    running."""
+    """One thread per in-flight search. Exponential backoff (1s..16s, then
+    capped at 30s) for up to 2 minutes wall-clock; if the deadline is hit
+    without reaching a terminal state, this gives up (ABORTED)."""
     deadline = time.monotonic() + ATHENA_POLL_DEADLINE_SECONDS
     attempt = 0
     while time.monotonic() < deadline:
         delay = (
             ATHENA_POLL_BACKOFF_SECONDS[attempt]
             if attempt < len(ATHENA_POLL_BACKOFF_SECONDS)
-            else ATHENA_POLL_BACKOFF_SECONDS[-1] * 2  # 30s cap, per design
+            else ATHENA_POLL_BACKOFF_SECONDS[-1] * 2
         )
         attempt += 1
         time.sleep(min(delay, 30))
@@ -2347,7 +2075,6 @@ def _poll_search_execution(uuid: str, query_execution_id: str) -> None:
             reason = resp["QueryExecution"]["Status"].get("StateChangeReason", "")
             _update_search_record(uuid, status="FAILED", error=_friendly_athena_error(reason))
             return
-        # QUEUED / RUNNING -- keep polling
 
     try:
         _athena_client.stop_query_execution(QueryExecutionId=query_execution_id)
@@ -2357,11 +2084,9 @@ def _poll_search_execution(uuid: str, query_execution_id: str) -> None:
 
 
 class _BoundedResultCache:
-    """Hand-rolled LRU (OrderedDict, move-to-end on access, pop oldest when
-    over the cap) rather than a new dependency -- simple enough to
-    implement correctly without one. Lives only in process memory, wiped
-    on restart: a page request for a search that was mid-viewing when the
-    container restarted is just a cache miss, not an error."""
+    """Hand-rolled LRU (OrderedDict, move-to-end on access, pop oldest over
+    the cap) rather than a new dependency. Lives only in process memory --
+    wiped on restart is just a cache miss, not an error."""
 
     def __init__(self, max_entries: int) -> None:
         self._max_entries = max_entries
@@ -2402,10 +2127,9 @@ def _result_output_location(query_execution_id: str) -> str:
 
 
 def _delete_athena_result_and_metadata(query_execution_id: str) -> None:
-    """Delete an Athena query's result object and the .metadata sidecar
-    Athena writes alongside it. Best-effort, same reasoning as the caller:
-    the results bucket's lifecycle rule sweeps both eventually regardless,
-    so a failure here is a warning, not an error."""
+    """Delete an Athena query's result object and its .metadata sidecar.
+    Best-effort -- the results bucket's lifecycle rule sweeps both
+    eventually regardless."""
     output_location = _result_output_location(query_execution_id)
     bucket, key = _parse_s3_uri(output_location)
     _s3_client.delete_object(Bucket=bucket, Key=key)

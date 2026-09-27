@@ -18,10 +18,7 @@ import { categoriesToQuery, type LookupCategory } from "../lib/lookupClassifier"
 import { formatManufacturedDate } from "../lib/manufacturedDate";
 import { countryFlag } from "../lib/countryFlag";
 
-// Every lookup type the single search field accepts is alphanumeric plus, at most,
-// a space or hyphen (registrations like "VP-CKA", idents, designators) --
-// strips anything else as it's typed/pasted rather than merely flagging it
-// invalid after the fact.
+// Every lookup type is alphanumeric plus, at most, a space or hyphen (e.g. "VP-CKA"); strips anything else as it's typed/pasted.
 function sanitizeQuery(raw: string): string {
   return raw.replace(/[^A-Za-z0-9 -]/g, "");
 }
@@ -39,10 +36,8 @@ const RESULT_LABEL: Record<LookupResult["tab"], string> = {
   route: "Route",
 };
 
-// Runs the one backend lookup a classified category maps to, tagging the
-// payload with its result-panel kind. "aircraft-hex" and
-// "aircraft-registration" hit the same endpoint with a different query
-// parameter; every other category is 1:1 with an endpoint.
+// Runs the one backend lookup a category maps to, tagging the payload with its result-panel kind.
+// "aircraft-hex"/"aircraft-registration" hit the same endpoint with a different parameter; every other category is 1:1 with an endpoint.
 function lookupForCategory(category: LookupCategory, query: string): Promise<LookupResult> {
   switch (category) {
     case "aircraft-hex":
@@ -59,9 +54,7 @@ function lookupForCategory(category: LookupCategory, query: string): Promise<Loo
 }
 
 // ---------------------------------------------------------------------------
-// Loose-value display helpers -- these endpoints return whatever's really in
-// Redis (see api/reference.ts), not a fixed schema, so every field read
-// below is optional/unverified at the type level.
+// Loose-value display helpers -- these endpoints return whatever's in Redis, not a fixed schema, so fields are optional/unverified.
 // ---------------------------------------------------------------------------
 
 function displayStr(v: unknown): string | undefined {
@@ -84,11 +77,8 @@ function displayObj(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 }
 
-// dedupeAdjacent drops a part equal to the one immediately before it --
-// e.g. region "Singapore" in country "Singapore" would otherwise render
-// "Singapore, Singapore". Only meaningful for location-style joins
-// (city/region/country); left off by default so unrelated joins (e.g.
-// powerplant manufacturer/model) are unaffected.
+// dedupeAdjacent drops a part equal to the one before it -- e.g. avoids "Singapore, Singapore" for a city/region/country join.
+// Off by default so unrelated joins (e.g. powerplant manufacturer/model) are unaffected.
 function joinParts(parts: (string | undefined)[], sep = " ", dedupeAdjacent = false): string | undefined {
   const filtered = parts.filter((p): p is string => !!p);
   const deduped = dedupeAdjacent
@@ -98,8 +88,7 @@ function joinParts(parts: (string | undefined)[], sep = " ", dedupeAdjacent = fa
 }
 
 // ---------------------------------------------------------------------------
-// Shared field-name styling -- distinct color from the value it labels,
-// consistently across all four tabs.
+// Shared field-name styling, consistent across all four tabs.
 // ---------------------------------------------------------------------------
 
 function Label({ children }: { children: ReactNode }) {
@@ -110,8 +99,7 @@ function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="text-sm font-semibold text-slate-500 dark:text-slate-400">{children}</div>;
 }
 
-// A raw code (icao_hex, airline/IATA designator) shown as-is rather than in
-// "(parens)" -- monospace distinguishes it as a code from surrounding prose.
+// A raw code (icao_hex, IATA designator) shown as-is; monospace distinguishes it from surrounding prose.
 function Mono({ children }: { children: ReactNode }) {
   return <span className="font-mono text-sm text-slate-700 dark:text-slate-300">{children}</span>;
 }
@@ -161,10 +149,8 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
     manufacturerModel || typeDesignator
       ? joinParts([manufacturerModel, typeDesignator ? `(${typeDesignator})` : undefined])
       : undefined;
-  // The manufacturer/model line above is the generic ICAO type (from
-  // Mictronics). `model` is the specific designation a national registry
-  // published (e.g. "737-8H4" from the FAA) -- shown separately when present,
-  // absent for aircraft covered only by Mictronics.
+  // manufacturerModelLine above is the generic ICAO type (Mictronics); `model` is a national registry's specific designation
+  // (e.g. "737-8H4" from the FAA), absent for aircraft covered only by Mictronics.
   const model = displayStr(data.model);
   const descriptionCode = displayStr(data.description_code);
   const manufacturedDate = data.manufactured_date
@@ -289,11 +275,7 @@ function AircraftResultView({ data }: { data: AircraftRecord }) {
 // Operator
 // ---------------------------------------------------------------------------
 
-// Mirrors AirportResultView's shape: the code leads in large text, and
-// self-evident fields (name, callsign, country) drop their labels. The
-// name + quoted-italic callsign row reuses RouteResultView's operator
-// header pattern verbatim; country is the muted trailing "where" line
-// shared by all three panels.
+// Mirrors AirportResultView's shape: designator leads in large text, self-evident fields (name, callsign, country) drop their labels.
 function OperatorResultView({ data }: { data: OperatorRecord }) {
   const name = displayStr(data.name);
   const designator = displayStr(data.airline_designator) ?? "";
@@ -328,11 +310,8 @@ function AirportMap({ latitude, longitude }: { latitude: number; longitude: numb
       style: MAP_STYLE,
       center: [longitude, latitude],
       zoom: 11,
-      // Pan/zoom only -- matches the "I can pan and zoom with the map, but
-      // that's it" ask. Same lock pattern as AreasView.tsx's map: maxPitch
-      // is the hard guarantee against tilt, the rest plus the two
-      // disableRotation() calls below block every gesture path (mouse,
-      // touch, keyboard) that could otherwise rotate or tilt it.
+      // Pan/zoom only, same lock pattern as AreasView.tsx's map: maxPitch blocks tilt outright, these plus the disableRotation()
+      // calls below block every gesture path that could rotate or tilt it.
       maxPitch: 0,
       pitchWithRotate: false,
       dragRotate: false,
@@ -340,8 +319,7 @@ function AirportMap({ latitude, longitude }: { latitude: number; longitude: numb
     });
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
-    // showCompass: false -- rotation is locked above, so a reset-bearing
-    // compass button has nothing to do.
+    // Rotation is locked above, so a reset-bearing compass control has nothing to do.
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     new maplibregl.Marker().setLngLat([longitude, latitude]).addTo(map);
     return () => {
@@ -349,12 +327,7 @@ function AirportMap({ latitude, longitude }: { latitude: number; longitude: numb
     };
   }, [latitude, longitude]);
 
-  // flex-1 + a min-height floor -- matches RouteMap's sizing so an airport
-  // result's map is the same size as a route result's. The caller
-  // (LookupView) places this in a full-width flex column below the
-  // airport's text so it fills whatever vertical space is left in the
-  // viewport, but never collapses below the floor for a short/compact
-  // result or when several results are stacked and space is tight.
+  // flex-1 + min-height floor: matches RouteMap's sizing, fills leftover viewport space but never collapses below the floor.
   return (
     <div
       ref={containerRef}
@@ -363,9 +336,7 @@ function AirportMap({ latitude, longitude }: { latitude: number; longitude: numb
   );
 }
 
-// Map is rendered by the caller (LookupView), below this text and outside
-// the max-w-3xl text column -- see the "airport" branch in LookupView's
-// results loop, mirroring RouteResultView below.
+// Map is rendered by the caller (LookupView), below this text and outside the max-w-3xl column, mirroring RouteResultView below.
 function AirportResultView({ data }: { data: AirportRecord }) {
   const icaoCode = displayStr(data.icao_code) ?? "";
   const iataCode = displayStr(data.iata_code);
@@ -431,15 +402,9 @@ function toDeg(rad: number): number {
   return (rad * 180) / Math.PI;
 }
 
-// Spherical linear interpolation between two [lon, lat] points along the
-// great-circle arc connecting them -- straight rhumb-line segments would
-// visibly cut corners on anything but a very short hop. Each interpolated
-// point's longitude comes from its own atan2(), independently wrapped to
-// (-180, 180] -- a path that actually crosses the antimeridian (e.g.
-// ZSPD -> PANC, whose shortest path runs over the Bering Sea) produces a
-// point sequence that jumps from just under +180 to just over -180 (or vice
-// versa) partway through. unwrapLongitudes() below straightens that back
-// into a continuous sequence before it's ever handed to MapLibre.
+// Spherical linear interpolation along the great-circle arc -- straight rhumb-line segments would visibly cut corners.
+// Each point's longitude is independently wrapped to (-180, 180], so a path crossing the antimeridian jumps between +180/-180
+// partway through; unwrapLongitudes() below straightens that into a continuous sequence before it reaches MapLibre.
 function greatCircleSegment(
   [lon1, lat1]: [number, number],
   [lon2, lat2]: [number, number],
@@ -473,14 +438,9 @@ function greatCircleSegment(
   return points;
 }
 
-// Walks the coordinate sequence and adds/subtracts multiples of 360 to keep
-// each point's longitude within 180 degrees of the one before it -- turns a
-// sequence that jumps across +/-180 into a continuous one that may run
-// outside the standard [-180, 180] range (e.g. 190 instead of -170).
-// MapLibre's Mercator projection renders that correctly with
-// renderWorldCopies (the default): a longitude outside the standard range
-// simply lands in the adjacent world copy, visually continuous with the
-// rest of the line.
+// Adds/subtracts multiples of 360 to keep each longitude within 180 degrees of the one before it, turning a jump across +/-180
+// into a continuous sequence that may run outside [-180, 180] (e.g. 190 instead of -170). MapLibre's default renderWorldCopies
+// renders that correctly by placing it in the adjacent world copy.
 function unwrapLongitudes(coords: [number, number][]): [number, number][] {
   if (coords.length === 0) return coords;
   const out: [number, number][] = [coords[0]];
@@ -554,18 +514,8 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
     map.on("load", () => {
-      // Points along the actual rendered great-circle path (already
-      // longitude-unwrapped for antimeridian crossings), not just the
-      // stops themselves -- for a long-haul route the path's northward
-      // bulge or antimeridian crossing can reach well outside the
-      // stops-only bounding box (e.g. Sydney -> Chicago passing near the
-      // Bering Sea). Fitting bounds to the path directly, in one
-      // fitBounds() call, frames the whole visible route and every stop
-      // together -- a previous version fit only the stops' bounding box
-      // and then separately re-centered on the great-circle midpoint,
-      // which kept fitBounds's narrower zoom level but moved the
-      // endpoints toward or past the edge of the now-differently-centered
-      // viewport.
+      // Fits bounds to the actual rendered great-circle path, not just the stops -- a long-haul route's northward bulge or
+      // antimeridian crossing can reach well outside the stops-only bounding box (e.g. Sydney -> Chicago near the Bering Sea).
       const lineCoords = points.length > 1 ? buildGreatCircleLine(points) : [];
 
       if (lineCoords.length > 0) {
@@ -615,11 +565,7 @@ function RouteMap({ stops }: { stops: AirportRecord[] }) {
     };
   }, [stops]);
 
-  // flex-1 + a min-height floor -- the caller (LookupView) places this in a
-  // full-width flex column below the route's text so it fills whatever
-  // vertical space is left in the viewport, but never collapses below the
-  // floor for a short/compact result or when several route results are
-  // stacked and space is tight.
+  // flex-1 + min-height floor: fills leftover viewport space below the route's text, but never collapses below the floor.
   return (
     <div
       ref={containerRef}
@@ -633,9 +579,7 @@ function RouteResultView({ data }: { data: RouteLookup }) {
   const operatorCallsign = displayStr(data.operator?.callsign);
   const operatorCountry = displayStr(data.operator?.country);
 
-  // Map is rendered by the caller (LookupView), below this text and outside
-  // the max-w-3xl text column -- see the "route" branch in LookupView's
-  // results loop.
+  // Map is rendered by the caller (LookupView), below this text and outside the max-w-3xl column.
   return (
     <div className="flex flex-col gap-4">
       <span className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{data.ident}</span>
@@ -699,8 +643,7 @@ type SearchState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "results"; results: LookupResult[] }
-  // Every category tried (the matched ones, or a route-only fallback when
-  // nothing matched) was queried and came back empty.
+  // Every matched category (or a route-only fallback) was queried and came back empty.
   | { status: "not-found" };
 
 export function LookupView() {
@@ -717,9 +660,7 @@ export function LookupView() {
 
     setState({ status: "loading" });
 
-    // Every matching category is queried in parallel; an ambiguous input
-    // (e.g. "FFT" -> operator + airport, "ABC123" -> hex + route) shows one
-    // labeled panel per category that actually resolves.
+    // Every matching category is queried in parallel; an ambiguous input (e.g. "FFT" -> operator + airport) shows one panel per resolved category.
     const settled = await Promise.allSettled(
       toQuery.map((category) => lookupForCategory(category, trimmed)),
     );
@@ -732,9 +673,7 @@ export function LookupView() {
         continue;
       }
       const err = outcome.reason;
-      // A 404 just means that one category isn't in Redis ("never seen,"
-      // "TTL expired," or "not yet enriched" are indistinguishable) -- drop
-      // it silently. Anything else is a real failure worth surfacing.
+      // A 404 just means that category isn't in Redis (never seen / TTL expired / not yet enriched, indistinguishable) -- drop silently.
       if (err instanceof ApiError && err.status === 404) continue;
       otherError = err;
     }
@@ -755,11 +694,8 @@ export function LookupView() {
   const loading = state.status === "loading";
 
   return (
-    // min-h-full (not h-full) -- fills main's available viewport height so
-    // a route result's map can flex-grow into it, but still grows past that
-    // via normal block sizing (rather than clipping) when stacked results
-    // need more room than the viewport, letting Layout's <main
-    // overflow-y-auto> scroll.
+    // min-h-full, not h-full: fills the viewport for maps to flex-grow into, but still grows past it (not clipping) when stacked
+    // results need more room, letting Layout's <main overflow-y-auto> scroll.
     <div className="flex min-h-full flex-col gap-4">
       <form onSubmit={handleSearch} className="flex max-w-lg shrink-0 gap-2">
         <input
@@ -778,9 +714,7 @@ export function LookupView() {
         </button>
       </form>
 
-      {/* No max-w-3xl here -- a route result's map (below) needs to span
-          the full available width. max-w-3xl is instead applied per-item,
-          around just the text, a few lines down. */}
+      {/* No max-w-3xl here -- a route/airport map needs full width; max-w-3xl is applied per-item around just the text below. */}
       <div className="flex min-h-0 flex-1 flex-col gap-8">
         {loading && <p className="max-w-3xl text-slate-400">Searching...</p>}
         {state.status === "not-found" && (

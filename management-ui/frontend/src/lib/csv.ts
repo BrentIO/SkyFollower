@@ -1,5 +1,3 @@
-// Triggers a browser download of `content` as a file named `filename`,
-// without navigating away from the page.
 export function downloadTextFile(filename: string, content: string, mimeType: string): void {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);

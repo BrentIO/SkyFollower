@@ -4,9 +4,8 @@ interface NewSearchModalProps {
   open: boolean;
   onConfirm: (name: string, whereClause: string, startDate: string, endDate: string) => void;
   onCancel: () => void;
-  // Pre-fills the form -- used to resubmit a failed/aborted search without
-  // retyping its WHERE clause (or its date range) from scratch. Omitted
-  // (or "") for a blank "+ New Search" open.
+  // Pre-fills the form; used to resubmit a failed/aborted search without
+  // retyping it. Omitted (or "") for a blank "+ New Search" open.
   initialName?: string;
   initialWhereClause?: string;
   initialStartDate?: string;
@@ -15,12 +14,8 @@ interface NewSearchModalProps {
 }
 
 // Queryable columns and their types, from specs/data-dictionary.yaml's
-// archive_parquet_index record -- this is the whole point of the legend:
-// writing SQL against exact column names from memory, so it stays visible
-// the entire time (not a placeholder that vanishes once typing starts).
-// Example values are all the same aircraft (N659DL / A8AE7F), matching
-// the example used elsewhere in this app (e.g. LookupView.tsx's
-// placeholder text) rather than a different one per row.
+// archive_parquet_index record. Example values are all the same aircraft
+// (N659DL / A8AE7F), matching LookupView.tsx's placeholder.
 const COLUMN_REFERENCE: [string, string, string][] = [
   ["icao_hex", "string", "A8AE7F"],
   ["registration", "string", "N659DL"],
@@ -32,11 +27,8 @@ const COLUMN_REFERENCE: [string, string, string][] = [
   ["last_message", "timestamp", "TIMESTAMP '2026-07-31 13:45:00'"],
 ];
 
-// Shown once, when the user clicks "+ New Search" -- collects the fields
-// ArchiveSearchCreate accepts (see api/archiveSearch.ts): `name`, a raw SQL
-// `where_clause`, and an optional `start_date`/`end_date` UTC range. Matches
-// AreaNameModal.tsx's structure (open/onConfirm/onCancel, reset-on-close,
-// disabled-until-valid Save).
+// Collects the fields ArchiveSearchCreate accepts (see api/archiveSearch.ts):
+// `name`, a raw SQL `where_clause`, and an optional UTC date range.
 export function NewSearchModal({
   open,
   onConfirm,
@@ -65,9 +57,7 @@ export function NewSearchModal({
 
   const trimmedName = name.trim();
   const trimmedWhereClause = whereClause.trim();
-  // Mirrors the backend's own start_date > end_date rejection (main.py's
-  // create_archive_search) -- catching it here avoids a round trip just to
-  // learn what's already knowable client-side.
+  // Mirrors the backend's start_date > end_date rejection to avoid a round trip.
   const rangeInvalid = startDate !== "" && endDate !== "" && startDate > endDate;
   const canSubmit = trimmedName !== "" && trimmedWhereClause !== "" && !rangeInvalid;
 

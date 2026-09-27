@@ -25,25 +25,18 @@ const NAME_MAX_LENGTH = 64;
 const IDENTIFIER_MAX_LENGTH = 64;
 const DESCRIPTION_MAX_LENGTH = 2000;
 
-// No default type -- the user has to pick one (see ConditionForm's "Select
-// a type..." placeholder option). `operator`/`value` here are throwaway:
-// picking a real type calls retypeCondition(), which replaces both anyway.
+// No default type -- the user must pick one. `operator`/`value` are
+// throwaway: picking a real type calls retypeCondition(), which replaces both.
 function newCondition(): Condition {
   return { type: "", operator: "equals", value: "" };
 }
 
-// Replaces each literal space with an underscore, then drops every other
-// character outside the identifier's allowed charset -- used both for the
-// auto-fill-from-Name behavior below and to sanitise direct edits to the
-// Identifier field itself.
 function sanitizeIdentifier(raw: string): string {
   return raw.replace(/ /g, "_").replace(/[^A-Za-z0-9_-]/g, "").slice(0, IDENTIFIER_MAX_LENGTH);
 }
 
-// Returns the first validation problem found, or null if the rule is
-// save-worthy. Mirrors message-processor/rules_engine.py's per-type
-// validators as a fast-fail UX nicety -- the server's 400 is still the
-// source of truth, this just avoids a round trip for the common mistakes.
+// Mirrors message-processor/rules_engine.py's per-type validators as a
+// fast-fail UX nicety; the server's 400 remains the source of truth.
 export function validateRule(rule: Rule, otherRules: Rule[]): string | null {
   if (!rule.identifier || !/^[A-Za-z0-9_-]+$/.test(rule.identifier)) {
     return "Identifier is required and may only contain letters, numbers, hyphens, and underscores.";
@@ -97,9 +90,7 @@ function validateCondition(condition: Condition): string | null {
     }
 
     case "squawk":
-      // Octal, not decimal -- a real transponder never sends 8 or 9 in
-      // any position (mirrors message-processor/rules_engine.py's
-      // _validate_squawk).
+      // Octal, not decimal -- a real transponder never sends 8 or 9 in any position.
       if (!/^[0-7]{4}$/.test(String(value))) return "must be exactly 4 digits, each 0-7";
       return null;
 
@@ -172,19 +163,12 @@ export function RuleForm({
 }: RuleFormProps) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [focusNewConditionAt, setFocusNewConditionAt] = useState<number | null>(null);
-  // Tracks whether the user has typed into Identifier directly (as opposed
-  // to it merely holding a value auto-derived from Name) -- gates
-  // handleNameChange below. Checking `rule.identifier === ""` instead of
-  // this flag was the original approach, but that only holds true for the
-  // very first character typed into Name: deriving a non-empty identifier
-  // on keystroke 1 made keystroke 2 see a non-empty identifier and stop
-  // deriving, even though the user never touched Identifier themselves.
+  // Tracks whether the user has typed into Identifier directly, rather than
+  // it merely holding a value auto-derived from Name; gates handleNameChange.
   const [identifierManuallyEdited, setIdentifierManuallyEdited] = useState(false);
 
-  // The autoFocus attribute only matters at mount time, so this flag only
-  // needs to survive one render past addCondition() -- reset immediately
-  // after so a later re-render (e.g. editing an unrelated field) doesn't
-  // keep re-focusing the same row.
+  // autoFocus only matters at mount, so reset this one render after
+  // addCondition() -- otherwise an unrelated re-render re-focuses the row.
   useEffect(() => {
     if (focusNewConditionAt !== null) setFocusNewConditionAt(null);
   }, [focusNewConditionAt]);
@@ -212,10 +196,8 @@ export function RuleForm({
 
   function handleNameChange(rawName: string) {
     const name = rawName.slice(0, NAME_MAX_LENGTH);
-    // Keeps deriving Identifier from every keystroke of Name for a new
-    // rule, until the user edits Identifier directly (see
-    // handleIdentifierChange) -- existing rules never hit this, since
-    // their Identifier field is disabled.
+    // Derives Identifier from Name for a new rule until the user edits
+    // Identifier directly; existing rules keep Identifier disabled.
     const identifier = isNew && !identifierManuallyEdited ? sanitizeIdentifier(name) : rule.identifier;
     onChange({ ...rule, name, identifier });
   }
@@ -265,11 +247,7 @@ export function RuleForm({
           </div>
         </div>
 
-        {/* Mobile-only action row: Save as a full-width primary button,
-            Discard/Delete as a two-up row of large touch targets below it --
-            replacing the desktop's small inline buttons next to the title
-            (hidden above via md:flex), which stay pixel-for-pixel unchanged.
-            Sizing matches AreasView's own mobile accordion action buttons. */}
+        {/* Mobile-only action row: full-width Save, Discard/Delete below it. */}
         <div className="flex flex-col gap-2 md:hidden">
           <button
             type="button"
@@ -404,10 +382,7 @@ export function RuleForm({
           ))}
         </div>
 
-        {/* Below the list, not in the header: a new condition appends to
-            the end, so the button reads as "…and here's where the next
-            one goes" rather than a top-corner action disconnected from
-            its result. */}
+        {/* Below the list since a new condition appends to the end. */}
         <button
           type="button"
           onClick={addCondition}

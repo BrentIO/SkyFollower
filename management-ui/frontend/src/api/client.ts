@@ -1,8 +1,6 @@
-// Thin fetch wrapper shared by every api/*.ts module (api/rules.ts now,
-// api/areas.ts once a future areas editor lands). Base URL is empty --
-// nginx proxies /api/*
-// to uvicorn in production, and vite.config.ts's dev-server proxy does the
-// same thing locally, so relative paths work in both.
+// Thin fetch wrapper shared by every api/*.ts module. Base URL is empty --
+// both nginx (prod) and vite's dev-server proxy /api/* to uvicorn, so relative
+// paths work in both.
 
 export class ApiError extends Error {
   status: number;
@@ -50,10 +48,8 @@ function filenameFromContentDisposition(header: string | null): string | undefin
   return header?.match(/filename="?([^";]+)"?/)?.[1];
 }
 
-// For a binary response (e.g. the archive flight-download endpoint) that a
-// plain request<T>() can't handle -- there's no JSON body to parse, and
-// the caller needs the actual bytes plus a filename to trigger a browser
-// download, not a parsed object.
+// For a binary response (e.g. flight download) that request<T>() can't handle:
+// no JSON body to parse, and the caller needs the raw bytes plus a filename.
 async function download(path: string): Promise<{ blob: Blob; filename?: string }> {
   const response = await fetch(path);
   if (!response.ok) {

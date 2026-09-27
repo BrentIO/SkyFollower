@@ -264,10 +264,7 @@ describe("traceLabelSortKey", () => {
 
 describe("formatTraceLabel", () => {
   it("renders both measurements and the time on two lines", () => {
-    // 1785499200 = 2026-07-31T12:00:00Z; formatting is locale/zone-dependent
-    // (matches the rest of the modal's toLocaleTimeString() usage), so only
-    // the first line -- which doesn't depend on the viewer's zone -- is
-    // asserted verbatim.
+    // Time formatting is zone-dependent, so only the zone-independent first line is asserted.
     const label = formatTraceLabel(416, 16050, 1785499200);
     const lines = label.split("\n");
     expect(lines[0]).toBe("416 kt  16050 ft");

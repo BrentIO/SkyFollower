@@ -1,6 +1,4 @@
-// Pure helpers for FlightViewModal.tsx, split out so they're testable the
-// same way the rest of this codebase's lib/ logic is (component tests
-// aren't otherwise a thing here).
+// Pure helpers for FlightViewModal.tsx, split out to be testable like the rest of lib/.
 
 import type { ExpressionSpecification } from "maplibre-gl";
 import type { FlightViewAirport } from "../api/archiveSearch";
@@ -10,10 +8,8 @@ export const VFR_SQUAWK = "1200";
 
 export type SquawkPillVariant = "alert" | "vfr" | "neutral";
 
-// Squawk should always be visible when present -- emergency/VFR codes just
-// get emphasis on top of that (red/green vs. a neutral pill), rather than
-// being the only codes shown at all. Returns null when there's nothing to
-// render (squawk absent), so the caller can skip the pill entirely.
+// Emergency/VFR codes just get emphasis, not exclusive display. Null means
+// no squawk to render at all.
 export function squawkPillVariant(squawk: string | null | undefined): SquawkPillVariant | null {
   if (!squawk) return null;
   if (EMERGENCY_SQUAWKS.has(squawk)) return "alert";
@@ -23,21 +19,9 @@ export function squawkPillVariant(squawk: string | null | undefined): SquawkPill
 
 export type Coord = number[]; // [lon, lat] or [lon, lat, alt_ft]
 
-// Altitude-to-color lookup table (hue and lightness each interpolated from
-// their own set of breakpoints below), giving a smooth climb/cruise/descent
-// color ramp. Only an "air" table is needed here: null altitude is handled
-// separately as pure black (see altitudeColor below) rather than through a
-// ground/unknown table entry.
-//
-// #1912 tried darkening the l breakpoints for h 60-140 (roughly the
-// 6,000-11,000ft band) by ~13-16 points, ported here in lockstep from
-// map/frontend's copy, to fix low contrast against NEXRAD radar returns
-// in that hue range. Reverted (in both copies): the darker color read as
-// harder to see in general use, not just fixed against radar -- worse
-// than the original, not better. Back to the original values here; a
-// real fix for the radar-contrast problem still needs a properly
-// compared (not simulated) brighter/more-saturated candidate.
-// identically to before this change.
+// Altitude-to-color lookup table (hue then lightness interpolated from the
+// breakpoints below). Only "air" is needed; null altitude renders as pure
+// black separately (see altitudeColor), not via a ground/unknown entry.
 const COLOR_BY_ALT_AIR = {
   s: 88,
   h: [
@@ -83,19 +67,10 @@ const COLOR_BY_ALT_AIR = {
   ],
 };
 
-// Interpolates hue then lightness from COLOR_BY_ALT_AIR's breakpoints,
-// trimmed to what a static archived path needs -- no stale/selected/mlat/
-// squawk modifiers, no ground/unknown branches, no darkened/webgl variants.
-//
-// Two deliberate design choices here (both user-confirmed):
-//   - Null/unknown altitude renders pure black rather than a light gray --
-//     the line/points are thick enough that solid black reads clearly on
-//     the light basemap.
-//   - Altitude is interpolated at its raw value rather than quantized to
-//     fixed bands first. Quantizing exists elsewhere to keep live-updating
-//     markers from jittering color on every message; a static archived path
-//     never updates, so that quantization would only add banding for no
-//     benefit here.
+// Trimmed to what a static archived path needs: no stale/selected/mlat/squawk
+// modifiers. Null altitude renders pure black (solid enough against the light
+// basemap); altitude is interpolated at its raw value, not quantized, since
+// this path never updates so there's no jitter to guard against.
 export function altitudeColor(altitudeFt: number | null): string {
   if (altitudeFt === null) return "hsl(0, 0%, 0%)";
 
@@ -134,10 +109,9 @@ export function altitudeColor(altitudeFt: number | null): string {
   return `hsl(${h.toFixed(1)}, ${clampedS.toFixed(1)}%, ${clampedL.toFixed(1)}%)`;
 }
 
-// Darkens an `altitudeColor()` output by ~10 lightness percentage points
-// (clamped at 0), same hue/saturation -- used for trace-point circle
-// strokes so overlapping points at low zoom read as a darker shade of the
-// same altitude color instead of merging into a flat near-black outline.
+// Darkens an altitudeColor() output ~10 lightness points (clamped at 0), same
+// hue/saturation -- used for trace-point strokes so overlapping points read
+// as a shade of the same color instead of a flat outline.
 export function darkenColor(color: string): string {
   const match = color.match(/^hsl\(([\d.]+), ([\d.]+)%, ([\d.]+)%\)$/);
   if (!match) return color;
@@ -146,12 +120,8 @@ export function darkenColor(color: string): string {
   return `hsl(${h}, ${s}%, ${darkenedL.toFixed(1)}%)`;
 }
 
-// A single LineString carrying every coordinate, for use with MapLibre's
-// `line-gradient` paint property (which recolors along the rendered line's
-// cumulative distance, not per-feature) -- this is what replaces the old
-// one-feature-per-point-pair approach, which visually collapsed into dots
-// at zoom levels where a segment's on-screen length was smaller than the
-// line width.
+// A single LineString for use with MapLibre's `line-gradient` paint property,
+// which recolors along cumulative distance rather than per-feature.
 export function flightPathFeature(coordinates: Coord[]) {
   return {
     type: "FeatureCollection" as const,
@@ -168,9 +138,8 @@ export function flightPathFeature(coordinates: Coord[]) {
   };
 }
 
-// Approximate great-circle distance in meters (haversine) -- only used for
-// relative cumulative-distance weighting along the path when building
-// gradient stops, so the spherical-earth approximation is fine.
+// Great-circle distance in meters; used only for relative weighting along the
+// path, so the spherical-earth approximation is fine.
 function haversineMeters(a: Coord, b: Coord): number {
   const earthRadiusMeters = 6371000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -182,14 +151,9 @@ function haversineMeters(a: Coord, b: Coord): number {
   return 2 * earthRadiusMeters * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-// Builds the `line-gradient` interpolate expression: each coordinate's
-// altitude color at its normalized cumulative distance (0..1) along the
-// path (MapLibre's `["line-progress"]`), so the line reads as one
-// continuous gradient instead of discrete per-segment colors.
-// `interpolate` requires strictly increasing input stops, so consecutive
-// points at (or effectively at) the same location -- which would produce
-// the same or a decreasing progress value -- are nudged forward by a
-// negligible epsilon instead of producing a duplicate/out-of-order stop.
+// Each coordinate's altitude color at its normalized cumulative distance
+// (0..1) along `["line-progress"]`. `interpolate` requires strictly
+// increasing stops, so coincident points are nudged forward by an epsilon.
 export function lineGradientExpression(coordinates: Coord[]): ExpressionSpecification {
   const neutral = altitudeColor(null);
 
@@ -237,9 +201,7 @@ export function boundsOf(coordinates: Coord[]): [[number, number], [number, numb
   ];
 }
 
-// "1h 17m 12s" -- drops whichever unit is zero rather than always showing
-// all three, and never converts hours to days (a 30-hour ferry flight reads
-// "30h 4m", not "1d 6h 4m").
+// "1h 17m 12s" -- drops zero units; never converts hours to days.
 export function formatDuration(startIso: string, endIso: string): string {
   const totalSeconds = Math.max(0, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -256,14 +218,9 @@ export function formatDuration(startIso: string, endIso: string): string {
 // Trace points (per-position dots + labels)
 // ---------------------------------------------------------------------------
 
-// A lower key wins MapLibre's `symbol-sort-key` conflict resolution (kept
-// preferentially when labels collide). Plain index order would mean "first
-// N points visible" always wins, clumping surviving labels at the start of
-// the track regardless of zoom. Recursive bisection instead ranks the very
-// first/last point highest, then the midpoint, then each remaining
-// quarter-point, etc. -- so whichever subset MapLibre's collision detection
-// keeps at a given zoom is always roughly evenly spread across the whole
-// track, not bunched at one end.
+// A lower key wins MapLibre's `symbol-sort-key` collision resolution. Bisection
+// ranks first/last highest, then the midpoint, then each quarter-point, etc.,
+// so surviving labels stay spread across the track instead of bunching at one end.
 export function traceLabelSortKey(index: number, total: number): number {
   if (total <= 1 || index === 0 || index === total - 1) return 0;
   let level = 0;
@@ -278,10 +235,8 @@ export function traceLabelSortKey(index: number, total: number): number {
   }
 }
 
-// "416 kt  16050 ft\n10:52:31" -- either measurement half may be absent
-// (no surrounding velocity sample, or a 2D-only coordinate with no
-// altitude) without collapsing to a double space or a stray leading unit;
-// the time line is dropped entirely when the sample has no timestamp.
+// "416 kt  16050 ft\n10:52:31" -- either measurement may be absent without a
+// stray double-space; the time line drops entirely without a timestamp.
 export function formatTraceLabel(
   speedKt: number | null,
   altitudeFt: number | null,
@@ -305,11 +260,8 @@ export interface TracePointProperties {
   sortKey: number;
 }
 
-// Builds the Point FeatureCollection the trace-points toggle's circle/symbol
-// layers read from -- color and label text are precomputed per point here
-// (rather than as MapLibre expressions) since altitudeColor/formatTraceLabel
-// are plain JS already used elsewhere; a `["get", ...]` paint/layout
-// property is cheaper than re-deriving either in an expression.
+// Color/label are precomputed per point (not as MapLibre expressions) since a
+// `["get", ...]` paint property is cheaper than re-deriving them in-expression.
 export function tracePointsFeatureCollection(
   coordinates: Coord[],
   coordTimes: (number | null)[],
@@ -340,9 +292,8 @@ export function airportLocation(airport: FlightViewAirport): string | null {
   const filtered = [airport.city, airport.region, airport.country].filter(
     (p): p is string => !!p && p.trim() !== "",
   );
-  // Drop a part equal to the one immediately before it -- e.g. region
-  // "Singapore" in country "Singapore" would otherwise render
-  // "Singapore, Singapore".
+  // Drop a part equal to the one before it, e.g. region "Singapore" in
+  // country "Singapore" would otherwise render "Singapore, Singapore".
   const parts = filtered.filter((p, i) => i === 0 || p !== filtered[i - 1]);
   return parts.length > 0 ? parts.join(", ") : null;
 }
