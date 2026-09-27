@@ -9,10 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -45,10 +41,6 @@ REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 _PAGE_URL = _mod._PAGE_URL
 
-
-# ---------------------------------------------------------------------------
-# HTML fixtures
-# ---------------------------------------------------------------------------
 
 def _table_html(rows: list[list[str]], table_id: str, header: list[str] | None = None) -> str:
     if header is None:
@@ -120,10 +112,6 @@ def _make_redis_no_match():
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: _parse_table
-# ---------------------------------------------------------------------------
-
 class TestParseTable:
     def _soup_table(self, rows, table_id="table_1"):
         from bs4 import BeautifulSoup
@@ -165,10 +153,6 @@ class TestParseTable:
         records = _parse_table(table)
         assert records[0]["party"] == "შპს ჯორჯიან ეარვეისი (Georgian Airways)"
 
-
-# ---------------------------------------------------------------------------
-# Tests: download_and_parse
-# ---------------------------------------------------------------------------
 
 class TestDownloadAndParse:
     def test_raises_on_http_error(self):
@@ -261,10 +245,6 @@ class TestDownloadAndParse:
         assert regs == {"4L-AAA", "4L-BBB", "4L-CCC"}
 
 
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
-
 class TestBuildRecord:
     def test_full_record_with_owner(self):
         row = _make_merged_row(owner="Own Co")
@@ -328,10 +308,6 @@ class TestBuildRecord:
         assert "aircraft" not in record
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_hyphen_escaped(self):
         assert "\\-" in _escape_tag("4L-GAA")
@@ -339,10 +315,6 @@ class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("ABCD") == "ABCD"
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_record_written_when_found(self):
@@ -391,10 +363,6 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert "serial_number" not in set_call[0][2]["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

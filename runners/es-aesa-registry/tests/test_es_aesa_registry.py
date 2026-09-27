@@ -10,10 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -45,10 +41,6 @@ publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 def _make_row(
     matricula="EC-ABC",
@@ -96,10 +88,6 @@ def _make_redis_no_match():
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: header normalization (via _cell + replace)
-# ---------------------------------------------------------------------------
-
 class TestHeaderNormalization:
     def test_newline_in_header_replaced_with_space(self):
         # Simulates what download_and_parse does: _cell(v).replace("\n", " ")
@@ -117,10 +105,6 @@ class TestHeaderNormalization:
         normalized = _cell(raw).replace("\n", " ")
         assert normalized == "Fabricante"
 
-
-# ---------------------------------------------------------------------------
-# Tests: _cell
-# ---------------------------------------------------------------------------
 
 class TestCell:
     def test_none_returns_empty(self):
@@ -143,10 +127,6 @@ class TestCell:
         # U+00AD soft hyphen
         assert _cell("EC­FTR") == "EC-FTR"
 
-
-# ---------------------------------------------------------------------------
-# Tests: _decode_clase
-# ---------------------------------------------------------------------------
 
 class TestDecodeClase:
     def test_avion(self):
@@ -179,10 +159,6 @@ class TestDecodeClase:
     def test_empty_returns_none(self):
         assert _decode_clase("") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
 
 class TestBuildRecord:
     def test_full_record(self):
@@ -284,10 +260,6 @@ class TestBuildRecord:
         assert record["aircraft"]["type"] == "Glider"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("ECABC") == "ECABC"
@@ -298,10 +270,6 @@ class TestEscapeTag:
     def test_empty_string(self):
         assert _escape_tag("") == ""
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_record_written_when_found_in_redis(self):
@@ -355,10 +323,6 @@ class TestWriteToRedis:
         set_call = r.pipeline.return_value.json.return_value.set.call_args
         assert "manufacturer" not in set_call[0][2]["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

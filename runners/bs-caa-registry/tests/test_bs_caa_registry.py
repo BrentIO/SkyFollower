@@ -9,10 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -49,10 +45,6 @@ REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 INDEX_URL = _mod.INDEX_URL
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 # Real header row from the live CAA register PDF, column order preserved:
 # ['REGISTERED OWNER OF AIRCRAFT', 'AIRCRAFT REGISTRATION',
@@ -128,10 +120,6 @@ def _make_redis_no_match():
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: _find_download_url
-# ---------------------------------------------------------------------------
-
 class TestFindDownloadUrl:
     def test_finds_absolute_url(self):
         html = (
@@ -174,10 +162,6 @@ class TestFindDownloadUrl:
                 _find_download_url()
 
 
-# ---------------------------------------------------------------------------
-# Tests: download_registry
-# ---------------------------------------------------------------------------
-
 class TestDownloadRegistry:
     def test_writes_temp_file(self):
         with patch("bs_caa_registry_main._find_download_url", return_value="https://caabahamas.com/x.pdf"):
@@ -203,10 +187,6 @@ class TestDownloadRegistry:
                 with pytest.raises(RuntimeError, match="HTTP 503"):
                     download_registry()
 
-
-# ---------------------------------------------------------------------------
-# Tests: parse_pdf
-# ---------------------------------------------------------------------------
 
 class TestParsePdf:
     # Data rows follow _HEADERS order: owner, registration, make/model, serial.
@@ -314,10 +294,6 @@ class TestParsePdf:
                 parse_pdf("fake.pdf")
 
 
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
-
 class TestBuildRecord:
     def test_full_record(self):
         row = _make_row()
@@ -374,10 +350,6 @@ class TestBuildRecord:
         assert record["aircraft"]["serial_number"] == "172S 12345"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("C6ABC") == "C6ABC"
@@ -388,10 +360,6 @@ class TestEscapeTag:
     def test_empty_string(self):
         assert _escape_tag("") == ""
 
-
-# ---------------------------------------------------------------------------
-# Tests: _type_tokens / _type_check_passes
-# ---------------------------------------------------------------------------
 
 class TestTypeCheckPasses:
     def test_empty_detail_model_always_passes(self):
@@ -408,10 +376,6 @@ class TestTypeCheckPasses:
         simple = {"type_designator": "AW109"}
         assert _type_check_passes(simple, "Leonardo AW139") is False
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_record_written_when_found_in_redis(self):
@@ -483,10 +447,6 @@ class TestWriteToRedis:
         count = write_to_redis([], r, REDIS_TTL)
         assert count == 0
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

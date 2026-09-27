@@ -10,10 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -49,10 +45,6 @@ MQTT_ROOT = _mod.MQTT_ROOT
 _INDEX_URL = _mod._INDEX_URL
 _SKIP_PREFIXES = _mod._SKIP_PREFIXES
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _make_word(text: str, x0: float, top: float = 100.0) -> dict:
     return {"text": text, "x0": x0, "top": top}
@@ -106,10 +98,6 @@ def _make_redis_no_match():
     return r
 
 
-# ---------------------------------------------------------------------------
-# Tests: _col_index
-# ---------------------------------------------------------------------------
-
 class TestColIndex:
     def test_registration_col(self):
         assert _col_index(27.8) == 0
@@ -134,10 +122,6 @@ class TestColIndex:
         assert _col_index(1015.1) == 5
         assert _col_index(2000.0) == 5
 
-
-# ---------------------------------------------------------------------------
-# Tests: _words_to_cols
-# ---------------------------------------------------------------------------
 
 class TestWordsToCols:
     def test_single_word_per_column(self):
@@ -183,10 +167,6 @@ class TestWordsToCols:
         assert cols[4] == ""
 
 
-# ---------------------------------------------------------------------------
-# Tests: _find_pdf_url
-# ---------------------------------------------------------------------------
-
 class TestFindPdfUrl:
     def test_finds_absolute_href(self):
         html = _make_index_page("https://www.2-reg.com/wp-content/uploads/2026/07/Register_20260701.pdf")
@@ -224,10 +204,6 @@ class TestFindPdfUrl:
         logged = " ".join(str(a) for call in mock_log.call_args_list for a in call.args)
         assert _INDEX_URL in logged
 
-
-# ---------------------------------------------------------------------------
-# Tests: download_and_parse (with mocked PDF)
-# ---------------------------------------------------------------------------
 
 class TestDownloadAndParse:
     def _mock_page(self, first_line: str, rows: list[list[dict]]) -> MagicMock:
@@ -346,10 +322,6 @@ class TestDownloadAndParse:
         assert records == []
 
 
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
-
 class TestBuildRecord:
     def test_full_record(self):
         row = _make_row()
@@ -404,10 +376,6 @@ class TestBuildRecord:
         assert "aircraft" not in record
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_hyphen_escaped(self):
         assert "\\-" in _escape_tag("2-ABCD")
@@ -415,10 +383,6 @@ class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("ABCD") == "ABCD"
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_record_written_when_found(self):
@@ -486,10 +450,6 @@ class TestWriteToRedis:
         count = write_to_redis(rows, r, REDIS_TTL)
         assert count == 2
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

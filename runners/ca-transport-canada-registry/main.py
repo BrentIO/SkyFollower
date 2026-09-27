@@ -56,10 +56,6 @@ logger = logging.getLogger("ca-transport-canada-registry")
 DOWNLOAD_URL = "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/CCARCS-RIACC/download/ccarcsdb.zip"
 MQTT_ROOT = "SkyFollower/runner/ca-transport-canada-registry"
 
-# ---------------------------------------------------------------------------
-# Decode tables (data-dictionary.yaml)
-# ---------------------------------------------------------------------------
-
 # carscurr.txt col 10 AIRCRAFT_CATEGORY_E → aircraft.type
 _AIRCRAFT_CATEGORIES: dict[str, str] = {
     "Aeroplane": "Airplane",
@@ -106,10 +102,6 @@ _COUNTRY_NAMES: dict[str, str] = {
     "IRELAND": "IE",
 }
 
-
-# ---------------------------------------------------------------------------
-# Decode helpers
-# ---------------------------------------------------------------------------
 
 def _parse_registration(raw_mark: str) -> Optional[str]:
     """Prepend 'C-' to the trimmed TC mark. Returns None for blank input."""
@@ -178,10 +170,6 @@ def _decode_country(raw: str) -> str:
     return _COUNTRY_NAMES.get(raw.strip().upper(), "CA")
 
 
-# ---------------------------------------------------------------------------
-# SQLite schema for local staging
-# ---------------------------------------------------------------------------
-
 _SCHEMA = """
 CREATE TABLE aircraft (
     icao_hex                TEXT PRIMARY KEY,
@@ -214,10 +202,6 @@ CREATE INDEX idx_owners_registration ON owners(registration);
 """
 
 
-# ---------------------------------------------------------------------------
-# Download
-# ---------------------------------------------------------------------------
-
 def download_and_extract(url: str) -> dict[str, bytes]:
     """Download the TC ZIP and return a mapping of lowercased filename → bytes."""
     logger.info("Downloading Transport Canada database from %s", url)
@@ -233,10 +217,6 @@ def download_and_extract(url: str) -> dict[str, bytes]:
     return files
 
 
-# ---------------------------------------------------------------------------
-# Parsing helpers
-# ---------------------------------------------------------------------------
-
 def _csv_rows(data: bytes):
     """Yield rows from a TC CSV file (ISO-8859-1, comma-delimited), skipping header.
 
@@ -249,10 +229,6 @@ def _csv_rows(data: bytes):
             break
         yield row
 
-
-# ---------------------------------------------------------------------------
-# SQLite staging
-# ---------------------------------------------------------------------------
 
 def stage_data(files: dict[str, bytes], db_path: str) -> sqlite3.Connection:
     """Parse carscurr.txt and carsownr.txt, stage rows into SQLite."""
@@ -371,13 +347,8 @@ def stage_data(files: dict[str, bytes], db_path: str) -> sqlite3.Connection:
     return conn
 
 
-# ---------------------------------------------------------------------------
-# Build Redis record
-# ---------------------------------------------------------------------------
-
 def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) -> dict:
     """Build the aircraft:registry:{icao_hex} JSON record from staged rows."""
-    # registrant — use first active owner record
     registrant: Optional[dict] = None
     if owner_rows:
         o = owner_rows[0]
@@ -393,7 +364,7 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
             "type": o["owner_type"] or None,
         }
 
-    # aircraft — type from decoded AIRCRAFT_CATEGORY_E; category null (FAA-only field)
+    # aircraft.category is left null: FAA-only field, not present in this register.
     aircraft: Optional[dict] = None
     if acft_row["manufacturer_name"] or acft_row["model"] or acft_row["seat_count"] or acft_row["serial_number"]:
         aircraft = {
@@ -405,7 +376,6 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
             "manufactured_date": acft_row["manufactured_date"] or None,
         }
 
-    # powerplant
     powerplant: Optional[dict] = None
     if acft_row["engine_count"] or acft_row["engine_category"] or acft_row["engine_manufacturer"]:
         powerplant = {
@@ -428,10 +398,6 @@ def build_aircraft_record(acft_row: sqlite3.Row, owner_rows: list[sqlite3.Row]) 
     }
 
 
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
-
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft detail JSON search index if it does not already exist."""
     try:
@@ -447,10 +413,6 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
-
 def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> int:
     """Write active aircraft records to Redis. Returns count of records written."""
     acft_cur = conn.cursor()
@@ -462,9 +424,9 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     acft_rows = acft_cur.fetchall()
     logger.info("Writing %d active registration records to Redis.", len(acft_rows))
 
-    # Type-designator consensus (#1888): this register writes manufacturer/
-    # model but never an ICAO type_designator. Hexes Mictronics already
-    # labels are free training data -- see shared/type_designator_consensus.py.
+    # This register never carries an ICAO type_designator. Hexes that Mictronics
+    # has already labelled seed a manufacturer/model → type_designator consensus
+    # table (shared/type_designator_consensus.py), used below to infer one for the rest.
     mictronics_designators = fetch_mictronics_type_designators(r, (row["icao_hex"] for row in acft_rows))
     consensus_table = build_consensus_table(
         (row["manufacturer_name"], row["model"], mictronics_designators.get(row["icao_hex"]))
@@ -529,10 +491,6 @@ def write_to_redis(conn: sqlite3.Connection, r: redis_lib.Redis, ttl: int) -> in
     )
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -620,10 +578,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

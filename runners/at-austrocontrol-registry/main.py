@@ -2,15 +2,13 @@
 """
 SkyFollower Austria Austrocontrol Data Runner
 
-Downloads the Austrian aircraft register from Austrocontrol, looks up each
-OE- registration in the Redis simple search index to find the ICAO hex (provided
-by Mictronics), runs a type sanity check against the aircraft:simple record, then
-writes enrichment data to aircraft:registry:{icao_hex} and publishes MQTT completion
-stats, then exits.
+Downloads the Austrian aircraft register from Austrocontrol, resolves each OE-
+registration to an ICAO hex via the Redis Mictronics search index, runs a type
+sanity check against the aircraft:simple record, and writes enrichment data to
+aircraft:registry:{icao_hex}.
 
-Important: the Austrocontrol register does not publish ICAO hex (Mode S) addresses.
-This runner can only enrich records that already exist in Redis from Mictronics.
-Schedule it AFTER the Mictronics runner.
+This register publishes no ICAO hex of its own, so it can only enrich records
+Mictronics has already written — schedule this runner after Mictronics.
 
 Data source: https://www.austrocontrol.at/lfa-publish-service/v2/oenfl/luftfahrzeuge
 """
@@ -58,10 +56,6 @@ API_URL = "https://www.austrocontrol.at/lfa-publish-service/v2/oenfl/luftfahrzeu
 MQTT_ROOT = "SkyFollower/runner/at-austrocontrol-registry"
 BATCH_SIZE = 100
 
-# ---------------------------------------------------------------------------
-# Decode tables
-# ---------------------------------------------------------------------------
-
 _AIRCRAFT_TYPE_MAP: dict[str, str] = {
     "Flugzeug": "Airplane",
     "Hubschrauber": "Helicopter",
@@ -107,23 +101,14 @@ _STRIP_QUOTES_RE = re.compile(r'^"(.*)"$', re.DOTALL)
 _TYPE_TOKEN_RE = re.compile(r'[A-Z]{1,4}\d{2,4}')
 
 
-# ---------------------------------------------------------------------------
-# Type sanity check helpers
-# ---------------------------------------------------------------------------
-
 def _type_tokens(model_str: str) -> set:
     """Extract normalised type tokens from a model string (e.g. 'PA-38' → {'PA38'})."""
     return {t.split('-')[0] for t in _TYPE_TOKEN_RE.findall(model_str.upper())}
 
 
 def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
-    """Return True if the Austrocontrol model string is compatible with the simple record.
-
-    Compares token sets extracted from the simple record's type_designator /
-    manufacturer_model fields against tokens extracted from the Austrocontrol
-    baumuster (model) string.  Returns True when either side has no tokens (no
-    information to compare) or when at least one token overlaps.
-    """
+    """True if the Austrocontrol baumuster shares a type token with the simple
+    record's type_designator/manufacturer_model, or either side has none to compare."""
     if not detail_model_str:
         return True
     simple_tokens = _type_tokens(
@@ -138,10 +123,6 @@ def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
     return bool(simple_tokens & detail_tokens)
 
 
-# ---------------------------------------------------------------------------
-# Decode helpers
-# ---------------------------------------------------------------------------
-
 def _decode_aircraft_type(raw: str) -> Optional[str]:
     val = raw.strip()
     return _AIRCRAFT_TYPE_MAP.get(val, val) if val else None
@@ -151,10 +132,6 @@ def _decode_country(raw: str) -> Optional[str]:
     val = raw.strip()
     return _COUNTRY_MAP.get(val, val) if val else None
 
-
-# ---------------------------------------------------------------------------
-# Halter (owner) parsing
-# ---------------------------------------------------------------------------
 
 def _parse_halter(raw: str) -> Optional[dict]:
     """Parse the Austrocontrol halter field into a registrant sub-object.
@@ -217,10 +194,6 @@ def _parse_halter(raw: str) -> Optional[dict]:
     return fields or None
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(item: dict, icao_hex: str, registration: str) -> dict:
     """Build the enrichment record from a single Austrocontrol API item."""
     aircraft_fields: dict = {}
@@ -258,10 +231,6 @@ def _build_record(item: dict, icao_hex: str, registration: str) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -272,10 +241,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return ''.join(result)
 
-
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
@@ -292,15 +257,9 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
-
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
-    """Batch-query Redis search index for icao_hex by registration mark.
-
-    Returns {registration → icao_hex} for registrations already in Redis.
-    """
+    """Batch-query Redis search index; returns {registration: icao_hex} for
+    registrations already present."""
     reg_map: dict[str, str] = {}
     total_batches = (len(registrations) + BATCH_SIZE - 1) // BATCH_SIZE
 
@@ -329,10 +288,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
     return reg_map
 
 
-# ---------------------------------------------------------------------------
-# Download
-# ---------------------------------------------------------------------------
-
 def download_register(session: requests.Session) -> list[dict]:
     """Download the Austrocontrol aircraft register and return as a list of dicts."""
     logger.info("Downloading Austria Austrocontrol aircraft register from %s", API_URL)
@@ -345,10 +300,6 @@ def download_register(session: requests.Session) -> list[dict]:
     logger.info("Downloaded %d records.", len(items))
     return items
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(items: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Enrich existing Redis records with Austrocontrol data. Returns count written."""
@@ -428,10 +379,6 @@ def write_to_redis(items: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished: %d written, %d skipped (deregistered), %d errors.", count, deregistered, errors)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -518,10 +465,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

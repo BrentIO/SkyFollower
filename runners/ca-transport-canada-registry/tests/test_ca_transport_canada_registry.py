@@ -23,10 +23,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import helper
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)        # runners/ca-transport-canada-registry/
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -65,19 +61,11 @@ REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
 
-# ---------------------------------------------------------------------------
-# ICAO hex binary strings for test records
-# format(int(binary, 2), '06X') must produce a 6-char hex
-# ---------------------------------------------------------------------------
-
+# ICAO hex binary strings for test records; format(int(binary, 2), '06X') must produce a 6-char hex.
 _BIN_C00001 = "110000000000000000000001"   # → C00001
 _BIN_C00002 = "110000000000000000000010"   # → C00002
 _BIN_C00003 = "110000000000000000000011"   # → C00003 (inactive)
 
-
-# ---------------------------------------------------------------------------
-# Sample CSV fixtures
-# ---------------------------------------------------------------------------
 
 def _acft_row(**fields) -> str:
     """Build a 47-column carscurr.txt data row from keyword {index: value} overrides."""
@@ -210,10 +198,6 @@ def _make_files(**overrides) -> dict[str, bytes]:
     return base
 
 
-# ---------------------------------------------------------------------------
-# Tests: _parse_registration
-# ---------------------------------------------------------------------------
-
 class TestParseRegistration:
     def test_four_char_gives_c_prefix(self):
         assert _parse_registration("GABC") == "C-GABC"
@@ -231,10 +215,6 @@ class TestParseRegistration:
     def test_whitespace_only_returns_none(self):
         assert _parse_registration("   ") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _parse_icao_hex
-# ---------------------------------------------------------------------------
 
 class TestParseIcaoHex:
     def test_binary_converts_correctly(self):
@@ -258,10 +238,6 @@ class TestParseIcaoHex:
         assert _parse_icao_hex("  " + _BIN_C00001 + "  ") == "C00001"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _parse_date_yyyymmdd
-# ---------------------------------------------------------------------------
-
 class TestParseDateYyyymmdd:
     def test_valid_date(self):
         assert _parse_date_yyyymmdd("2000/01/15") == "2000-01-15T00:00:00Z"
@@ -275,10 +251,6 @@ class TestParseDateYyyymmdd:
     def test_invalid_format_returns_none(self):
         assert _parse_date_yyyymmdd("2000-01-15") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _decode_aircraft_type
-# ---------------------------------------------------------------------------
 
 class TestDecodeAircraftType:
     def test_aeroplane_maps_to_airplane(self):
@@ -302,10 +274,6 @@ class TestDecodeAircraftType:
     def test_strips_whitespace(self):
         assert _decode_aircraft_type("  Aeroplane  ") == "Airplane"
 
-
-# ---------------------------------------------------------------------------
-# Tests: _decode_engine_category
-# ---------------------------------------------------------------------------
 
 class TestDecodeEngineCategory:
     def test_piston(self):
@@ -336,10 +304,6 @@ class TestDecodeEngineCategory:
         assert _decode_engine_category("  Piston  ") == "Piston"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _decode_country
-# ---------------------------------------------------------------------------
-
 class TestDecodeCountry:
     def test_canada(self):
         assert _decode_country("CANADA") == "CA"
@@ -356,10 +320,6 @@ class TestDecodeCountry:
     def test_strips_whitespace(self):
         assert _decode_country("  CANADA  ") == "CA"
 
-
-# ---------------------------------------------------------------------------
-# Tests: _parse_int and _parse_float
-# ---------------------------------------------------------------------------
 
 class TestParseHelpers:
     def test_parse_int_valid(self):
@@ -380,10 +340,6 @@ class TestParseHelpers:
     def test_parse_float_empty_returns_none(self):
         assert _parse_float("") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: stage_data
-# ---------------------------------------------------------------------------
 
 class TestStageData:
     def test_aircraft_count_includes_inactive(self):
@@ -531,10 +487,6 @@ class TestStageData:
             conn.close()
 
 
-# ---------------------------------------------------------------------------
-# Tests: build_aircraft_record
-# ---------------------------------------------------------------------------
-
 class TestBuildAircraftRecord:
     def _make_conn(self) -> sqlite3.Connection:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -660,10 +612,6 @@ class TestBuildAircraftRecord:
         conn.close()
 
 
-# ---------------------------------------------------------------------------
-# Tests: Redis key construction
-# ---------------------------------------------------------------------------
-
 class TestRedisKeys:
     def test_aircraft_registry_key_format(self):
         from shared.redis_keys import aircraft_registry_key
@@ -673,10 +621,6 @@ class TestRedisKeys:
         from shared.redis_keys import AIRCRAFT_REGISTRY_SEARCH_INDEX
         assert AIRCRAFT_REGISTRY_SEARCH_INDEX == "idx:aircraft:registry"
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def _make_db(self) -> sqlite3.Connection:
@@ -775,10 +719,6 @@ class TestWriteToRedis:
         assert "registrant" not in record
         conn.close()
 
-
-# ---------------------------------------------------------------------------
-# Tests: type-designator consensus deduction (#1888)
-# ---------------------------------------------------------------------------
 
 # Same (manufacturer, model) = ("PIPER", "PA-28-181") across 4 active hexes:
 # 3 Mictronics already labels P28A, 1 Mictronics has never heard of.
@@ -879,10 +819,6 @@ class TestTypeDesignatorConsensusDeduction:
         records = {c.args[0]: c.args[2] for c in pipe_json.set.call_args_list}
         assert "type_designator" not in records["aircraft:registry:C00014"]["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: MQTT completion stats (mocked)
-# ---------------------------------------------------------------------------
 
 class TestMqttCompletionStats:
     def _setup_mock_client(self):

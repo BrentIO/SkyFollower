@@ -2,19 +2,16 @@
 """
 SkyFollower Bahamas CAA Data Runner
 
-Downloads the Civil Aviation Authority of the Bahamas (CAA) aircraft register PDF,
-parses aircraft data, and writes enrichment records to aircraft:registry:{icao_hex} keys
-in Redis. ICAO hex is resolved via a RediSearch lookup against the Mictronics
-aircraft:simple index (Mode S address is not published in this register).
+Downloads the Bahamas CAA aircraft register PDF (URL is date-stamped and
+changes each update, so this runner first scrapes the registers page to find
+the current link), parses it, and writes enrichment to
+aircraft:registry:{icao_hex}. ICAO hex is resolved via RediSearch against the
+Mictronics index, since this register does not publish Mode S addresses --
+schedule this runner after Mictronics.
 
-The Bahamas register contains only owner name, registration, combined make/model,
-and serial number. No manufacturer, type designator, or powerplant data is available.
-The download URL is date-stamped and changes with each update; the runner scrapes the
-CAA registers page to discover the current link automatically.
-
-Important: the Bahamas register does not publish ICAO hex (Mode S) addresses.
-This runner can only enrich records that already exist in Redis from Mictronics.
-Schedule it AFTER the Mictronics runner.
+The register itself carries only owner name, registration, combined
+make/model, and serial number -- no manufacturer, type designator, or
+powerplant data.
 
 Data source: https://caabahamas.com/registers/
 """
@@ -64,8 +61,8 @@ MQTT_ROOT = "SkyFollower/runner/bs-caa-registry"
 BATCH_SIZE = 100
 
 # Column headers as they appear in the current CAA register PDF. The CAA has
-# renamed these at least once without notice, so they live here as named
-# constants and header drift is detected loudly (see _validate_headers).
+# renamed these at least once without notice; parse_pdf raises loudly if
+# REGISTRATION_COLUMN is missing from every row.
 REGISTRATION_COLUMN = "AIRCRAFT REGISTRATION"
 MAKE_MODEL_COLUMN = "AIRCRAFT MANUFACTURER & DESIGNATION"
 SERIAL_COLUMN = "AIRCRAFT SERIAL NUMBER"
@@ -73,10 +70,6 @@ OWNER_COLUMN = "REGISTERED OWNER OF AIRCRAFT"
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
-
-# ---------------------------------------------------------------------------
-# URL discovery
-# ---------------------------------------------------------------------------
 
 def _find_download_url() -> str:
     """Scrape the Bahamas CAA registers page to find the current PDF URL."""
@@ -107,10 +100,6 @@ def _find_download_url() -> str:
     raise RuntimeError("Could not find aircraft register PDF URL on Bahamas CAA registers page.")
 
 
-# ---------------------------------------------------------------------------
-# PDF download
-# ---------------------------------------------------------------------------
-
 def download_registry() -> str:
     """Download the Bahamas CAA PDF to a temp file. Returns the temp file path."""
     url = _find_download_url()
@@ -125,10 +114,6 @@ def download_registry() -> str:
     tmp.close()
     return tmp.name
 
-
-# ---------------------------------------------------------------------------
-# PDF parsing
-# ---------------------------------------------------------------------------
 
 def parse_pdf(file_path: str) -> list[dict]:
     """Parse the Bahamas CAA register PDF. Returns data rows as dicts keyed by column name."""
@@ -174,10 +159,6 @@ def parse_pdf(file_path: str) -> list[dict]:
     return rows
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     """Build enrichment record from a PDF row."""
     owner = _WHITESPACE_RE.sub(" ", row.get(OWNER_COLUMN, "").strip()) or None
@@ -208,10 +189,6 @@ def _build_record(icao_hex: str, registration: str, row: dict) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -222,10 +199,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return ''.join(result)
 
-
-# ---------------------------------------------------------------------------
-# Type sanity helpers
-# ---------------------------------------------------------------------------
 
 _TYPE_TOKEN_RE = re.compile(r'[A-Z]{1,4}\d{2,4}')
 
@@ -249,10 +222,6 @@ def _type_check_passes(simple_record: dict, detail_model_str: str) -> bool:
     return bool(simple_tokens & detail_tokens)
 
 
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
-
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
@@ -267,10 +236,6 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         )
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
     """Batch-query Redis search index for icao_hex by registration mark.
@@ -302,10 +267,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
     return reg_map
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Bahamas CAA data to aircraft:detail keys in Redis. Returns count of records written."""
@@ -358,10 +319,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished writing %d records to Redis.", count)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -448,10 +405,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

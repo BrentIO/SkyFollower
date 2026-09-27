@@ -76,10 +76,6 @@ _CANTON_RE = re.compile(r"^[A-Z]{2}$")
 _POSTAL_RE = re.compile(r"^\d{4} .+")
 
 
-# ---------------------------------------------------------------------------
-# Download
-# ---------------------------------------------------------------------------
-
 def download_register(session: requests.Session) -> list[dict]:
     """Download the full BAZL register and return parsed rows."""
     payload = {
@@ -100,10 +96,6 @@ def download_register(session: requests.Session) -> list[dict]:
     reader = csv.DictReader(io.StringIO(text), delimiter=";")
     return list(reader)
 
-
-# ---------------------------------------------------------------------------
-# Decode helpers
-# ---------------------------------------------------------------------------
 
 def _decode_aircraft_type(raw: str) -> Optional[str]:
     val = raw.strip()
@@ -191,10 +183,6 @@ def _parse_registrant(raw: str) -> Optional[dict]:
     return fields or None
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(row: dict) -> Optional[dict]:
     """Build the aircraft:registry:{icao_hex} enrichment record from a BAZL CSV row."""
     raw_hex = row.get(" Aircraft Address HEX", "").strip().upper()
@@ -255,16 +243,10 @@ def _build_record(row: dict) -> Optional[dict]:
 
 
 def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
-    """If the record has an aircraft.type_designator, look up aircraft:type:{designator}
-    and set aircraft.manufacturer_model and aircraft.description_code when found.
-
-    Unconditional: this runner's own type_designator is sourced directly from
-    FOCA/BAZL and is authoritative, so the lookup happens regardless of whether
-    Mictronics also has data for the same hex — merge_aircraft.lua's "registry
-    wins over mictronics" precedence rule already guarantees this value takes
-    priority at read time. The reference table is not a hard dependency: a
-    lookup failure or a missing entry leaves the record exactly as
-    _build_record produced it.
+    """Look up aircraft:type:{designator} and fill in manufacturer_model /
+    description_code when found; a lookup failure or miss leaves the record
+    unchanged. Always runs — merge_aircraft.lua's registry-over-Mictronics
+    precedence means this authoritative value should take priority anyway.
     """
     aircraft = record.get("aircraft")
     if not aircraft:
@@ -286,10 +268,6 @@ def _apply_type_lookup(record: dict, r: redis_lib.Redis) -> None:
     if description_code:
         aircraft["description_code"] = description_code
 
-
-# ---------------------------------------------------------------------------
-# Redis writer
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Build records from BAZL rows and write to Redis. Returns count written."""
@@ -338,10 +316,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     return count
 
 
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
-
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
     try:
@@ -356,10 +330,6 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         )
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -446,10 +416,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

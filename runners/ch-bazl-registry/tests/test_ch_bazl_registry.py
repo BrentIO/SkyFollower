@@ -11,10 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -51,10 +47,6 @@ publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 def _make_row(
     registration="HB-JNA",
@@ -96,16 +88,10 @@ def _make_row(
 
 def _make_redis():
     r = MagicMock()
-    # No aircraft:type match by default, so existing assertions on the
-    # written record aren't polluted by a MagicMock manufacturer_model
-    # value; tests exercising the lookup override this explicitly.
+    # No aircraft:type match by default; tests exercising the lookup override this.
     r.json.return_value.get.return_value = None
     return r
 
-
-# ---------------------------------------------------------------------------
-# Tests: _decode_aircraft_type
-# ---------------------------------------------------------------------------
 
 class TestDecodeAircraftType:
     def test_aeroplane(self):
@@ -160,10 +146,6 @@ class TestDecodeAircraftType:
         assert _decode_aircraft_type("Novel Aircraft Type") == "Novel Aircraft Type"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _decode_engine_type
-# ---------------------------------------------------------------------------
-
 class TestDecodeEngineType:
     def test_piston(self):
         assert _decode_engine_type("Piston Engine") == "Piston"
@@ -196,10 +178,6 @@ class TestDecodeEngineType:
         assert _decode_engine_type("Warp Drive") == "Warp Drive"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _parse_year
-# ---------------------------------------------------------------------------
-
 class TestParseYear:
     def test_valid_year(self):
         assert _parse_year("2016") == "2016-01-01"
@@ -213,10 +191,6 @@ class TestParseYear:
     def test_partial_year_returns_none(self):
         assert _parse_year("201") is None
 
-
-# ---------------------------------------------------------------------------
-# Tests: _parse_seats
-# ---------------------------------------------------------------------------
 
 class TestParseSeats:
     def test_valid_seats(self):
@@ -232,10 +206,6 @@ class TestParseSeats:
         assert _parse_seats("N/A") is None
 
 
-# ---------------------------------------------------------------------------
-# Tests: _parse_engine_model
-# ---------------------------------------------------------------------------
-
 class TestParseEngineModel:
     def test_single_engine(self):
         assert _parse_engine_model("GE90-115BL") == "GE90-115BL"
@@ -249,10 +219,6 @@ class TestParseEngineModel:
     def test_whitespace_stripped(self):
         assert _parse_engine_model("  GE90-115BL  ") == "GE90-115BL"
 
-
-# ---------------------------------------------------------------------------
-# Tests: download_register URL logging
-# ---------------------------------------------------------------------------
 
 class TestDownloadRegisterLogging:
     def test_logs_api_url(self):
@@ -271,10 +237,6 @@ class TestDownloadRegisterLogging:
             logged_messages = [str(c) for c in mock_logger.info.call_args_list]
             assert any(_mod.API_URL in msg for msg in logged_messages)
 
-
-# ---------------------------------------------------------------------------
-# Tests: _parse_registrant
-# ---------------------------------------------------------------------------
 
 class TestParseRegistrant:
     def test_company_full_address(self):
@@ -322,10 +284,6 @@ class TestParseRegistrant:
         raw = "Swiss International Air Lines Ltd., Obstgartenstrasse 25, 8302 Kloten, Switzerland"
         assert _parse_registrant(raw)["country"] == "CH"
 
-
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
 
 class TestBuildRecord:
     def test_icao_hex_uppercased(self):
@@ -412,10 +370,6 @@ class TestBuildRecord:
         assert "powerplant" not in record.get("aircraft", {})
 
 
-# ---------------------------------------------------------------------------
-# Tests: _apply_type_lookup
-# ---------------------------------------------------------------------------
-
 class TestApplyTypeLookup:
     def _make_redis(self, type_doc=None) -> MagicMock:
         r = MagicMock()
@@ -478,10 +432,6 @@ class TestApplyTypeLookup:
         _apply_type_lookup(record, r)
         assert "manufacturer_model" not in record["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_writes_registered_record(self):
@@ -561,10 +511,6 @@ class TestWriteToRedis:
         assert "registrant" not in written
 
 
-# ---------------------------------------------------------------------------
-# Tests: _ensure_search_index
-# ---------------------------------------------------------------------------
-
 class TestEnsureSearchIndex:
     def test_skips_create_when_index_exists(self):
         r = MagicMock()
@@ -586,10 +532,6 @@ class TestEnsureSearchIndex:
         definition = call_kwargs["definition"]
         assert "aircraft:registry:" in definition.args
 
-
-# ---------------------------------------------------------------------------
-# Tests: MQTT completion stats
-# ---------------------------------------------------------------------------
 
 class TestMqttCompletionStats:
     def _setup_mock_client(self):

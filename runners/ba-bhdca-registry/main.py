@@ -73,10 +73,6 @@ _COL_SERIAL = 4
 _COL_OWNER = 5
 
 
-# ---------------------------------------------------------------------------
-# PDF URL discovery
-# ---------------------------------------------------------------------------
-
 def _discover_pdf_url(session: requests.Session) -> str:
     """Scrape the airworthiness index page for the Aircraft Register PDF link."""
     logger.info("Downloading BHDCA airworthiness index page from %s", _INDEX_URL)
@@ -92,10 +88,6 @@ def _discover_pdf_url(session: requests.Session) -> str:
             return f"http://www.bhdca.gov.ba{href}"
     raise RuntimeError("No Aircraft Register PDF link found on BHDCA airworthiness page")
 
-
-# ---------------------------------------------------------------------------
-# Download + parse
-# ---------------------------------------------------------------------------
 
 def download_and_parse(session: requests.Session) -> list[dict]:
     """Discover PDF URL, download and return parsed records."""
@@ -114,9 +106,8 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             for row in table:
                 if not row or len(row) <= _COL_OWNER:
                     continue
-                # Source PDF has a handful of rows with a stray space after
-                # the hyphen (e.g. "E7- NEL" instead of "E7-NEL") — normalize
-                # before validating so these aren't silently dropped.
+                # Source PDF has some rows with a stray space after the
+                # hyphen (e.g. "E7- NEL"); normalize before validating.
                 registration = re.sub(r"-\s+", "-", _clean(row[_COL_REGISTRATION]))
                 if not _REG_RE.match(registration):
                     continue
@@ -136,10 +127,6 @@ def _clean(value) -> str:
     """Normalize whitespace (including newlines) in a cell value."""
     return _WHITESPACE_RE.sub(" ", (value or "").strip())
 
-
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
 
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build a Redis detail record from a parsed row."""
@@ -177,10 +164,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -191,10 +174,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return "".join(result)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
     """Batch-query Redis simple search index for icao_hex by registration mark."""
@@ -221,10 +200,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
     return reg_map
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write BHDCA data to aircraft:detail keys in Redis. Returns count written."""
@@ -279,10 +254,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished: %d written, %d errors.", count, errors)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -368,10 +339,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

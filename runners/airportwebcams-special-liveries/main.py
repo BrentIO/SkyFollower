@@ -2,34 +2,20 @@
 """
 SkyFollower Airport Webcams Special Liveries Data Runner
 
-Fetches the Airport Webcams Special Liveries table from a single static HTML
-page (a TablePress-rendered table — the whole ~2,074-row table is present in
-the initial response, no pagination/AJAX to crawl), looks up each
-registration in the Redis simple search index to find the ICAO hex (provided
-by Mictronics), then writes special_livery enrichment to
-aircraft:livery:{icao_hex} and publishes MQTT completion stats, then exits.
+Fetches the Airport Webcams Special Liveries table (static HTML, TablePress,
+no pagination), resolves each registration to an ICAO hex via the Redis
+Mictronics search index, and writes special_livery enrichment to
+aircraft:livery:{icao_hex}.
 
-Important: this source does not publish ICAO hex (Mode S) addresses.
-This runner can only enrich records that already exist in Redis from
-Mictronics. Schedule it AFTER the Mictronics runner.
+This source publishes no ICAO hex of its own, so it can only enrich records
+Mictronics has already written — schedule this runner after Mictronics.
 
-special_livery holds the derived livery name, not the raw Description cell
-verbatim — it is spoken by Home Assistant TTS on a matched-flight
-notification, so it needs to read as a clean phrase. Presence of the field
-is itself the flag (no separate boolean) — it's absent entirely for aircraft
-with no special livery. The source Description cell sometimes packs more
-than one livery name into a single cell separated by "/", and/or carries a
-"(sticker...)" annotation and/or a "(#New at DD-Mon-YY)" site-freshness
-marker. All parenthetical annotations containing "sticker" or "#new"
-(case-insensitive) are stripped FIRST, before splitting on "/" — stripping
-must happen before the split because at least one real annotation itself
-contains a "/" (e.g. "(sticker; underside/belly)"), which would otherwise be
-misread as an extra compound-description segment. The last "/"-separated
-segment of what remains is then treated as the current/primary livery name.
-
-Rows whose Registration is the literal string "Various" (a special livery
-applied across an entire fleet, not a single tail) are skipped — they can't
-be resolved to one aircraft.
+special_livery is a derived, TTS-ready livery name, not the raw Description
+cell: any "(sticker...)"/"(#New...)" annotation is stripped before splitting
+on "/" (stripping first avoids splitting inside an annotation that itself
+contains a "/"), and the last resulting segment is taken as current. Rows
+with Registration == "Various" (fleet-wide livery, not one aircraft) are
+skipped.
 
 Data source: https://airportwebcams.net/special-liveries/
 """
@@ -77,29 +63,14 @@ _ANNOTATION_RE = re.compile(r"\s*\([^()]*(?:sticker|#new)[^()]*\)", re.IGNORECAS
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
-# ---------------------------------------------------------------------------
-# special_livery transform
-# ---------------------------------------------------------------------------
-
 def _derive_special_livery(description: str) -> str:
-    """Derive a clean, TTS-ready livery name from a raw Description cell.
-
-    Strips any parenthetical annotation containing "sticker" or "#new"
-    (case-insensitive) first, then splits the remainder on "/" and takes the
-    last segment — the last-listed livery is treated as the current/primary
-    one for the ~7% of rows with a compound description. Order matters: at
-    least one real annotation contains its own "/"
-    (e.g. "(sticker; underside/belly)"), so splitting before stripping would
-    misread part of an annotation as an extra livery segment.
-    """
+    """Strip sticker/#new annotations, then take the last "/"-separated
+    segment (stripping first avoids splitting inside an annotation that
+    itself contains a "/")."""
     stripped = _ANNOTATION_RE.sub("", description)
     segment = stripped.split("/")[-1]
     return _WHITESPACE_RE.sub(" ", segment).strip()
 
-
-# ---------------------------------------------------------------------------
-# Download + parse
-# ---------------------------------------------------------------------------
 
 def download_and_parse(session: requests.Session) -> list[dict]:
     """Fetch the special-liveries page and parse the TablePress table."""
@@ -112,8 +83,7 @@ def download_and_parse(session: requests.Session) -> list[dict]:
 
     table = soup.find("table", id=TABLE_ID)
     if table is None:
-        # Fall back to a header-text search in case the TablePress table ID
-        # ever changes, mirroring the other HTML-scraping runners.
+        # Fallback if the TablePress table ID ever changes: match by header text.
         for candidate in soup.find_all("table"):
             header_row = candidate.find("tr")
             if header_row and "Registration" in header_row.get_text() and "Description" in header_row.get_text():
@@ -142,10 +112,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     return records
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(icao_hex: str, registration: str, special_livery: str) -> dict:
     """Build the enrichment record for a single matched special livery."""
     return {
@@ -155,10 +121,6 @@ def _build_record(icao_hex: str, registration: str, special_livery: str) -> dict
         "special_livery": special_livery,
     }
 
-
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
 
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
@@ -170,10 +132,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return ''.join(result)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
     """Batch-query Redis simple search index for icao_hex by registration mark."""
@@ -203,10 +161,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
     return reg_map
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Airport Webcams special livery data to aircraft:livery keys. Returns count written."""
@@ -278,10 +232,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     )
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -367,10 +317,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

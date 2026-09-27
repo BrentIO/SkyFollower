@@ -82,10 +82,6 @@ _CLASE_MAP = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Download + parse
-# ---------------------------------------------------------------------------
-
 def _cell(value) -> str:
     """Normalize a PDF cell value: strip whitespace and unify Unicode hyphens."""
     return (value or "").strip().translate(_UNICODE_HYPHENS)
@@ -134,10 +130,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
             logger.warning("EC-FTR NOT found in parsed rows — may be absent from PDF.")
     return records
 
-
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
 
 def _decode_clase(value: str) -> str | None:
     """Map the Spanish Clase column value to a canonical English aircraft type."""
@@ -206,10 +198,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -220,10 +208,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return ''.join(result)
 
-
-# ---------------------------------------------------------------------------
-# Search index
-# ---------------------------------------------------------------------------
 
 def _ensure_search_index(r: redis_lib.Redis) -> None:
     """Create the aircraft:detail JSON search index if it does not already exist."""
@@ -239,10 +223,6 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         )
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
     """Batch-query Redis simple search index for icao_hex by registration mark."""
@@ -270,10 +250,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
     return reg_map
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Spain AESA data to aircraft:detail keys in Redis. Returns count written."""
@@ -331,10 +307,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished: %d written, %d errors.", count, errors)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -420,10 +392,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:

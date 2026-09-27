@@ -9,10 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -48,10 +44,6 @@ REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 DOWNLOAD_URL = _mod.DOWNLOAD_URL
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 def _make_row(
     immat="F-ABCD",
@@ -102,10 +94,6 @@ def _make_redis_no_match():
     r.ft.return_value.search.return_value = results
     return r
 
-
-# ---------------------------------------------------------------------------
-# Tests: _parse_address
-# ---------------------------------------------------------------------------
 
 class TestParseAddress:
     def test_empty_string(self):
@@ -160,10 +148,6 @@ class TestParseAddress:
         assert postal == "75001"
 
 
-# ---------------------------------------------------------------------------
-# Tests: _escape_tag
-# ---------------------------------------------------------------------------
-
 class TestEscapeTag:
     def test_plain_value_unchanged(self):
         assert _escape_tag("FABCD") == "FABCD"
@@ -174,10 +158,6 @@ class TestEscapeTag:
     def test_empty_string(self):
         assert _escape_tag("") == ""
 
-
-# ---------------------------------------------------------------------------
-# Tests: _type_tokens / _type_check_passes
-# ---------------------------------------------------------------------------
 
 class TestTypeTokens:
     def test_extracts_type_designator(self):
@@ -212,10 +192,6 @@ class TestTypeCheckPasses:
         simple = {"type_designator": "AW109"}
         assert _type_check_passes(simple, "LEONARDO AW139") is False
 
-
-# ---------------------------------------------------------------------------
-# Tests: _group_by_registration
-# ---------------------------------------------------------------------------
 
 class TestGroupByRegistration:
     def test_single_row_group(self):
@@ -271,10 +247,6 @@ class TestGroupByRegistration:
         assert set(groups.keys()) == {"F-ABCD", "F-XYZW"}
 
 
-# ---------------------------------------------------------------------------
-# Tests: _build_record
-# ---------------------------------------------------------------------------
-
 class TestBuildRecord:
     def test_full_record(self):
         row = _make_row()
@@ -326,10 +298,6 @@ class TestBuildRecord:
         assert "manufacturer" not in record.get("aircraft", {})
 
 
-# ---------------------------------------------------------------------------
-# Tests: download_registry
-# ---------------------------------------------------------------------------
-
 class TestDownloadRegistry:
     def test_parses_semicolon_delimited_rows(self):
         with patch("fr_dgac_registry_main.requests.get") as mock_get:
@@ -353,10 +321,6 @@ class TestDownloadRegistry:
             with pytest.raises(RuntimeError, match="HTTP 503"):
                 download_registry(DOWNLOAD_URL)
 
-
-# ---------------------------------------------------------------------------
-# Tests: write_to_redis
-# ---------------------------------------------------------------------------
 
 class TestWriteToRedis:
     def test_record_written_when_found_in_redis(self):
@@ -429,10 +393,6 @@ class TestWriteToRedis:
         record = set_call[0][2]
         assert record["registrant"]["names"] == ["ALICE", "BOB"]
 
-
-# ---------------------------------------------------------------------------
-# Tests: publish_completion_stats
-# ---------------------------------------------------------------------------
 
 class TestPublishCompletionStats:
     def _setup_mock_client(self):

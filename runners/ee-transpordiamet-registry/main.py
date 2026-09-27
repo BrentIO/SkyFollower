@@ -72,10 +72,6 @@ _COL_OWNER = 6
 _MIN_COLS = 8
 
 
-# ---------------------------------------------------------------------------
-# Download + parse
-# ---------------------------------------------------------------------------
-
 def download_and_parse(session: requests.Session) -> list[dict]:
     """Fetch the Transpordiamet register page and return normalized records."""
     logger.info("Downloading Estonia Transpordiamet aircraft register from %s", _PAGE_URL)
@@ -112,10 +108,6 @@ def download_and_parse(session: requests.Session) -> list[dict]:
     return records
 
 
-# ---------------------------------------------------------------------------
-# Record builder
-# ---------------------------------------------------------------------------
-
 def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     """Build detail enrichment record from a parsed row."""
     aircraft_fields: dict = {}
@@ -148,10 +140,6 @@ def _build_record(row: dict, icao_hex: str, registration: str) -> dict:
     return record
 
 
-# ---------------------------------------------------------------------------
-# RediSearch tag escaping
-# ---------------------------------------------------------------------------
-
 def _escape_tag(value: str) -> str:
     """Escape special characters for use in a RediSearch TagField query."""
     special = ',.<>{}[]"\':;!@#$%^&*()-+=~'
@@ -162,10 +150,6 @@ def _escape_tag(value: str) -> str:
         result.append(char)
     return "".join(result)
 
-
-# ---------------------------------------------------------------------------
-# Registration → icao_hex lookup
-# ---------------------------------------------------------------------------
 
 def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dict[str, str]:
     """Batch-query Redis simple search index for icao_hex by registration mark."""
@@ -191,10 +175,6 @@ def _build_registration_map(registrations: list[str], r: redis_lib.Redis) -> dic
 
     return reg_map
 
-
-# ---------------------------------------------------------------------------
-# Write to Redis
-# ---------------------------------------------------------------------------
 
 def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     """Write Transpordiamet data to aircraft:detail keys in Redis. Returns count written."""
@@ -250,10 +230,6 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
     logger.info("Finished: %d written, %d errors.", count, errors)
     return count
 
-
-# ---------------------------------------------------------------------------
-# MQTT
-# ---------------------------------------------------------------------------
 
 def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
     """Publish completion statistics to MQTT."""
@@ -339,10 +315,6 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
             retain=True,
         )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def main() -> None:
     try:
