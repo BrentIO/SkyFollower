@@ -32,6 +32,25 @@ export async function fetchFlightHistory(
   return (await response.json()) as MapFlightHistory;
 }
 
+// POST /api/flights/batch -- batched fetchFlightHistory (map/main.py's
+// get_flights_batch). One request for many hexes; an untracked hex is
+// just absent from the response, no per-item 404.
+export async function fetchFlightHistoryBatch(
+  restFlightsUrl: string,
+  icaoHexList: string[],
+): Promise<MapFlightHistory[]> {
+  const url = `${restFlightsUrl}/batch`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ icao_hex: icaoHexList }),
+  });
+  if (!response.ok) {
+    throw new FlightsApiError(`POST ${url} failed: HTTP ${response.status}`);
+  }
+  return (await response.json()) as MapFlightHistory[];
+}
+
 // GET /api/processors -- the message-processor liveness roster/status. See
 // map/main.py's get_processor_status(). Polled (see
 // hooks/useProcessorRoster.ts), not pushed over WS -- a processor's status

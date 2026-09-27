@@ -368,6 +368,97 @@ def test_list_flights_empty_store_issues_no_pipeline_at_all(redis_client, monkey
 
 
 # ---------------------------------------------------------------------------
+# get_flights_batch -- batched counterpart to N x (get_flight + get_trail),
+# see issue #2052.
+# ---------------------------------------------------------------------------
+
+def test_get_flights_batch_returns_state_and_trail_per_hex(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    hex_a, hex_b = _hex(), _hex()
+
+    store.apply_update(hex_a, "position", 1.0, {"lat": 1.0, "lon": 1.0, "alt": 100})
+    store.apply_update(hex_a, "position", 2.0, {"lat": 1.1, "lon": 1.1, "alt": 200})
+    store.apply_update(hex_b, "position", 1.0, {"lat": 2.0, "lon": 2.0})
+
+    flights = {f["icao_hex"]: f for f in store.get_flights_batch([hex_a, hex_b])}
+
+    assert set(flights) == {hex_a, hex_b}
+    assert flights[hex_a]["lat"] == 1.1
+    assert flights[hex_a]["trail"] == [
+        {"lat": 1.0, "lon": 1.0, "alt": 100},
+        {"lat": 1.1, "lon": 1.1, "alt": 200},
+    ]
+    assert flights[hex_b]["lat"] == 2.0
+    assert flights[hex_b]["trail"] == [{"lat": 2.0, "lon": 2.0, "alt": None}]
+
+
+def test_get_flights_batch_silently_omits_untracked_hexes(redis_client):
+    """Mirrors the singular endpoint's 404-means-null handling, at batch
+    granularity: no per-item error, the hex is just missing from the
+    result list."""
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    tracked_hex = _hex()
+    untracked_hex = _hex()
+    store.apply_update(tracked_hex, "position", 1.0, {"lat": 1.0, "lon": 1.0})
+
+    flights = store.get_flights_batch([tracked_hex, untracked_hex])
+
+    assert {f["icao_hex"] for f in flights} == {tracked_hex}
+
+
+def test_get_flights_batch_empty_input_returns_empty_list(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    assert store.get_flights_batch([]) == []
+
+
+def test_get_flights_batch_all_untracked_returns_empty_list(redis_client):
+    """Every requested hex misses on the first (detail) pipeline -- the
+    second (trail) pipeline must be skipped entirely, not just empty."""
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    assert store.get_flights_batch([_hex(), _hex()]) == []
+
+
+def test_get_flights_batch_issues_exactly_two_pipelined_round_trips(redis_client, monkeypatch):
+    """Must cost two pipeline execute() calls total -- one for every
+    requested hex's HGETALL, one for every *tracked* hex's trail LRANGE --
+    never one pair per hex (2N), and never a direct HGETALL/LRANGE issued
+    outside a pipeline."""
+    store = FlightStateStore(redis_client, stale_seconds=30, hide_seconds=60, evict_seconds=300)
+    hexes = [_hex() for _ in range(5)]
+    for i, icao_hex in enumerate(hexes):
+        store.apply_update(icao_hex, "position", 1.0, {"lat": float(i), "lon": float(i)})
+    # One extra hex that's never tracked -- proves the trail pipeline only
+    # covers hexes that actually came back from the detail pipeline.
+    hexes_with_untracked = hexes + [_hex()]
+
+    direct_hgetall_calls = _count_calls(monkeypatch, redis_client, "hgetall")
+    direct_lrange_calls = _count_calls(monkeypatch, redis_client, "lrange")
+
+    original_pipeline = redis_client.pipeline
+    execute_calls: list = []
+
+    def counting_pipeline(*args, **kwargs):
+        pipe = original_pipeline(*args, **kwargs)
+        original_execute = pipe.execute
+
+        def counting_execute(*a, **kw):
+            execute_calls.append(1)
+            return original_execute(*a, **kw)
+
+        pipe.execute = counting_execute
+        return pipe
+
+    monkeypatch.setattr(redis_client, "pipeline", counting_pipeline)
+
+    flights = store.get_flights_batch(hexes_with_untracked)
+
+    assert {f["icao_hex"] for f in flights} == set(hexes)
+    assert len(execute_calls) == 2, "expected exactly two pipelined round trips regardless of hex count"
+    assert direct_hgetall_calls == [], "expected no HGETALL issued outside the pipeline"
+    assert direct_lrange_calls == [], "expected no LRANGE issued outside the pipeline"
+
+
+# ---------------------------------------------------------------------------
 # TTL refresh + real keyspace-notification eviction (the part most likely
 # to have a subtle timing bug -- exercised end to end, not mocked).
 # ---------------------------------------------------------------------------

@@ -151,7 +151,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // for eviction deferral.
   const selectedIcaoHex = selected.values().next().value ?? null;
 
-  const { aircraft, connected, seedTrailFor, releaseHold } = useMapFlights(
+  const { aircraft, connected, seedTrailFor, seedTrailForMany, releaseHold } = useMapFlights(
     config.wsUrl,
     config.restFlightsUrl,
     selectedIcaoHex,
@@ -446,11 +446,12 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const historySeededRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const needed = aircraftNeedingHistorySeed(historyAll, Object.keys(aircraft), historySeededRef.current);
+    if (needed.length === 0) return;
     for (const icaoHex of needed) {
       historySeededRef.current.add(icaoHex);
-      seedTrailFor(icaoHex);
     }
-  }, [historyAll, aircraft, seedTrailFor]);
+    seedTrailForMany(needed); // one request for all, not one per aircraft (#2052)
+  }, [historyAll, aircraft, seedTrailForMany]);
 
   // One throttle instance for this component's whole lifetime so "move"
   // (fires every camera-transform frame during pan/pinch/easeTo) can't

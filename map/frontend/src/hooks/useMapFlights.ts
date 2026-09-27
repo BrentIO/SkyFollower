@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchFlights, fetchFlightHistory } from "../api/flights";
+import { fetchFlights, fetchFlightHistory, fetchFlightHistoryBatch } from "../api/flights";
 import type { MapWsEvent } from "../api/types";
 import {
   applySnapshot,
@@ -24,6 +24,9 @@ export interface UseMapFlightsResult {
    * fetch error is swallowed, leaving the client-accumulated trail in place.
    */
   seedTrailFor: (icaoHex: string) => void;
+  /** Batched seedTrailFor: one request for a whole list instead of one per
+   * aircraft (used by "Trails: All"). Empty list is a no-op. */
+  seedTrailForMany: (icaoHexList: string[]) => void;
   /**
    * Applies a `remove` that was deferred because `protectedIcaoHex`
    * matched at the time it arrived -- call once the aircraft detail panel
@@ -69,6 +72,26 @@ export function useMapFlights(
         })
         .catch((err) => {
           console.error(`Failed to fetch flight history for ${icaoHex}:`, err);
+        });
+    },
+    [restFlightsUrl],
+  );
+
+  const seedTrailForMany = useCallback(
+    (icaoHexList: string[]) => {
+      if (icaoHexList.length === 0) return;
+      fetchFlightHistoryBatch(restFlightsUrl, icaoHexList)
+        .then((histories) => {
+          setAircraft((prev) => {
+            let next = prev;
+            for (const history of histories) {
+              next = applyTrailSeed(next, history.icao_hex, history.trail);
+            }
+            return next;
+          });
+        })
+        .catch((err) => {
+          console.error(`Failed to batch-fetch flight history for ${icaoHexList.length} aircraft:`, err);
         });
     },
     [restFlightsUrl],
@@ -146,5 +169,5 @@ export function useMapFlights(
     };
   }, [wsUrl, restFlightsUrl]);
 
-  return { aircraft, connected, seedTrailFor, releaseHold };
+  return { aircraft, connected, seedTrailFor, seedTrailForMany, releaseHold };
 }

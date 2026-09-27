@@ -261,6 +261,38 @@ class FlightStateStore:
         raw = self._redis.lrange(flight_trail_key(icao_hex), 0, -1)
         return [json.loads(p) for p in raw]
 
+    def get_flights_batch(self, icao_hex_list: list[str]) -> list[dict]:
+        """Batched get_flight()+get_trail(): one pipelined HGETALL round
+        for every hex, then one pipelined LRANGE round for only the ones
+        that came back tracked -- two round trips total, not 2N. Untracked
+        hexes are silently omitted."""
+        if not icao_hex_list:
+            return []
+
+        detail_pipe = self._redis.pipeline()
+        for icao_hex in icao_hex_list:
+            detail_pipe.hgetall(flight_detail_key(icao_hex))
+        detail_results = detail_pipe.execute()
+
+        tracked: list[tuple[str, dict]] = [
+            (icao_hex, self._decode_hash(raw))
+            for icao_hex, raw in zip(icao_hex_list, detail_results)
+            if raw
+        ]
+        if not tracked:
+            return []
+
+        trail_pipe = self._redis.pipeline()
+        for icao_hex, _flight in tracked:
+            trail_pipe.lrange(flight_trail_key(icao_hex), 0, -1)
+        trail_results = trail_pipe.execute()
+
+        flights: list[dict] = []
+        for (_icao_hex, flight), raw_trail in zip(tracked, trail_results):
+            flight["trail"] = [json.loads(p) for p in raw_trail]
+            flights.append(flight)
+        return flights
+
     def handle_expired_key(self, key: str) -> Optional[dict]:
         """Turns a Redis `expired` keyevent's key name into the WebSocket
         event to broadcast ("stale" for flight:live:*, "hide" for

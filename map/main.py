@@ -31,6 +31,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Add the repo root to sys.path so shared/ is importable when this module is
@@ -436,6 +437,19 @@ def get_flight(icao_hex: str) -> dict:
         raise HTTPException(status_code=404, detail=f"aircraft {icao_hex} is not currently tracked")
     flight["trail"] = _store.get_trail(icao_hex)
     return flight
+
+
+class FlightsBatchRequest(BaseModel):
+    icao_hex: list[str]
+
+
+@app.post("/api/flights/batch", tags=["flights"])
+def get_flights_batch(payload: FlightsBatchRequest) -> list[dict]:
+    """Batched counterpart to GET /api/flights/{icao_hex} -- same
+    per-aircraft shape, but for many hexes in two pipelined Redis round
+    trips instead of one HTTP request per aircraft. Untracked hexes are
+    silently omitted."""
+    return _store.get_flights_batch(payload.icao_hex)
 
 
 @app.get("/api/processors", tags=["flights"])
