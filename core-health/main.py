@@ -3,42 +3,29 @@
 SkyFollower Core Health
 
 Standalone, always-on component that polls RabbitMQ's Management HTTP API
-and Redis's INFO/MEMORY STATS on its own connections -- independent of any
-processor's consuming thread -- and publishes curated MQTT/Home Assistant
-telemetry for both. Replaces per-component RabbitMQ queue-depth self-polling
-(message-processor's/archive-processor's own rmq_queue_depth samplers,
-removal tracked separately) with one centralized poller, and surfaces
-richer per-queue and broker-wide RabbitMQ data plus Redis health signals
-than existed before.
+and Redis's INFO/MEMORY STATS on its own connections, and publishes
+curated MQTT/Home Assistant telemetry for both -- replacing each
+component's own RabbitMQ queue-depth self-polling with one centralized
+poller.
 
-Also publishes, on behalf of message-processor and the receiver, a handful
-of their own Redis-backed application counters (registration/operator
-misses, total messages processed, per-connection message totals) using
-those components' own exact topic paths, unique_id/object_id, and device
+Also publishes, on behalf of message-processor and the receiver, a
+handful of their own Redis-backed application counters using those
+components' own exact topic paths, unique_id/object_id, and device
 blocks -- nothing on the wire distinguishes core-health publishing these
-from the owning component publishing them itself. See
-_publish_message_processor_counters()/_poll_receivers() below. Every key
-read here -- the message-processor counters
-(metrics_registration_misses_key()/metrics_operator_misses_key()/
-metrics_total_messages_processed_key()) and the receiver's own
-(receiver_registry_index_key()/receiver_registration_key()/
-receiver_message_count_key()) -- is the real shared/redis_keys.py builder;
-both components are write-only for their own counters (see their
-respective READMEs), this component is the only one that ever publishes
-them over MQTT/HA. Reads defensively either way: a missing key means the
-count is genuinely zero, never an error.
+from the owning component publishing them itself (see
+_publish_message_processor_counters()/_poll_receivers()). Both components
+are write-only for their own counters; core-health is the only
+publisher. A missing key means the count is genuinely zero, never an
+error.
 
 Also publishes one Home Assistant `update` entity per SkyFollower
-component -- its running image version against the newest
-calendar-versioned tag published to the container registry. Every
-component self-registers (shared/mqtt_register.py's publish_register())
-to a retained SkyFollower/register/{id} message carrying its own GHCR
-image name and Home Assistant discovery `device` block; core-health
-subscribes to that wildcard to learn which components exist and at what
-version with no inference of its own, and polls the registry once a day
-(see _version_poll_loop / _ingest_register). This grants no component any
-new privilege -- it is an availability indicator only, with no install
-command on the wire.
+component -- its running image version against the newest tag published
+to the container registry. Every component self-registers
+(shared/mqtt_register.py's publish_register()) to a retained
+SkyFollower/register/{id} message; core-health subscribes to that
+wildcard and polls the registry once a day (see _version_poll_loop /
+_ingest_register). Availability indicator only -- no install command on
+the wire.
 """
 
 from __future__ import annotations
@@ -104,53 +91,39 @@ SKYFOLLOWER_ROOT = "SkyFollower"
 MQTT_ROOT = f"{SKYFOLLOWER_ROOT}/core-health"
 CORE_DEVICE_IDENTIFIER = "SkyFollower_Core"
 
-# Every component self-registers (shared/mqtt_register.py's
-# publish_register()) to SkyFollower/register/{device_ids}, retained.
 # Subscribing to the wildcard lets core-health build a live picture of
-# which components are running, and at what version and GHCR image name,
-# without importing or calling into any of them.
+# which components are running, and at what version/image, without
+# importing or calling into any of them.
 REGISTER_TOPIC_WILDCARD = f"{REGISTER_TOPIC_ROOT}/+"
 HA_UPDATE_PLATFORM_PREFIX = "homeassistant/update/"
 
-# RabbitMQ/Redis poll cadences and the HTTP deadline are named constants in
-# shared/timing.py (re-exported here so this module's existing references
-# keep working). RabbitMQ's Management API aggregates stats on its own ~5s
-# internal interval broker-side, and Redis's signals (memory, persistence
-# status, error counts) don't move on a sub-minute timescale in ways that
-# matter here; a keyspace SCAN/--bigkeys is out of scope for the recurring
-# loop -- INFO/MEMORY STATS alone cover every field below.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 
 
 def _capitalized(value):
-    """"running" -> "Running" -- simple first-letter capitalization for a
-    plain-English status word. Applied only to strings; anything else
-    (notably None) passes through untouched so a missing reading still
-    skips publish via _publish_stat's own None check rather than raising."""
+    """"running" -> "Running". Strings only; anything else (notably None)
+    passes through so a missing reading still skips publish via
+    _publish_stat's own None check."""
     return value.capitalize() if isinstance(value, str) else value
 
 
 def _uppercased(value):
-    """"ok" -> "OK" -- Redis's own AOF/RDB status strings read as acronyms,
-    not regular words, so they're fully upper-cased rather than merely
-    capitalized. Same string-only guard as _capitalized above."""
+    """"ok" -> "OK" -- Redis's AOF/RDB status strings read as acronyms,
+    not regular words. Same string-only guard as _capitalized."""
     return value.upper() if isinstance(value, str) else value
 
 
 def _short_hash(full) -> Optional[str]:
-    """Last 8 characters of a config version hash, for a compact,
-    directly-comparable read in Home Assistant against each message
-    processor's own rules_version/areas_version sensor. None (skip the
-    publish, don't fabricate) if the key is absent or unreadable. Only
-    ever applied here at the MQTT-publish boundary."""
+    """Last 8 characters of a config version hash, for a compact read
+    directly comparable to each message processor's own rules_version/
+    areas_version sensor. None if the key is absent or unreadable."""
     return full[-8:] if isinstance(full, str) and full else None
 
 
 def _sanitize_id(value: str) -> str:
     """Replace any character outside [a-zA-Z0-9_-] with '-' -- Home
-    Assistant discovery requires object_id/unique_id to match
-    ^[a-zA-Z0-9_-]+$. Same rule receiver/main.py's own _sanitize_mqtt_id
-    applies to host/port topic segments."""
+    Assistant discovery requires object_id/unique_id to match this
+    pattern."""
     return re.sub(r"[^a-zA-Z0-9_-]", "-", value)
 
 
@@ -168,11 +141,10 @@ def _core_device() -> dict:
 
 class _QueueTarget(NamedTuple):
     """Where one RabbitMQ queue's entities land: which device they merge
-    onto, the MQTT topic root core-health publishes their state under, the
-    unique_id/object_id prefix, and a label prefix distinguishing them from
-    the owning device's other entities (e.g. "Queue " so message-processor's
-    "Queue Consumers" doesn't read as a bare, ambiguous "Consumers" next to
-    its own "Active Flights")."""
+    onto, the MQTT topic root, the unique_id/object_id prefix, and a label
+    prefix distinguishing them from the owning device's other entities
+    (e.g. "Queue " so "Queue Consumers" doesn't read as a bare, ambiguous
+    "Consumers")."""
     device: dict
     state_base: str
     unique_prefix: str
@@ -213,16 +185,12 @@ def _queue_target(queue_name: str) -> _QueueTarget:
 
 
 # (field, name suffix, icon, state_class, unit, device_class)
-# device_class "data_size" (paired with unit "B") is HA's own native
-# byte-value formatting -- the frontend auto-scales the raw byte count to
-# KB/MB/GB on its own, so the value published on the wire stays the raw
-# integer; only the discovery config gains the device_class.
+# device_class "data_size" (paired with unit "B") is HA's native byte
+# formatting -- the frontend auto-scales; the wire value stays raw bytes.
 _QUEUE_SENSORS = [
     ("consumers", "Consumers", "mdi:account-multiple", "measurement", None, None),
-    # Display name uses the US spelling; the field/topic name keeps the
-    # British spelling ("utilisation") since it predates this component's
-    # very first installed base and renaming it on the wire would be a
-    # breaking change for anything already polling it directly by name.
+    # Display name uses US spelling; the field/topic name keeps the
+    # British spelling since renaming it on the wire would be breaking.
     ("consumer_utilisation_percent", "Consumer Utilization", "mdi:gauge", "measurement", "%", None),
     ("messages_ready", "Messages Ready", "mdi:tray-full", "measurement", None, None),
     ("messages_unacknowledged", "Messages Unacknowledged", "mdi:tray-alert", "measurement", None, None),
@@ -240,11 +208,9 @@ _CORE_GENERAL_SENSORS = [
     ("started_at", "Start Time", "mdi:clock-start", None, None, "timestamp"),
     ("rabbitmq_connected", "RabbitMQ Management API Connected", "mdi:rabbit", None, None, None),
     ("redis_connected", "Redis Monitoring Connected", "mdi:database-check", None, None, None),
-    # Canonical config version hashes from Redis (config:rules:version /
-    # config:areas:version) -- the value the management UI last saved.
-    # Opaque short-hash identifiers, not measurements: no state_class, no
-    # unit. Compare against each message processor's own rules_version /
-    # areas_version sensor to see which processors have caught up.
+    # Opaque short-hash identifiers, not measurements -- compare against
+    # each message processor's own rules_version/areas_version sensor to
+    # see which processors have caught up.
     ("rules_version", "Rules Version", "mdi:file-document-check", None, None, None),
     ("areas_version", "Areas Version", "mdi:map-check", None, None, None),
 ]
@@ -305,24 +271,17 @@ def _mp_counter_key(pid: str, kind: str, period: str) -> str:
 # Component "update available" tracking
 # ---------------------------------------------------------------------------
 #
-# Every SkyFollower component self-registers (shared/mqtt_register.py's
-# publish_register()): one retained SkyFollower/register/{device_ids}
-# message per running instance, carrying its GHCR image name (baked in at
-# build time as COMPONENT_IMAGE -- see every Dockerfile's `ARG IMAGE` /
-# `ENV COMPONENT_IMAGE` and build-container-images.yaml's `IMAGE=
-# skyfollower-${{ matrix.name }}` build-arg, the exact same name its own
-# discover-images job already computed as the single source of truth) and
-# its Home Assistant discovery `device` block (identifiers, name,
-# sw_version). core-health only ever reads these two fields straight out
-# of the payload -- there is no separate table mapping a component's
-# identifier to its image name to keep in sync with the build workflow.
+# Every SkyFollower component self-registers one retained
+# SkyFollower/register/{device_ids} message, carrying its GHCR image name
+# (baked in at build time as COMPONENT_IMAGE) and its HA discovery `device`
+# block. core-health reads these two fields straight out of the payload --
+# no separate table mapping identifier to image name to keep in sync.
 
 
 def _installed_version(device: dict) -> Optional[str]:
     """The running image version from a discovery `device` block's
-    ``sw_version``, with build_ha_device()'s ``" (<commit>)"`` suffix
-    stripped so it compares cleanly against a bare ``YYYY.MM.BB`` registry
-    tag. None when absent."""
+    ``sw_version``, with the ``" (<commit>)"`` suffix stripped so it
+    compares cleanly against a bare registry tag. None when absent."""
     raw = device.get("sw_version")
     if not isinstance(raw, str) or not raw.strip():
         return None
@@ -354,17 +313,11 @@ class CoreHealth:
         self._rmq_base_url = f"http://{rmc['host']}:{rmc['port']}"
 
         # One Redis client, authenticating as the same default user every
-        # other component already uses -- both for plain key reads
-        # (message-processor's/the receiver's application counters) and for
-        # INFO/MEMORY introspection. A separate ACL-scoped, INFO/MEMORY-only
-        # user was considered (least-privilege) but dropped: it would be the
-        # first ACL user in this repo, and combining it with the existing
-        # `requirepass` mechanism was confirmed live to silently disable
-        # password auth entirely on this Redis image unless the aclfile is
-        # pre-seeded with the default user's own credentials before first
-        # boot -- meaningful bootstrapping complexity and risk for a
-        # restriction this component's own code already honors by simply
-        # never calling a write command.
+        # other component uses, for both plain key reads and INFO/MEMORY
+        # introspection. A scoped ACL user was considered but dropped: on
+        # this Redis image, combining an ACL user with `requirepass`
+        # silently disables password auth entirely unless the aclfile is
+        # pre-seeded before first boot.
         self._redis = build_redis_client(config["redis"])
 
         self._mqtt: Optional[mqtt.Client] = None
@@ -374,26 +327,19 @@ class CoreHealth:
         self._redis_connected = False
 
         # Dynamic-discovery dedup, so a queue/counter/receiver's HA
-        # discovery config is published once per MQTT connection lifetime
-        # rather than on every poll tick. Cleared on every fresh MQTT
-        # connect (see _on_mqtt_connect) so a broker restart still gets a
-        # full republish, matching every other component's on-connect
-        # discovery behavior.
+        # discovery config is published once per MQTT connection lifetime.
+        # Cleared on every fresh MQTT connect (see _on_mqtt_connect) so a
+        # broker restart still gets a full republish.
         self._known_queues: set[str] = set()
         self._known_mp_counters: set[tuple[str, str]] = set()
         self._known_receiver_fields: set[tuple[str, str]] = set()
         self._core_discovery_published = False
 
-        # "Update available" tracking. The registry is keyed by discovery
-        # `device` identifier (unique per running instance) and populated
-        # entirely from each component's own SkyFollower/register/{id}
-        # message -- the topic's own final segment already is that key, so
-        # dropping a component on a cleared retained message needs no
-        # separate bookkeeping of which topics announced it. _latest_versions
-        # is the last-known newest registry tag per image -- kept across a
-        # failed poll so a transient GHCR outage never blanks an entity.
-        # Touched from both the MQTT callback thread and the version-poll
-        # thread, hence the lock.
+        # "Update available" tracking, keyed by discovery `device`
+        # identifier. _latest_versions is the last-known newest registry
+        # tag per image, kept across a failed poll so a transient GHCR
+        # outage never blanks an entity. Touched from both the MQTT
+        # callback thread and the version-poll thread, hence the lock.
         self._component_registry: dict[str, _TrackedComponent] = {}
         self._latest_versions: dict[str, str] = {}
         self._known_update_entities: set[str] = set()
@@ -465,24 +411,18 @@ class CoreHealth:
     # ------------------------------------------------------------------
 
     def _publish_stat(self, topic: str, value) -> None:
-        """No-op on None (a sentinel meaning "no fresh reading this tick",
-        distinct from a legitimate falsy value like 0 or "False") and
-        whenever MQTT isn't currently connected. Leaving a retained topic
-        alone rather than overwriting it with a placeholder is what lets
-        expire_after/availability be the thing that ages a stale entity
-        out, instead of every skip actively lying about the last-known
-        value."""
+        """No-op on None (distinct from a legitimate falsy value like 0)
+        and whenever MQTT isn't connected. Leaving a retained topic alone
+        rather than overwriting it is what lets expire_after/availability
+        age a stale entity out, instead of a skip lying about freshness."""
         if value is None or not (self._mqtt and self._mqtt_connected):
             return
         self._mqtt.publish(topic, str(value), retain=True)
 
     def _redis_counter_or_none(self, client: redis_lib.Redis, key: str) -> Optional[int]:
-        """Mirrors message-processor's own _redis_counter() precedent
-        (missing/falsy value -> 0) but additionally distinguishes a genuine
-        Redis connectivity failure (returns None, so the caller skips
-        publishing this tick rather than fabricating a value) from a period
-        key that simply doesn't exist yet (0 -- the count is genuinely
-        zero, not unknown)."""
+        """Distinguishes a genuine Redis connectivity failure (returns
+        None, so the caller skips publishing rather than fabricating a
+        value) from a period key that simply doesn't exist yet (0)."""
         try:
             value = client.get(key)
         except redis_lib.exceptions.RedisError as exc:
@@ -498,13 +438,10 @@ class CoreHealth:
         if self._core_discovery_published or not (self._mqtt and self._mqtt_connected):
             return
         device = _core_device()
-        # core-health self-registers like every other component -- it is
-        # just as subject to an "update available" check as anything it
-        # monitors. It never mimics registration on another component's
-        # behalf (unlike the queue/counter stats above): COMPONENT_IMAGE is
-        # baked in per image at build time, so a mimicked registration
-        # here would carry core-health's own image name, not the owning
-        # component's.
+        # core-health self-registers like every other component, unlike
+        # the queue/counter mimicry below: COMPONENT_IMAGE is baked in per
+        # image at build time, so a mimicked registration here would carry
+        # core-health's own image name, not the owning component's.
         publish_register(self._mqtt, device)
         availability = {
             "availability_topic": f"{MQTT_ROOT}/status",
@@ -528,17 +465,11 @@ class CoreHealth:
                     "device": device,
                     "icon": icon,
                     # Matches _ensure_queue_discovery's own expire_after
-                    # convention exactly (#1967): before this, every sensor
-                    # published here had no staleness signal at all -- a
-                    # fully-hung poll loop left them showing their last
-                    # retained value forever, confirmed live, unlike the
-                    # per-queue sensors below (which already had this) that
-                    # correctly aged out to unavailable. Applied uniformly
-                    # to every sensor this function publishes, RabbitMQ-
-                    # and Redis-derived alike -- REDIS_POLL_INTERVAL_SECONDS
-                    # already equals RABBITMQ_POLL_INTERVAL_SECONDS (see
-                    # shared/timing.py), so one constant covers both
-                    # cadences without inventing a second one.
+                    # convention, so a hung poll loop ages these out to
+                    # unavailable instead of showing a stale value forever.
+                    # REDIS_POLL_INTERVAL_SECONDS equals
+                    # RABBITMQ_POLL_INTERVAL_SECONDS, so one constant
+                    # covers both cadences.
                     "expire_after": RABBITMQ_POLL_INTERVAL_SECONDS * 3,
                 }
                 if state_class:
@@ -561,18 +492,12 @@ class CoreHealth:
     def _rmq_get(self, path: str):
         """Issues the GET on a short-lived daemon thread and joins it with
         a hard wall-clock deadline (RABBITMQ_POLL_HANG_TIMEOUT_SECONDS),
-        independent of the (connect, read) timeout tuple passed to requests
-        itself. Confirmed live (#1967): a connection pooled across a
-        RabbitMQ restart can be left half-open in a way some requests/
-        urllib3 versions/pool states never notice, so the timeout tuple
-        alone isn't a sufficient backstop -- without this, a single wedged
-        GET hangs _rabbitmq_poll_loop forever with no log output at all. A
-        plain threading.Thread (not concurrent.futures.ThreadPoolExecutor)
-        is deliberate: a thread that's genuinely still blocked when this
-        returns is simply abandoned (it's a daemon thread, so it can't
-        block process shutdown either); ThreadPoolExecutor registers an
-        atexit hook that joins every worker thread it ever created, which
-        would make a truly wedged call hang interpreter shutdown too.
+        independent of the (connect, read) timeout tuple passed to
+        requests itself -- a connection pooled across a RabbitMQ restart
+        can be left half-open in a way requests/urllib3 never notices, so
+        the timeout tuple alone isn't a sufficient backstop. A plain
+        threading.Thread, not ThreadPoolExecutor: a still-blocked thread
+        is simply abandoned rather than joined at interpreter shutdown.
         """
         url = f"{self._rmq_base_url}{path}"
         outcome: dict = {}
@@ -592,13 +517,10 @@ class CoreHealth:
         worker.start()
         worker.join(RABBITMQ_POLL_HANG_TIMEOUT_SECONDS)
         if worker.is_alive():
-            # The (connect, read) timeout above has already failed to
-            # bound this call -- exactly the half-open-socket scenario
-            # from #1967. Logged unconditionally (not gated on
-            # self._rmq_connected like the generic failure warning below)
-            # because a hang is a distinct failure mode from an ordinary
-            # request exception and deserves its own visible signal every
-            # time it happens, not just on the first occurrence.
+            # Logged unconditionally (not gated on self._rmq_connected
+            # like the generic failure warning below) because a hang is a
+            # distinct failure mode worth its own visible signal every
+            # time, not just on the first occurrence.
             logger.warning(
                 "RabbitMQ Management API GET %s exceeded its %ss watchdog; recreating the HTTP session.",
                 path, RABBITMQ_POLL_HANG_TIMEOUT_SECONDS,
@@ -616,9 +538,7 @@ class CoreHealth:
         """Discards the current requests.Session() and replaces it with a
         fresh one. A pooled/kept-alive connection left half-open by a
         RabbitMQ restart has no way to be told "the far end came back,
-        reconnect" short of throwing the whole session away -- confirmed
-        live (#1967) that reusing it indefinitely is exactly what left the
-        poller permanently stuck."""
+        reconnect" short of throwing the whole session away."""
         try:
             self._session.close()
         except Exception:  # noqa: BLE001 -- best-effort cleanup only
@@ -633,29 +553,23 @@ class CoreHealth:
     def _poll_rabbitmq_once(self) -> None:
         try:
             overview = self._rmq_get("/api/overview")
-            # /api/overview doesn't itself carry mem_alarm/disk_free_alarm
-            # (those are per-node fields) despite being the endpoint named
-            # in the original design for "broker-wide memory/disk alarm
-            # state" -- polling /api/nodes too is what actually answers
-            # that data point; still one cheap GET, same cadence.
+            # /api/overview doesn't carry mem_alarm/disk_free_alarm (those
+            # are per-node fields) -- /api/nodes is what actually answers
+            # broker-wide alarm state; still one cheap GET, same cadence.
             nodes = self._rmq_get("/api/nodes")
             queues = self._rmq_get("/api/queues/%2F")
-            # The adsb exchange name is a fixed constant (no discovery
-            # needed) -- this is the aggregate publish velocity across
-            # every receiver, before per-queue consistent-hash routing
-            # splits it up across message processors' own queues.
+            # Aggregate publish velocity across every receiver, before
+            # per-queue consistent-hash routing splits it up.
             exchange = self._rmq_get(f"/api/exchanges/%2F/{ADSB_EXCHANGE}")
             self._rmq_connected = True
         except Exception as exc:
             if self._rmq_connected:
                 logger.warning("RabbitMQ Management API poll failed: %s", exc)
             self._rmq_connected = False
-            # Recreate on every failure, not just a detected hang (#1967)
-            # -- an outright connection error can leave the pool holding a
-            # connection in a state just as unusable as the half-open-
-            # socket case, and there's no cheap way to tell those apart
-            # from here. A fresh Session() next tick costs nothing a
-            # genuinely down broker wasn't already going to cost anyway.
+            # Recreate on every failure, not just a detected hang -- an
+            # outright connection error can leave the pool in a state
+            # just as unusable as a half-open socket, with no cheap way
+            # to tell those apart from here.
             self._recreate_session()
             overview = nodes = queues = exchange = None
 
@@ -666,13 +580,10 @@ class CoreHealth:
         if not self._rmq_connected:
             return
 
-        # RAW_FRAMES_QUEUE_NAME matches is_skyfollower_queue() (it must, for
-        # RabbitMQ ACL purposes -- see SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN's
-        # docstring) but is deliberately excluded here: it's a short-lived,
-        # manually-drained forensic queue with no consumer service of its
-        # own, and doesn't need (or want) the full HA sensor suite every
-        # other SkyFollower-owned queue gets below. Not an oversight --
-        # see message-processor/README.md's "Raw Frame Capture" section.
+        # RAW_FRAMES_QUEUE_NAME is deliberately excluded here: it's a
+        # short-lived, manually-drained forensic queue with no consumer
+        # service of its own (see message-processor/README.md's "Raw
+        # Frame Capture" section), so it skips the full HA sensor suite.
         skyfollower_queues = [
             q for q in (queues or [])
             if is_skyfollower_queue(q.get("name", "")) and q.get("name", "") != RAW_FRAMES_QUEUE_NAME
@@ -703,13 +614,10 @@ class CoreHealth:
         self._publish_stat(f"{MQTT_ROOT}/rabbitmq/statistic/rabbitmq_disk_free_alarm", disk_alarm)
 
     def _publish_exchange_stats(self, exchange: Optional[dict]) -> None:
-        """Total message velocity through the adsb exchange -- the
-        aggregate publish rate across every receiver, before per-queue
-        consistent-hash routing splits it up. publish_in is the total
-        incoming velocity; publish_out is a routing-loss cross-check
-        (complementing the adsb-unroutable queue depth): if the two
-        diverge, messages are arriving at the exchange but not reaching
-        any bound queue."""
+        """Aggregate publish rate across every receiver, before per-queue
+        consistent-hash routing splits it up. publish_out is a
+        routing-loss cross-check: if it diverges from publish_in,
+        messages are arriving but not reaching any bound queue."""
         message_stats = (exchange or {}).get("message_stats") or {}
 
         def _rate(stat: str) -> float:
@@ -724,14 +632,10 @@ class CoreHealth:
         )
 
     def _publish_archive_queue_missing(self, skyfollower_queues: list) -> None:
-        """The archive queue is expected on every deployment eventually,
-        but a valid one may simply not have archive-processor installed
-        yet -- there's no way to tell that apart from "installed, then the
-        queue got deleted/misconfigured" via the Management API (both look
-        identical: absent from the polled queue list), and the acceptance
-        criteria doesn't require distinguishing them. A single retained
-        flag covers both, and clears itself automatically the next time
-        this queue is present in the poll."""
+        """A single retained flag: no way to tell "archive-processor not
+        installed yet" apart from "installed, then misconfigured" via the
+        Management API (both look identical), so this doesn't try.
+        Clears itself once the queue is present in a later poll."""
         missing = not any(q.get("name") == ARCHIVE_QUEUE_NAME for q in skyfollower_queues)
         self._publish_stat(f"{MQTT_ROOT}/rabbitmq/statistic/archive_queue_missing", missing)
 
@@ -793,14 +697,9 @@ class CoreHealth:
                 "object_id": f"{target.unique_prefix}_{field}",
                 "device": target.device,
                 "icon": icon,
-                # Mirrors message-processor's own
-                # rabbitmq_input_queue_depth_hwm precedent: a poll failure
-                # leaves the retained value in place without lying about
-                # freshness, and this is what actually ages the entity out
-                # to unavailable if the outage is sustained. 3x the poll
-                # interval (now 90s) tolerates one skipped tick without
-                # flapping; the x3 relationship to the poll interval is
-                # deliberate, not a coincidence with any timing.py constant.
+                # Ages the entity out to unavailable if the outage is
+                # sustained. 3x the poll interval tolerates one skipped
+                # tick without flapping.
                 "expire_after": RABBITMQ_POLL_INTERVAL_SECONDS * 3,
             }
             if state_class:
@@ -881,10 +780,8 @@ class CoreHealth:
             return
 
         if not raw:
-            # Expired/missing registration -- the receiver is gone, or its
-            # heartbeat lapsed. Self-heals the index the same way
-            # archive_search_index_key's own SMEMBERS callers do for a
-            # stale archive_search:{uuid} entry.
+            # Expired/missing registration -- the receiver is gone, or
+            # its heartbeat lapsed. Self-heals the index.
             try:
                 self._redis.srem(receiver_registry_index_key(), name)
             except redis_lib.exceptions.RedisError:
@@ -893,9 +790,8 @@ class CoreHealth:
 
         try:
             # receiver_registration_key()'s value is a JSON array of
-            # {host, port, source} triples directly (the receiver's own
-            # sources[] config, json.dumps'd as-is) -- not wrapped in an
-            # object, per shared/redis_keys.py's docstring.
+            # {host, port, source} triples directly, not wrapped in an
+            # object (see shared/redis_keys.py).
             sources = json.loads(raw)
             if not isinstance(sources, list):
                 raise ValueError(f"expected a JSON array, got {type(sources).__name__}")
@@ -918,17 +814,13 @@ class CoreHealth:
     def _publish_receiver_connection_counters(
         self, name: str, host, port, device: dict, base: str
     ) -> None:
-        # Same sanitized {host}_{port} identifier the receiver itself uses
-        # (receiver/main.py's _sanitize_mqtt_id, applied identically here
-        # as _sanitize_id) as connection_id, both for its own MQTT topic
-        # segment and as receiver_message_count_key()'s connection_id --
-        # required for the Redis key core-health reads here to line up
-        # with the one the receiver actually writes.
+        # Same sanitized {host}_{port} identifier the receiver itself
+        # uses, so the Redis key read here lines up with the one the
+        # receiver actually writes.
         host_s, port_s = _sanitize_id(str(host)), _sanitize_id(str(port))
         connection_id = f"{host_s}_{port_s}"
-        # lifetime is deliberately absent: it is a device-local, in-memory
-        # total the receiver publishes directly (resets on its restart),
-        # never written to Redis. Only hour/today are Redis-backed here.
+        # lifetime is deliberately absent: it's a device-local, in-memory
+        # total the receiver publishes directly, never written to Redis.
         for period, label_suffix in (("hour", "Hour"), ("today", "Today")):
             field = f"messages_{host_s}_{port_s}_total_{period}"
             value = self._redis_counter_or_none(
@@ -971,11 +863,9 @@ class CoreHealth:
 
     def _ingest_register(self, topic: str, payload: str) -> None:
         """Fold one retained SkyFollower/register/{device_ids} message
-        (shared/mqtt_register.py's publish_register()) into the component
-        registry. An empty payload is a cleared retained registration:
-        the component's own final topic segment is its registry key, so it
-        drops out (and its update entity is cleared) with no separate
-        bookkeeping of which topics announced it."""
+        into the component registry. An empty payload is a cleared
+        retained registration: the component drops out (and its update
+        entity clears) with no separate bookkeeping needed."""
         device_ids = topic[len(REGISTER_TOPIC_ROOT) + 1:]
         if not device_ids:
             return
@@ -1010,10 +900,9 @@ class CoreHealth:
             self._clear_update_entity(device_ids, entry)
 
     def _version_poll_loop(self) -> None:
-        """Slow loop -- interval GHCR_VERSION_CHECK_INTERVAL_SECONDS. The
-        published registry tags only move on a release, so a daily check is
-        ample; the first pass runs GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS
-        after startup so the entities aren't blank until the following day."""
+        """Slow loop -- registry tags only move on a release, so a daily
+        check is ample. The first pass runs after a startup delay so
+        entities aren't blank until the following day."""
         if self._shutdown.wait(GHCR_VERSION_CHECK_STARTUP_DELAY_SECONDS):
             return
         while not self._shutdown.is_set():
@@ -1064,12 +953,10 @@ class CoreHealth:
             device=entry.device,
             name=f"{entry.device.get('name', device_ids)} Update",
             state_topic=entry.state_topic,
-            # core-health's own availability, not the owning component's --
-            # the same choice already made for the queue/counter mimicry
-            # entities above (see _ensure_mp_counter_discovery): the
-            # registration payload carries no availability_topic of its
-            # own, and a component being briefly offline shouldn't also
-            # hide whether an update exists for it.
+            # core-health's own availability, not the owning component's:
+            # the registration payload carries no availability_topic, and
+            # a component being briefly offline shouldn't also hide
+            # whether an update exists for it.
             availability={
                 "availability_topic": f"{MQTT_ROOT}/status",
                 "payload_available": "ONLINE",
@@ -1122,11 +1009,10 @@ class CoreHealth:
 
     def _publish_config_versions(self) -> None:
         """Publish the canonical rules/areas config version hashes from
-        Redis (config:rules:version / config:areas:version) -- last 8 chars
-        only, matching the message processor's own rules_version/areas_version
-        sensors so the two are directly comparable in Home Assistant. A
-        never-saved config (key absent) or a transient read failure just
-        skips the publish this tick, leaving the retained value alone."""
+        Redis -- last 8 chars only, matching each message processor's own
+        rules_version/areas_version sensor so the two are directly
+        comparable. A never-saved config or a read failure just skips
+        the publish this tick."""
         for field, key in (
             ("rules_version", config_rules_version_key()),
             ("areas_version", config_areas_version_key()),
@@ -1181,10 +1067,9 @@ class CoreHealth:
     @staticmethod
     def _parse_percent(raw) -> Optional[float]:
         """used_memory_peak_perc comes back from INFO as a string like
-        "50.00%"; redis-py doesn't parse it further. Returns None (skip
-        publish) rather than 0 for anything unparseable, so a format change
-        upstream shows up as a stale/missing entity, not a silently wrong
-        zero."""
+        "50.00%". Returns None rather than 0 for anything unparseable, so
+        a format change upstream shows up as a stale entity, not a
+        silently wrong zero."""
         if isinstance(raw, (int, float)):
             return float(raw)
         if isinstance(raw, str) and raw.endswith("%"):
@@ -1199,15 +1084,11 @@ class CoreHealth:
     # ------------------------------------------------------------------
 
     def _healthcheck_loop(self) -> None:
-        """Touch a heartbeat file while genuinely able to reach at least one
-        of RabbitMQ's Management API or Redis on its own connections,
-        matching every other long-running component's Docker HEALTHCHECK
-        precedent (shared/healthcheck.py). Deliberately "or", not "and": a
-        single backend being unreachable already surfaces as that backend's
-        own entities going unavailable in Home Assistant (via
-        expire_after/availability), and shouldn't also flip the whole
-        container unhealthy while the other backend is still being polled
-        and published just fine."""
+        """Touch a heartbeat file while able to reach at least one of
+        RabbitMQ's Management API or Redis. Deliberately "or", not "and":
+        a single unreachable backend already surfaces as that backend's
+        entities going unavailable in Home Assistant, and shouldn't also
+        flip the whole container unhealthy while the other still works."""
         heartbeat_path = pathlib.Path(_HEALTHCHECK_HEARTBEAT_PATH)
         heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
         while not self._shutdown.is_set():
