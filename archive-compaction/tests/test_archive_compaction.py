@@ -605,10 +605,9 @@ class TestRunCompaction:
         assert result["mismatch_runs"] == 0
 
     def test_multi_day_backlog_reads_and_cleans_up_local_cache_per_date(self, tmp_path):
-        """A local cache organized by date (mirroring index/year=/month=/
-        day=/) must serve every backlogged date a catch-up run touches, and
-        each date's local copies are cleaned up as that date compacts --
-        not deferred until the whole run finishes."""
+        """A local cache organized by date must serve every backlogged
+        date a catch-up run touches, cleaning up each date's local copies
+        as that date compacts, not deferred until the run finishes."""
         s3 = _FakeS3()
         now = datetime(2026, 7, 25, 5, 0, tzinfo=timezone.utc)
         cutoff = _mod._cutoff_date(now)  # 2026-07-23
