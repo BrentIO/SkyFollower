@@ -965,6 +965,14 @@ collect_core_env() {
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(existing_env_value "$env_file" MQTT_PASSWORD)" 0)"
   probe_tcp "$MQTT_HOST" "$MQTT_PORT" "MQTT"
+  # Stashed for a sibling role's collect_*_env in this same run to default
+  # to, same as every other role's MQTT prompt does -- core dials out to
+  # MQTT like everyone else, it just isn't part of the RabbitMQ/Redis
+  # exclusion below (see init_shared_conn_globals's comment).
+  SHARED_CONN_MQTT_HOST="$MQTT_HOST"
+  SHARED_CONN_MQTT_PORT="$MQTT_PORT"
+  SHARED_CONN_MQTT_USERNAME="$MQTT_USERNAME"
+  SHARED_CONN_MQTT_PASSWORD="$MQTT_PASSWORD"
 
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
