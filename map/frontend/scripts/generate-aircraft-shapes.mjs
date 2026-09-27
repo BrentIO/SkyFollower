@@ -35,48 +35,29 @@ import svgpath from "svgpath";
 const COORD_PRECISION = 1;
 
 // Icons are flat single-color SDF fills, so an Accent path can only be
-// rendered by either cutting a thin transparent gap through the solid fill
-// ("cutout", `destination-out`) or by stroking it back on top of the fill
-// in the same solid color ("add", `source-over`) -- there's no way to give
-// it a second color. Both are opt-in rather than automatic: the common case
-// is a faint cosmetic highlight that would just look like a fill defect
-// under either treatment.
+// rendered by cutting a transparent gap through the fill ("cutout",
+// `destination-out`) or stroking it back on top in the same color ("add",
+// `source-over`) -- there's no way to give it a second color. Both are
+// opt-in: the common case is a cosmetic highlight that would look like a
+// fill defect either way.
 //
-// Cutout mode is picked automatically by the Accent/outline path-length
-// ratio. Measured against the current vendored set (every shape with 2+
-// paths, n=164): the full distribution decays smoothly and continuously
-// from BALL's ~11.4 down through EC35's ~2.5, E3TF/E3CF/A225/MIRA's
-// ~0.7-0.9, and on down to ~0.03 -- there is no second natural cluster below
-// BALL the way BALL itself stands apart from everything else (~2.5 vs.
-// BALL's ~11.4, a ~4.5-wide gap). A threshold of 2 sits just below EC35's
-// ratio and just above the next cluster starting at ~0.9, so it's a
-// conservative, once re-verified step down from the original all-shapes
-// outlier (BALL alone) to pick up EC35's ratio as well, without reaching
-// into the continuous part of the curve where the ratio alone can no
-// longer distinguish real detail from a cosmetic highlight -- going lower
-// than this needs a human visually reviewing each candidate's rendered
-// result, not another blind threshold drop. If a future vendored SVG lands
-// with a similarly detail-bearing Accent layer, it will cross this
-// threshold and pick up a cutout automatically (unless it's also listed in
-// ACCENT_ADD_KEYS below, which takes priority).
+// Cutout mode triggers automatically once the Accent/outline path-length
+// ratio crosses this threshold, meaning the layer carries real detail
+// (e.g. BALL's gore lines) rather than decoration. 2 was chosen from the
+// vendored set's measured ratio distribution, just above where the ratio
+// alone stops reliably distinguishing detail from decoration -- a shape
+// below it that still needs its Accent layer goes in ACCENT_ADD_KEYS
+// instead, not a lower threshold.
 const ACCENT_CUTOUT_RATIO_THRESHOLD = 2;
 
-// EC35's Accent layer is the main-rotor blade cross -- for every other
-// vendored shape the Accent layer is either absent or a thin/cosmetic line,
-// but EC35's was authored as thin stroke geometry never filled into the
-// body, and it crosses the entire fuselage. Carved out as a
-// "destination-out" cutout at icon scale (~70px), it doesn't sit cleanly
-// beside the fuselage: the blades are wider than the fuselage, so most of
-// the cutout geometry falls outside the filled body and carves nothing
-// visible, and what does land fragments the cabin into an unrecognizable
-// lattice rather than reading as a clean helicopter silhouette. EC35
-// clears ACCENT_CUTOUT_RATIO_THRESHOLD (ratio ~2.5) same as BALL, but
-// unlike BALL's gore lines, its Accent geometry doesn't hold up as a
-// cutout -- stroked on top of the fill instead (the "add" mode), the same
-// geometry reads correctly as a rotor. Keyed here explicitly rather than
-// by any path-length ratio: this is a deliberate per-shape choice, not a
-// threshold decision, and it bypasses ACCENT_CUTOUT_RATIO_THRESHOLD
-// entirely (a shape listed here never goes through the ratio check).
+// EC35's rotor blades were authored as thin stroke geometry never filled
+// into the body, and are wider than the fuselage -- as a cutout they'd
+// mostly fall outside the filled silhouette and carve nothing visible,
+// fragmenting the cabin instead of reading as a rotor. Stroked on top of
+// the fill instead (the "add" mode), the same geometry reads correctly.
+// Keyed explicitly per-shape rather than by ratio (EC35 clears
+// ACCENT_CUTOUT_RATIO_THRESHOLD same as BALL, but doesn't hold up as a
+// cutout) -- bypasses that threshold check entirely.
 const ACCENT_ADD_KEYS = new Set(["EC35"]);
 
 // Fallback stroke width (source units, in the SVG's 80x80-unit space) for
@@ -204,14 +185,10 @@ for (const file of files) {
   }
   spans.push(span);
 
-  // Accent path: only the second <path> is ever considered (the outer
-  // silhouette is always the first). A key in ACCENT_ADD_KEYS always gets
-  // one, in "add" mode, bypassing the ratio check entirely (see that set's
-  // comment); otherwise it's populated in "cutout" mode only when the
-  // path-length ratio against the outline crosses
-  // ACCENT_CUTOUT_RATIO_THRESHOLD -- see that constant's comment. Same
-  // coordinate space as the outline, so no bbox-centering is needed;
-  // rounded/transformed identically.
+  // Accent path: only the second <path> is ever considered. ACCENT_ADD_KEYS
+  // gets "add" mode unconditionally; otherwise "cutout" mode applies only
+  // once the path-length ratio crosses ACCENT_CUTOUT_RATIO_THRESHOLD. Same
+  // coordinate space as the outline, so no bbox-centering is needed.
   let accentD;
   let accentStrokeWidth;
   let accentMode;
