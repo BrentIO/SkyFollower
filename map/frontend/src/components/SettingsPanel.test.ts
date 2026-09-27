@@ -11,9 +11,16 @@ describe("SettingsPanel (#2012) -- reuses AircraftDetailPanel's headed-section l
 
   it("is not a small ~192px popover -- uses a wider, taller, scrollable panel", () => {
     expect(settingsPanelSource).toContain("w-72");
-    expect(settingsPanelSource).toContain("max-h-[70vh]");
     expect(settingsPanelSource).toContain("overflow-y-auto");
     expect(settingsPanelSource).not.toContain("w-48");
+  });
+
+  it("caps height against a real pixel margin, not a flat vh percentage (#2031)", () => {
+    // A flat max-h-[NNvh] doesn't account for the panel's own top offset --
+    // see ControlsPanel.test.ts's "anchors to the column's relative
+    // wrapper" test for the other half of this fix.
+    expect(settingsPanelSource).toContain("max-h-[calc(100vh-2rem)]");
+    expect(settingsPanelSource).not.toMatch(/max-h-\[\d+vh\]/);
   });
 
   it("renders a close button wired to onClose", () => {

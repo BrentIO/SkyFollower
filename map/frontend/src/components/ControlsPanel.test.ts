@@ -51,7 +51,10 @@ describe("status box -- removed entirely; aircraft count and connection dot both
 
 describe("unified icon column -- Fullscreen, Center, Labels, Trails, Radar, Settings (#2012)", () => {
   it("stacks all controls vertically in a single column", () => {
-    expect(controlsPanelSource).toContain('<div className="pointer-events-auto flex flex-col gap-2">');
+    // `relative` was added for #2031 (see the "anchors to the button-stack
+    // wrapper's relative positioning" test below) -- still one column, one
+    // wrapper div, just also the popover-anchoring boundary now.
+    expect(controlsPanelSource).toContain('<div className="pointer-events-auto relative flex flex-col gap-2">');
     expect(controlsPanelSource).not.toContain('<div className="pointer-events-auto flex gap-2">');
   });
 
@@ -377,6 +380,20 @@ describe("Settings button (#2012) -- last in the column, after Radar", () => {
 
   it("imports SettingsPanel from its own file", () => {
     expect(controlsPanelSource).toContain('import { SettingsPanel } from "./SettingsPanel"');
+  });
+
+  it("anchors to the button-stack wrapper's relative positioning, not a per-button wrapper (#2031)", () => {
+    // The column wrapper itself carries `relative` so SettingsPanel's
+    // absolute top-0 lines up with the column's top edge regardless of
+    // where Settings sits in the list -- see SettingsPanel.test.ts's
+    // "caps height against a real pixel margin" test for the other half.
+    expect(controlsPanelSource).toContain('className="pointer-events-auto relative flex flex-col gap-2"');
+    // No Settings-specific `<div className="relative">` wrapper any more --
+    // IconButton and the conditionally-rendered SettingsPanel are now
+    // direct children of the column wrapper above.
+    const settingsIndex = controlsPanelSource.indexOf('label="Settings"');
+    const precedingSource = controlsPanelSource.slice(Math.max(0, settingsIndex - 120), settingsIndex);
+    expect(precedingSource).not.toContain('<div className="relative">');
   });
 
   it("wires onClose to collapse the panel, and forwards every relocated + new prop to SettingsPanel", () => {

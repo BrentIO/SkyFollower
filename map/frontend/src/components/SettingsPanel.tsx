@@ -49,12 +49,14 @@ export function SettingsPanel({
   onRadarOpacityChange,
 }: SettingsPanelProps) {
   return (
-    // Positioned relative to the Settings button beside it, not a fixed
-    // top-4/left-4 like AircraftDetailPanel -- the two panels can plausibly
-    // be open at once, so anchoring here avoids any overlap. No explicit
-    // zIndex needed -- ControlsPanel's outer column wrapper already pins
-    // every popover above InfoBoxLayer's labels.
-    <div className="absolute top-0 right-full mr-2 w-72 max-h-[70vh] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100">
+    // Anchors to the icon column's top edge (ControlsPanel's `relative`
+    // button-stack wrapper), not fixed top-4/left-4 like AircraftDetailPanel
+    // -- the two can be open at once, so this avoids overlap while keeping
+    // the space below the panel independent of where Settings sits (#2031).
+    // max-h-[calc(100vh-2rem)] mirrors AircraftDetailPanel's width
+    // safety-net (#2010). No zIndex needed -- the column wrapper already
+    // pins every popover above InfoBoxLayer's labels.
+    <div className="absolute top-0 right-full mr-2 w-72 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100">
       <div className="flex items-center justify-between gap-3 p-3">
         <div className="text-sm font-bold">Settings</div>
         <button
