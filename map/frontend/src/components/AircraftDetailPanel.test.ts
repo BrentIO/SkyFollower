@@ -123,33 +123,35 @@ describe("action row -- Isolate/Zoom To/Follow/Trace Points buttons", () => {
 // and lives in, and is tested by, IconButton.test.ts -- see that file's
 // own note.
 
-describe("panel size cap and scroll (#2003, width fix #2010)", () => {
+describe("panel size cap and scroll (#2003, width fix #2010, icon-column collision fix #2047)", () => {
   it("caps width with a viewport-overflow safety net and height at 80vh on the outer panel div", () => {
     const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
     expect(outerDivIndex).toBeGreaterThan(-1);
     const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
-    expect(outerDivClassName).toContain("max-w-[calc(100vw-2rem)]");
+    expect(outerDivClassName).toContain("max-w-[calc(100vw-76px)]");
     expect(outerDivClassName).toContain("max-h-[80vh]");
   });
 
   it("keeps w-80 as the preferred width rather than dropping it", () => {
-    // w-80 is the preferred width; max-w-[calc(100vw-2rem)] only binds once
-    // the viewport itself is narrower than ~336px, so on any normal
-    // viewport the panel renders at its full preferred 320px.
     const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
     const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
     expect(outerDivClassName).toContain("w-80");
   });
 
   it("does not use a raw viewport-percentage width cap that could crush the panel on a narrow screen (#2010 regression guard)", () => {
-    // max-w-[20vw] (the #2003 original) shrinks to ~75-86px on a
-    // ~375-430px-wide phone viewport -- far narrower than the panel's
-    // content. The replacement must be an offset-based calc(), not any
-    // vw-percentage max-width, so it can never scale below a usable size.
     const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
     const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
     expect(outerDivClassName).not.toMatch(/max-w-\[\d+vw\]/);
-    expect(outerDivClassName).toContain("max-w-[calc(100vw-2rem)]");
+    expect(outerDivClassName).toContain("max-w-[calc(100vw-76px)]");
+  });
+
+  it("reserves enough margin to clear ControlsPanel's icon column, not just the viewport edge (#2047 regression guard)", () => {
+    // 2rem (32px) was #2010's original margin -- too small, since it only
+    // accounted for the viewport's own edge and not the icon column's
+    // separate 52px footprint (right-4 + one button) on the same corner.
+    const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
+    const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
+    expect(outerDivClassName).not.toContain("max-w-[calc(100vw-2rem)]");
   });
 
   it("scrolls overflowing content on the panel itself instead of clipping it (overflow-hidden removed)", () => {

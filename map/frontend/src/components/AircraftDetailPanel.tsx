@@ -108,14 +108,11 @@ export function AircraftDetailPanel({
   const hasBadges = data.military || data.specialLivery != null;
 
   return (
-    // w-80 is the preferred width; max-w-[calc(100vw-2rem)] is a pure
-    // overflow safety net, not a viewport-percentage cap -- it only binds
-    // once the viewport is narrower than 320px + 2rem, accounting for the
-    // panel's left-4 offset plus a matching right margin. max-h-[80vh] +
-    // overflow-y-auto scrolls a fully-populated panel instead of growing
-    // past 80% viewport height or clipping content.
+    // max-w-[calc(100vw-76px)]: 76px = left-4 (16) + ControlsPanel's icon
+    // column footprint (right-4 + one button, 52) + an 8px gap -- keeps
+    // the panel clear of the icon column on narrow viewports (#2047).
     <div
-      className="absolute top-4 left-4 max-h-[80vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
+      className="absolute top-4 left-4 max-h-[80vh] w-80 max-w-[calc(100vw-76px)] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
       style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       <div className="flex items-start justify-between gap-3 p-3">
