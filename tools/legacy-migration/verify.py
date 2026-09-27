@@ -1,26 +1,20 @@
 """
 Verify role: run by the operator before deleting the legacy S3 bucket by
-hand. Two checks, both read-only (no writes, no deletes, needs no IAM
-beyond what the migration already has):
+hand. Three read-only checks:
 
-1. Per-day count reconciliation: Mongo's migrated-flight count for the day
-   vs. the destination bucket's object count under that day's prefix.
-   `s3_count < mongo_count` is flagged for attention (reconcile against
-   the DLQ -- flights sent there are deliberately not copied); for days
-   the live pipeline has also started writing to, s3_count naturally
-   exceeds mongo_count and that alone is not a problem.
+1. Per-day count reconciliation: Mongo's migrated-flight count vs. the
+   destination bucket's object count under that day's prefix.
+   `s3_count < mongo_count` is flagged (reconcile against the DLQ --
+   flights sent there are deliberately not copied); days the live
+   pipeline has also written to naturally have s3_count > mongo_count,
+   which is not a problem.
 
-2. Byte-exactness: every copied object's ETag (== MD5 for a single-part
-   object under SSE-S3, true for both buckets here -- see the issue's
-   "Verification" section) compared source vs. destination. A mismatch is
-   an anomaly to investigate, not something this tool fixes automatically.
+2. Byte-exactness: every copied object's ETag compared source vs.
+   destination (== MD5 for a single-part object under SSE-S3, true for
+   both buckets here).
 
-3. Compacted index presence: for any day with mongo_count > 0, the worker's
-   one compacted Parquet index file for that day (common.compacted_index_key)
-   must exist. This is the last gate before an operator deletes the legacy
-   bucket by hand, so a day that migrated flight objects but never got its
-   index file (e.g. the index put_object failed after every copy succeeded,
-   pre-#1466) must not read as CLEAN.
+3. Compacted index presence: for any day with mongo_count > 0, the day's
+   compacted Parquet index file (common.compacted_index_key) must exist.
 """
 
 from __future__ import annotations

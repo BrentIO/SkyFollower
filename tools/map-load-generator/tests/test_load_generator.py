@@ -2,21 +2,14 @@
 Tests for tools/map-load-generator's pure lane-motion, fleet-variety, and
 packet-construction functions.
 
-This tool has no --seed -- start/finish points, squawk-code selection, and
-emergency-squawk migration are all true per-run randomness (an intentional
-tradeoff, see README). Tests therefore check *bounds and rules* (e.g.
-"altitude is always one of the valid hemispheric values for that lane's
-direction", "vs never exceeds +/-800", "VFR aircraft always squawk 1200")
-rather than exact values, and run randomized checks across many samples/
-seats/ticks to keep false negatives astronomically unlikely.
+This tool has no --seed, so tests check bounds/rules (e.g. "altitude is
+always hemispherically valid", "vs never exceeds +/-800") rather than exact
+values, running randomized checks across many samples to keep false
+negatives astronomically unlikely.
 
-A live UDP send isn't unit-testable (no real map instance in this suite),
-but `FleetSimulator` -- the piece that decides *what* gets sent -- has no
-socket I/O and is exercised directly here, matching
-tools/traffic-replayer/tests/test_replay.py's existing convention for this
-directory: main() itself (argument parsing, opening the real socket) is
-intentionally not covered, since it is thin glue with no branching logic of
-its own beyond what's already exercised below.
+`FleetSimulator` has no socket I/O and is exercised directly here; main()
+itself (argument parsing, opening the real socket) is intentionally not
+covered, as thin glue with no branching logic beyond what's already exercised below.
 """
 
 from __future__ import annotations
@@ -103,8 +96,7 @@ def _simulator(**overrides) -> FleetSimulator:
 
 
 class TestHemisphericAltitudeTable:
-    """Cross-checks against literal values from the issue's own FAA
-    hemispheric altitude table (14 CFR 91.159/91.179)."""
+    """Cross-checks against the FAA hemispheric altitude table (14 CFR 91.159/91.179)."""
 
     def test_below_fl180_ifr_eastbound_values(self):
         for alt in (3000, 5000, 7000, 9000, 11000, 13000, 15000, 17000):
@@ -458,9 +450,7 @@ class TestBuildSeatsTypeVariety:
             assert s.type_designator is None
 
     def test_regular_and_helicopter_seats_use_real_recognized_designators(self):
-        # Every designator here must be one aircraftIconResolver.ts actually
-        # resolves (verified by hand against that file -- see main.py's
-        # fleet-variety comment block for the exact resolution path of each).
+        # Every designator must be one aircraftIconResolver.ts actually resolves.
         recognized = set(_mod._REGULAR_TYPE_POOL) | set(_HELICOPTER_TYPES) | {_BALLOON_TYPE_DESIGNATOR}
         seats = self._seats()
         for s in seats:
@@ -548,9 +538,7 @@ class TestSpawnOccupant:
         assert occ1.ident != occ2.ident
 
     def test_registration_derived_from_icao_hex_for_every_typed_role(self):
-        # #1772: every role that gets a type_designator also gets a
-        # registration, derived from its own icao_hex's "FF" prefix
-        # replaced with "N".
+        # Regression guard, #1772.
         origin, destination = self._origin_destination()
         for role, type_designator in (
             ("regular", "A320"),
@@ -685,10 +673,7 @@ class TestFleetSimulatorRampUp:
             assert all(s != last_seat_index for s, _, _ in frame)
 
     def test_balloon_spawns_at_t0_regardless_of_ramp_up_or_aircraft_count(self):
-        # #1773: the balloon used to spawn one stagger slot after the last
-        # lane seat (`lane_seat_count * per_aircraft_stagger`), which
-        # approaches the *entire* ramp-up window as --aircraft-count grows.
-        # It's independent of the lane-seat stagger sequence now.
+        # Regression guard, #1773.
         for aircraft_count in (2, 10, 400):
             sim = _simulator(aircraft_count=aircraft_count, ramp_up_seconds=60.0, duration=0.0)
             assert sim.balloon_start_offset == 0.0

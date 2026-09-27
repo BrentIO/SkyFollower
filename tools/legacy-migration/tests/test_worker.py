@@ -272,11 +272,9 @@ class TestOnMessage:
 
 
 class TestWorkerLoop:
-    """build_worker_loop is the background thread body: pulls one item off
-    the hand-off queue, runs process_day, and marshals the ack/nack (plus
-    any DLQ publishes) back through connection.add_callback_threadsafe --
-    _FakeConnection runs those inline, standing in for "the connection
-    thread"."""
+    """build_worker_loop pulls one item off the hand-off queue, runs
+    process_day, and marshals the ack/nack back through
+    connection.add_callback_threadsafe -- _FakeConnection runs those inline."""
 
     @staticmethod
     def _wait_until(predicate, timeout=2.0):

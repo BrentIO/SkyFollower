@@ -4,12 +4,8 @@ to the `legacy-migration` work queue, and runs a one-time catch-all sweep
 for documents whose `first_message` falls outside the requested range
 before the day-walk begins.
 
-Both passes (the bulk history, then the ~90-day tail after the operator
-drives the remainder to `migrated` using the legacy system's own offload
-tool) are this same script with different --start-date/--end-date bounds.
-Re-running over an overlapping range is safe -- see worker.py's per-flight
-HeadObject idempotency check and this producer's day-walk, which is itself
-just "publish a message for this date" with no memory of prior runs.
+Re-running over an overlapping range is safe: the day-walk has no memory of
+prior runs, and worker.py's per-flight HeadObject check makes re-copying idempotent.
 """
 
 from __future__ import annotations
@@ -50,20 +46,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _run_catch_all_sweep(collection, channel, start_date: str, end_date: str) -> int:
-    """
-    A document whose first_message falls outside every day the walk below
-    will ever generate -- missing entirely from the walk's range, or
-    outside it -- would never match any day's range query and never reach
-    a worker. Both branches below are pure first_message range predicates
-    scoped by MIGRATED_EXISTS_FILTER, so first_message_migrated_partial
-    covers them directly; this must never become a collection-wide scan
-    (see the issue's "Measured baseline" section for why that matters at
-    ~8.75M documents).
-
-    Naturally idempotent: a document already sent to the DLQ on a prior
-    run still matches the same query here, so re-running just means a
-    duplicate DLQ message -- harmless for a human-reviewed dead end.
-    """
+    """A document whose first_message falls outside every day the walk
+    below will generate would never reach a worker; this sweep catches
+    those. Naturally idempotent -- re-running just duplicates a DLQ message."""
     start_dt, _ = day_bounds_utc(start_date)
     _, end_dt_exclusive = day_bounds_utc(end_date)
 
@@ -82,12 +67,10 @@ def _run_catch_all_sweep(collection, channel, start_date: str, end_date: str) ->
 
 
 def _should_sweep(start_date: str, end_date: str) -> bool:
-    """The catch-all sweep's first_message predicates only mean "outside
-    recorded history" when the requested range covers the full history --
-    for any narrower range (a pass-2 tail re-run, or a windowed test run)
-    both predicates instead match millions of already-migrated documents
-    and flood the DLQ. Auto-enable only for a full-history range; an
-    operator can still force either way with --sweep/--no-sweep."""
+    """The sweep's first_message predicates only mean "outside recorded
+    history" when the requested range covers the full history -- a
+    narrower range (a tail re-run, a windowed test run) would instead
+    match millions of already-migrated documents and flood the DLQ."""
     return start_date <= EARLIEST_FLIGHT_DATE and end_date >= today_utc_date()
 
 

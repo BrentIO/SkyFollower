@@ -121,18 +121,14 @@ def replay(
 def _load_capture(path: str) -> list[dict]:
     """Load an NDJSON capture file into a list of message dicts.
 
-    A path ending in ``.gz`` is transparently decompressed with the stdlib
-    ``gzip`` module; the compressed form is detected purely by the file
-    extension, not by sniffing the file's contents. Any other path is read
-    as plain text. The per-line parsing is identical for both forms once the
-    file object is yielding decompressed text lines: blank lines are ignored,
-    and a line that is not valid JSON prints a warning to stderr and is
-    skipped rather than aborting the load.
+    A ``.gz`` path (detected by extension) is transparently decompressed;
+    any other path is read as plain text. Blank lines are ignored, and a
+    line that is not valid JSON prints a warning to stderr and is skipped
+    rather than aborting the load.
 
     A ``.gz`` path whose contents are not actually a valid gzip stream
-    (corrupt, truncated, or plain text that was never compressed) raises a
-    single clear error, instead of degrading into one skipped-line warning
-    for every line in the file.
+    raises a single clear error, instead of degrading into one
+    skipped-line warning per line in the file.
     """
     is_gzip = path.lower().endswith(".gz")
     opener = gzip.open if is_gzip else open

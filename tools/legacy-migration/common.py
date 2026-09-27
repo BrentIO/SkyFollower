@@ -2,16 +2,10 @@
 Shared helpers for tools/legacy-migration's three roles (producer, worker,
 verify).
 
-Every legacy Mongo flight document this tool ever reads is a *stub*:
-CompletedFlight minus positions[]/velocities[], plus a `migrated` timestamp
-recording whether the heavy payload was already offloaded to the legacy S3
-bucket. Every field name/shape in the stub matches
-shared.models.CompletedFlight exactly (confirmed against real sampled
-legacy documents, including the omit-when-empty behaviour of legacy
-`toDict()`), so a stub is parsed directly into that model rather than
-through a second, hand-rolled schema -- the same reasoning that makes
-shared/archive_index.py's build_s3_key()/flight_index_row() safe to reuse
-unchanged for a copied-in-from-Mongo flight.
+Every legacy Mongo flight document is a stub (CompletedFlight minus
+positions[]/velocities[], plus a `migrated` timestamp) whose field shape
+matches shared.models.CompletedFlight exactly, so it parses directly into
+that model rather than through a second, hand-rolled schema.
 """
 
 from __future__ import annotations
@@ -30,16 +24,13 @@ from shared.timing import RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS, RECONNECT
 
 logger = logging.getLogger("legacy-migration")
 
-# Plain durable work queue -- competing consumers, not the consistent-hash
-# exchange the live message processors use. There's no per-aircraft
-# in-memory state here for a hash exchange to keep co-located, so plain
-# round-robin distribution across days is sufficient and simpler.
+# Plain durable work queue (competing consumers), not the consistent-hash
+# exchange live message processors use -- no per-aircraft state here needs
+# to stay co-located, so plain round-robin distribution is simpler.
 WORK_QUEUE_NAME = "legacy-migration"
 DLQ_NAME = "legacy-migration-dlq"
 
-# Legacy Mongo history starts here (measured 2026-09-04 -- see the GitHub
-# issue this tool implements, "Measured baseline" section). The producer's
-# --start-date default.
+# Earliest recorded flight; the producer's --start-date default.
 EARLIEST_FLIGHT_DATE = "2022-07-11"
 
 # Source objects are flat `{_id}.gz` keys at the legacy bucket root.
@@ -89,14 +80,9 @@ def source_key(doc_id: str) -> str:
     return f"{doc_id}{SOURCE_KEY_SUFFIX}"
 
 
-# Deliberately a fixed name, not a per-run UUID: this tool never deletes
-# (see the issue's IAM policy -- no s3:DeleteObject anywhere), so a re-run
-# of a day must overwrite this same object via PutObject rather than leave
-# an orphaned duplicate behind under the same partition. archive-processor's
-# own per-flight index files (build_index_s3_key) DO need a UUID name since
-# many are written per day; this tool writes exactly one file per day, so a
-# name derived from the date alone is sufficient. Shared by worker.py
-# (which writes it) and verify.py (which HeadObjects it).
+# Fixed name, not a per-run UUID: this tool never deletes, so a re-run of a
+# day must overwrite this same object via PutObject rather than leave an
+# orphaned duplicate. Shared by worker.py (writes it) and verify.py (HeadObjects it).
 COMPACTED_INDEX_FILENAME = "legacy-migration.parquet"
 
 
@@ -110,22 +96,18 @@ def compacted_index_key(date_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 def connect_mongo(mongo_cfg: dict):
-    """Returns the flights collection, read-only. `tz_aware=True` is load
-    -bearing: without it pymongo hands back naive datetimes, and
-    shared.archive_index.build_s3_key()'s `.astimezone(timezone.utc)`
-    would silently reinterpret a naive value as local system time instead
-    of treating it as already-UTC, corrupting the destination date on any
-    host not itself running in UTC."""
+    """Returns the flights collection, read-only. `tz_aware=True` is load-
+    bearing: without it, pymongo returns naive datetimes, which
+    build_s3_key()'s `.astimezone(timezone.utc)` would silently treat as
+    local time instead of UTC, corrupting the destination date."""
     from pymongo import MongoClient
 
     client = MongoClient(mongo_cfg["uri"], tz_aware=True)
     return client[mongo_cfg["database"]][mongo_cfg["collection"]]
 
 
-# The one predicate every Mongo query in this tool is scoped by --
-# `first_message_migrated_partial` covers exactly this shape. See the
-# issue's "Measured baseline" section: a query that doesn't match this
-# shape (e.g. inverting `$exists` or adding an unindexed predicate)
+# Every Mongo query in this tool must be scoped by this filter -- it matches
+# the `first_message_migrated_partial` index. Any other predicate shape
 # degrades to a full collection scan over ~8.75M documents.
 MIGRATED_EXISTS_FILTER = {"migrated": {"$exists": True}}
 
@@ -178,13 +160,10 @@ def publish_day(channel, date_str: str) -> None:
 
 def guard_reason(doc: dict) -> Optional[str]:
     """
-    Returns a DLQ reason if `doc` (a raw legacy Mongo flight stub) fails a
-    per-flight guard, else None. Checked before the HeadObject/CopyObject
-    step -- a flight that fails a guard here is never attempted for copy.
-
-    Does NOT cover "source object missing" or "copy verification failed":
-    both are only discoverable during the copy itself (see copy_and_verify
-    below), not from the Mongo document alone.
+    Returns a DLQ reason if `doc` fails a per-flight guard, else None.
+    Checked before the HeadObject/CopyObject step. Does not cover "source
+    missing" or "copy verification failed" -- those are only discoverable
+    during the copy itself (see copy_and_verify).
     """
     total_messages = doc.get("total_messages")
     if not (isinstance(total_messages, (int, float)) and total_messages > 0):
@@ -203,12 +182,10 @@ def guard_reason(doc: dict) -> Optional[str]:
 
 def build_completed_flight(doc: dict) -> CompletedFlight:
     """
-    Parse a legacy Mongo flight stub into the same CompletedFlight model
-    live flights use, so shared.archive_index's key/index-row builders
-    need no second implementation. Only call after guard_reason(doc) is
-    None -- CompletedFlight enforces shape (aircraft is a dict,
-    first_message/last_message parse as datetimes, ...), not the DLQ
-    guards above (it happily accepts total_messages == 0).
+    Parses a legacy Mongo flight stub into the same CompletedFlight model
+    live flights use. Only call after guard_reason(doc) is None --
+    CompletedFlight enforces shape, not the DLQ guards above (it accepts
+    total_messages == 0).
     """
     return CompletedFlight.model_validate(doc)
 
@@ -223,13 +200,9 @@ def is_not_found(exc: ClientError) -> bool:
 
 def s3_retry(fn, *args, **kwargs):
     """
-    Retries a boto3 S3 call with exponential backoff on throttling
-    (SlowDown/Throttling-class errors only -- a 404 is never retried, see
-    is_not_found). Per-request concern independent of the RabbitMQ
-    day-level redelivery: one throttled call mid-day shouldn't cost the
-    whole day a requeue. Backoff style matches the reconnect-loop
-    precedent elsewhere in the codebase (RECONNECT_BACKOFF_SECONDS as the
-    base delay), just applied per-call instead of per-connection.
+    Retries a boto3 S3 call with exponential backoff on throttling only (a
+    404 is never retried -- see is_not_found). Backoff base delay reuses
+    RECONNECT_BACKOFF_SECONDS.
     """
     delay = RECONNECT_BACKOFF_SECONDS
     for attempt in range(1, _MAX_S3_ATTEMPTS + 1):
@@ -249,8 +222,7 @@ def s3_retry(fn, *args, **kwargs):
 
 def dest_object_exists(s3_client, dest_bucket: str, dest_key: str) -> bool:
     """Per-flight idempotency check: skip a flight already copied by an
-    earlier (possibly redelivered, possibly deliberately overlapping) run
-    of this same day."""
+    earlier or redelivered run of this same day."""
     try:
         s3_retry(s3_client.head_object, Bucket=dest_bucket, Key=dest_key)
         return True
@@ -261,16 +233,9 @@ def dest_object_exists(s3_client, dest_bucket: str, dest_key: str) -> bool:
 
 
 def copy_and_verify(s3_client, source_bucket: str, source_key_: str, dest_bucket: str, dest_key: str) -> None:
-    """
-    Cross-bucket copy-only move: CopyObject with the default COPY metadata
-    directive, followed by an ETag/size integrity check.
-
-    Raises FileNotFoundError if the source object is missing (an immediate
-    DLQ candidate, never retried -- distinct from throttling), or
-    ValueError if the post-copy integrity check fails (also an immediate
-    DLQ candidate: this specific copy did not succeed, and is not treated
-    as migrated).
-    """
+    """Cross-bucket copy-only move: CopyObject, then an ETag/size
+    integrity check. Raises FileNotFoundError if the source is missing, or
+    ValueError if the check fails -- both immediate DLQ candidates."""
     try:
         source_head = s3_retry(s3_client.head_object, Bucket=source_bucket, Key=source_key_)
     except ClientError as exc:
@@ -297,8 +262,7 @@ def build_s3_client():
     import boto3
     from botocore.config import Config as BotoConfig
 
-    # max_attempts=0 (no botocore-internal retry): s3_retry() above is the
-    # single retry loop, so throttling is always visible to it rather than
-    # silently absorbed one layer down where it can't be logged/backed off
-    # the way this tool wants.
+    # max_attempts=0: s3_retry() above is the single retry loop, so
+    # throttling stays visible to it instead of being silently absorbed
+    # inside botocore.
     return boto3.client("s3", config=BotoConfig(retries={"max_attempts": 0}))

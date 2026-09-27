@@ -5,12 +5,9 @@ SkyFollower TCP Traffic Replayer
 Reads a captured NDJSON file (from tools/traffic-recorder) and serves its
 1090 MHz messages over a raw TCP *listen* socket in readsb's wire format
 (``*<hex>;``), so an unmodified receiver can be pointed at this tool via its
-normal ``sources`` config instead of a real readsb instance. Where
-tools/traffic-replayer stands in for RabbitMQ (downstream of the receiver),
-this tool stands in for readsb (upstream of it), exercising the receiver's
-own TCP read loop, frame parsing, routing, publish, and fallback-queue code.
+normal ``sources`` config instead of a real readsb instance.
 
-Two replay modes, matching tools/traffic-replayer:
+Two replay modes:
 
   relative  - preserves the original inter-message timing from received_at
   stress    - sends back-to-back with no artificial pacing, letting TCP flow
@@ -35,13 +32,10 @@ import time
 
 # readsb sends each Mode S frame as ``*<hex>;`` followed by a newline; the
 # receiver's parser (shared/adsb_1090.py's parse_tcp_stream) collects the hex
-# characters between ``*`` and ``;``. Only source=="1090" rows from a capture
-# are served - this tool is deliberately single-listener/single-source (see
-# README).
+# characters between ``*`` and ``;``. Only source=="1090" rows are served.
 SOURCE_1090 = "1090"
 
-# How often the running "sent" counter is printed during a replay, matching
-# tools/traffic-replayer's progress cadence.
+# How often the running "sent" counter is printed during a replay.
 PROGRESS_INTERVAL_SECONDS = 5
 
 
@@ -51,16 +45,9 @@ PROGRESS_INTERVAL_SECONDS = 5
 
 def load_messages(path: str) -> tuple[list[dict], int]:
     """Load an NDJSON capture, keep only ``source == "1090"`` rows, and sort
-    them by ``received_at``.
-
-    ``path`` ending in ``.gz`` is read through ``gzip.open(path, "rt")``;
-    anything else is read as plain text. Malformed JSON lines print a warning
-    to stderr and are skipped rather than aborting the load.
-
-    Returns ``(kept_messages, discarded_count)`` where ``discarded_count`` is
-    the number of non-1090 rows filtered out (reported at startup so the drop
-    is never silent).
-    """
+    them by ``received_at``. ``.gz`` paths are read as gzip; malformed JSON
+    lines warn to stderr and are skipped. Returns ``(kept_messages,
+    discarded_count)``."""
     opener = gzip.open if path.endswith(".gz") else open
     kept: list[dict] = []
     discarded = 0
@@ -105,11 +92,7 @@ class ReplayOutcome:
 
     __slots__ = ("sent", "total", "reason")
 
-    # reason values:
-    #   "complete"          - every message was handed to sendall()
-    #   "connection-closed" - the socket failed before the capture finished
-    #                         (real message loss - must be reported plainly)
-    #   "stopped"           - stop_event was set (Ctrl+C / SIGTERM)
+    # reason: "complete", "connection-closed" (real message loss), or "stopped".
     def __init__(self, sent: int, total: int, reason: str):
         self.sent = sent
         self.total = total
@@ -129,12 +112,9 @@ def replay(
     """Serve ``messages`` to ``sink`` (anything with ``.sendall(bytes)``).
 
     In ``relative`` mode each message waits until its original offset from
-    the first message's ``received_at`` has elapsed; the tool never bursts to
-    catch up if it falls behind, and never waits longer than necessary once
-    it has. In ``stress`` mode there is no pacing at all - the only thing
-    that can slow a send is a blocking ``sendall`` stalling on a full kernel
-    send buffer, which is correct TCP backpressure, not something to engineer
-    around.
+    the first message's ``received_at`` has elapsed, never bursting to
+    catch up if behind. In ``stress`` mode there is no pacing -- only a
+    blocking ``sendall`` stalling on a full send buffer can slow it down.
     """
     total = len(messages)
     if total == 0:
