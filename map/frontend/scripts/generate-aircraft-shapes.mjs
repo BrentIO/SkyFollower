@@ -58,7 +58,7 @@ const ACCENT_CUTOUT_RATIO_THRESHOLD = 2;
 // Keyed explicitly per-shape rather than by ratio (EC35 clears
 // ACCENT_CUTOUT_RATIO_THRESHOLD same as BALL, but doesn't hold up as a
 // cutout) -- bypasses that threshold check entirely.
-const ACCENT_ADD_KEYS = new Set(["EC35"]);
+const ACCENT_ADD_KEYS = new Set(["EC35", "R44"]);
 
 // Fallback stroke width (source units, in the SVG's 80x80-unit space) for
 // an Accent path whose `style` has no parseable `stroke-width` -- shouldn't
