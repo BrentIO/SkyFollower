@@ -100,21 +100,13 @@ from shared.timing import (
 
 logger = logging.getLogger("message_processor")
 
-# tmpfs-mounted in docker-compose.message-processor.yaml -- these writes must
-# never hit the host's eMMC/SD storage, only /app/data (the SQLite active
-# store) is durable/persistent. Every timing value the message processor
-# uses is a named constant from shared/timing.py, imported above.
+# tmpfs-mounted (docker-compose.message-processor.yaml) -- only /app/data
+# (the SQLite active store) is durable.
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 
-# Each message-processor queue has exactly one consumer (bound via the
-# consistent-hash exchange), so prefetch_count buys no fair-dispatch benefit
-# here -- raising it just lets the broker keep messages flowing to the
-# client's local buffer instead of stalling on a full ack round trip after
-# every single message. 100 is a deliberate middle of the "tens to a few
-# hundred" range discussed for this: enough to remove the round-trip stall
-# as the throughput ceiling, without buffering an excessive number of
-# messages client-side that would all need reprocessing (see #1027's
-# positions/velocities dedup) if the connection drops mid-batch.
+# One consumer per queue, so this buys throughput (avoids an ack round-trip
+# stall per message), not fair dispatch. 100 balances that against how many
+# messages would need reprocessing if the connection drops mid-batch.
 _RMQ_PREFETCH_COUNT = 100
 
 # ---------------------------------------------------------------------------
@@ -125,15 +117,11 @@ _US_REG_RE = re.compile(
 )
 
 
-# wake_turbulence_category is receiver-decode-only, sourced exclusively from
-# live 1090/978 emitter-category data — registry/Mictronics enrichment must
-# never seed it. Both decode paths' 7 possible source values
-# collapse to just light/medium/heavy: Super is structurally unreachable from
-# live data (the ADS-B category subfield has no code point for it), and
-# rotorcraft/high-performance are a different axis (emitter type, not wake
-# weight class) rather than a value to remap. Keyed by both pyModeS978's
-# EmitterCategory member names and pyModeS's own TC=4 wake_vortex strings,
-# which describe the same 7 DO-260B categories.
+# Receiver-decode-only -- registry/Mictronics enrichment must never seed
+# this. Collapses both decode paths' 7 raw categories to light/medium/heavy;
+# Super is unreachable from live data and rotorcraft/high-performance are a
+# different axis (emitter type), not a weight class to remap. Keyed by both
+# pyModeS978's EmitterCategory names and pyModeS's TC=4 wake_vortex strings.
 _WAKE_TURBULENCE_MAP: dict[str, str] = {
     "LIGHT": "light",
     "MEDIUM": "medium",
@@ -148,18 +136,12 @@ _WAKE_TURBULENCE_MAP: dict[str, str] = {
 }
 
 
-# Raw ADS-B emitter category as the "<set><subcategory>" code broadcast in
-# the identification message (1090 DO-260B Table A-2-8 / UAT DO-282B): the
-# set letter is A/B/C/D (from the 1090 identification type code TC 4/3/2/1,
-# or the top bits of the UAT category byte) and the subcategory is 1-7.
-# Subcategory 0 ("A0"/"B0"/...) means "no category information" and is
-# treated as absent, same as the wake-turbulence map above. This is the
-# same source field _WAKE_TURBULENCE_MAP already collapses to a weight
-# class; the raw code is additionally forwarded to the map service, where
-# it is the last-resort icon-shape hint for aircraft carrying no type
-# enrichment at all. It rides in the flight's aircraft dict exactly like
-# adsb_version -- a receiver-decoded value, not registry/Mictronics
-# enrichment, so it is deliberately not part of the AircraftRecord model.
+# Raw ADS-B emitter category as the "<set><subcategory>" code from the
+# identification message (1090 DO-260B Table A-2-8 / UAT DO-282B): set is
+# A-D, subcategory 1-7 (0 means absent). Forwarded to the map service as a
+# last-resort icon-shape hint for aircraft with no type enrichment;
+# deliberately not part of AircraftRecord since it's receiver-decoded, not
+# registry data.
 _EMITTER_CATEGORY_SETS = "ABCD"
 
 
@@ -184,19 +166,16 @@ def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
     return bool(registration) and registration.replace("-", "") == ident.replace("-", "")
 
 
-# Reserved/emergency squawk codes -- corrupted DF5/21 identity replies
-# disproportionately decode into these (see #900), so unlike an ordinary
-# squawk value, these require confirmation before being trusted when
-# sourced from a message _decode_1090 couldn't CRC-verify.
+# Reserved/emergency squawk codes that corrupted DF5/21 replies
+# disproportionately decode into -- require confirmation before being
+# trusted when sourced from a message that couldn't be CRC-verified.
 _RESERVED_SQUAWKS = frozenset({"7500", "7600", "7700", "7777"})
 
-# Plausibility bounds applied to decoded position/altitude at the single
-# construction site (_decode_1090/_decode_978) so every downstream consumer
-# (archive, rules, map) inherits the filter automatically. Altitude matches
-# rules_engine.py's own condition bound (0..65000), widened slightly on the
-# low end to tolerate below-sea-level airports/pressure-altitude quirks --
-# ADS-B's 25-ft-increment altitude field tops out near 101,350 ft, so
-# anything at/near that ceiling is effectively always garbage.
+# Plausibility bounds applied at the single decode site (_decode_1090/
+# _decode_978) so every downstream consumer inherits the filter. Altitude
+# floor is widened below sea level for pressure-altitude quirks; the ceiling
+# is far under the field's ~101,350ft max, since anything near that is
+# garbage.
 _MIN_LATITUDE = -90
 _MAX_LATITUDE = 90
 _MIN_LONGITUDE = -180
@@ -206,21 +185,16 @@ _MAX_ALTITUDE_FT = 65000
 
 
 def _short_hash(full: Optional[str]) -> str:
-    """Last 8 characters of a config version hash, for a compact,
-    directly-comparable read in Home Assistant. "unknown" if no hash has
-    been loaded yet. Only ever applied at the MQTT-publish boundary --
-    never where a version is stored or compared."""
+    """Last 8 chars of a config version hash, for a compact HA display.
+    Applied only at the MQTT-publish boundary -- never where a version is
+    stored or compared. "unknown" if none loaded yet."""
     return full[-8:] if full else "unknown"
 
 
 # Repeat-sighting count for confirming a reserved squawk sourced from an
-# unverifiable message -- matches SkyFollower-legacy's mitigation for the
-# same false-positive pattern. The trailing time window it is measured
-# over is PARITY_ERROR_CONFIRM_WINDOW_SECONDS (shared/timing.py). Ident
-# used this same constant until #1915 split it out with its own,
-# independently-derived values (IDENT_CONFIRM_COUNT/
-# IDENT_CONFIRM_WINDOW_SECONDS, shared/timing.py) -- do not reuse this one
-# for ident.
+# unverifiable message. Ident has its own independent constants
+# (IDENT_CONFIRM_COUNT/IDENT_CONFIRM_WINDOW_SECONDS in shared/timing.py) --
+# do not reuse this one for ident.
 _PARITY_ERROR_CONFIRM_COUNT = 5
 
 
@@ -229,18 +203,11 @@ def _confirm_after_repeated_sightings(
     window_seconds: float = PARITY_ERROR_CONFIRM_WINDOW_SECONDS,
     required_count: int = _PARITY_ERROR_CONFIRM_COUNT,
 ) -> tuple[dict, bool]:
-    """Track repeated sightings of `value` within a trailing time window,
-    keyed on message timestamps (not wall-clock, so a replayed backlog is
-    judged consistently with live traffic). Returns the updated pending-
-    candidate state and whether `value` just reached the confirmation
-    threshold on this call.
-
-    A differing value seen in between doesn't reset the count for `value`
-    -- only sightings older than the window are pruned -- since range-
-    boundary corruption tends to garble each message independently rather
-    than identically, so demanding strict consecutiveness would make
-    confirmation unreasonably hard to reach.
-    """
+    """Track repeated sightings of `value` in a trailing time window, keyed
+    on message timestamps (not wall-clock) so replay is judged like live
+    traffic. Returns updated pending state and whether the threshold was
+    just reached. Non-consecutive sightings still count -- corruption tends
+    to garble each message independently, not identically."""
     if pending is not None and pending.get("value") == value:
         sightings = list(pending.get("sightings", []))
     else:
@@ -253,20 +220,11 @@ def _confirm_after_repeated_sightings(
 
 
 def _flight_metadata_snapshot(flight: Flight) -> str:
-    """Canonical hash of the flight fields the map UDP `metadata` message
-    carries -- ident, aircraft enrichment, operator, registrant,
-    squawk, origin, destination, matched_rules. Compared against the
-    flight's last-sent snapshot (Flight.map_metadata_hash, persisted
-    across messages so it survives this process reloading the flight from
-    SQLite on every message) to decide whether a re-send is needed.
-    Hashed rather than compared field-by-field so a metadata-relevant
-    field added to Flight later is covered automatically without a
-    matching change here.
-
-    matched_rules is included so a rule match alone -- with no other
-    metadata-relevant field changing at the same time -- promptly
-    triggers a resend, rather than only riding along on some other
-    field's change or waiting for the periodic unconditional resend."""
+    """Hash of the flight fields the map UDP `metadata` message carries,
+    compared against Flight.map_metadata_hash to decide whether a resend is
+    needed. Hashed rather than field-by-field compared so a new field added
+    to Flight later is covered automatically. matched_rules is included so
+    a rule match alone triggers a prompt resend."""
     payload = {
         "ident": flight.ident,
         "aircraft": flight.aircraft,
@@ -283,21 +241,14 @@ def _flight_metadata_snapshot(flight: Flight) -> str:
 
 
 class _MapUdpPublisher:
-    """Fire-and-forget UDP publisher for the `map` service's live
-    position/metadata/heartbeat feed. Unicasts to a single configured
-    destination.
+    """Fire-and-forget UDP publisher for the map service's live
+    position/metadata/heartbeat feed. Disabled (no socket) when `host` is
+    blank, matching the optional-endpoint convention elsewhere in
+    shared/config.py.
 
-    Disabled entirely -- no socket ever created -- when `host` is blank,
-    matching the optional-endpoint convention MQTT_HOST/RABBITMQ_HOST
-    already use in shared/config.py's load_config() system.
-
-    send() must never affect the main processing pipeline: a slow,
-    unreachable, or misconfigured destination is just a swallowed, debug-
-    logged exception, never a delay or a propagated error. UDP is
-    connectionless and sendto() on a datagram socket does not block on the
-    peer, so the only failure mode here is a local/immediate OSError (e.g.
-    an unresolvable host or a firewall's immediate ICMP-driven rejection).
-    """
+    send() never affects the processing pipeline: sendto() on a datagram
+    socket doesn't block on the peer, so the only failure mode is a local
+    OSError, which is swallowed and logged, never propagated."""
 
     def __init__(
         self, host: str, port: int,
@@ -317,22 +268,16 @@ class _MapUdpPublisher:
         self._sock: Optional[socket.socket] = (
             socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if self._addr else None
         )
-        # Set on the first send() failure and cleared on the next successful
-        # send, so a WARNING fires once per outage rather than once per
-        # message -- but a transient outage that recovers and later recurs
-        # logs again instead of going silent forever.
+        # True after a send() failure until the next success, so a WARNING
+        # logs once per outage, not once per message.
         self._logged_failure = False
-        # Wall-clock time.time() of the most recent send() call, of any
-        # message type -- consulted by _map_heartbeat_loop's skip-if-
-        # recently-sent check (see that method's docstring). None until
-        # the first send() this process lifetime.
+        # Most recent send() time, any message type; consulted by
+        # _map_heartbeat_loop's skip-if-recently-sent check.
         self._last_sent_at: Optional[float] = None
 
         # Per-icao_hex last-sent-position timestamp (message received_at,
-        # not wall-clock send time) -- see should_send_position(). Only
-        # `position` sends are throttled; `metadata` is already
-        # change-gated by _maybe_publish_map_metadata and always goes
-        # through plain send().
+        # not send time) -- see should_send_position(). Only `position`
+        # sends are throttled; `metadata` is already change-gated.
         self._min_position_interval = min_position_interval_seconds
         self._last_position_sent: dict[str, float] = {}
 
@@ -347,22 +292,15 @@ class _MapUdpPublisher:
 
     @property
     def last_sent_at(self) -> Optional[float]:
-        """Wall-clock time.time() of the most recent send() call
-        (regardless of message type, and regardless of whether the
-        underlying sendto() actually succeeded -- a fire-and-forget UDP
-        transmit *attempt* is what "sent" means here, not confirmed
-        delivery), or None if send() has never been called this process
-        lifetime."""
+        """time.time() of the most recent send() call attempt (not
+        confirmed delivery), or None if never called."""
         return self._last_sent_at
 
     def should_send_position(self, icao_hex: str, timestamp: float) -> bool:
         """True if enough time has elapsed since icao_hex's last sent
-        `position` -- or if this is the first position ever sent for
-        icao_hex -- and records `timestamp` as the new last-sent time as a
-        side effect. Compared on the
-        message's own `received_at`, not wall-clock time, so throttling
-        is stable under replay/backlog conditions and doesn't depend on
-        when the send actually happens to execute."""
+        position (records `timestamp` as a side effect either way).
+        Compared on the message's own `received_at`, not wall-clock time,
+        so throttling stays stable under replay/backlog."""
         last_sent = self._last_position_sent.get(icao_hex)
         if last_sent is not None and timestamp - last_sent < self._min_position_interval:
             return False
@@ -378,13 +316,9 @@ class _MapUdpPublisher:
             self._sock.sendto(body, self._addr)
             self._logged_failure = False
         except Exception as exc:
-            # OSError (unreachable host, refused connection, etc.) is the
-            # expected failure mode; caught broadly so nothing about this
-            # best-effort feed -- not even an unexpected serialization
-            # issue -- can ever propagate into the caller's hot path. The
-            # first failure of an outage is a WARNING so a misconfigured or
-            # unreachable MAP_UDP_HOST is visible at the default log level;
-            # repeats of the same outage drop to DEBUG to avoid flooding.
+            # Caught broadly so nothing about this best-effort feed can
+            # propagate into the hot path. First failure of an outage logs
+            # at WARNING; repeats drop to DEBUG to avoid flooding.
             if not self._logged_failure:
                 logger.warning("Map UDP send failed: %s", exc)
                 self._logged_failure = True
@@ -444,70 +378,44 @@ CREATE TABLE IF NOT EXISTS raw_frames (
     decoded   INTEGER NOT NULL
 );
 """
-# raw_frames deliberately has no unique index on (icao_hex, timestamp), the
-# way positions/velocities do below -- real, legitimate frames from the
-# same aircraft have been observed microseconds apart (dual 978+1090
-# reporting), and a raw-frame capture that could silently drop one of them
-# to a timestamp collision would defeat its own forensic purpose. Only
-# ever written to when CAPTURE_RAW_FRAMES is enabled (see
-# MessageProcessor._capture_raw_frames).
-# positions/velocities' unique index is created in _migrate_schema() rather
-# than here, since an existing database may already hold duplicate
-# (icao_hex, timestamp) rows from past redeliveries that must be cleaned up
-# first -- CREATE UNIQUE INDEX fails outright otherwise. It supersedes the
-# plain non-unique icao_hex indexes this schema used to define: its leading
-# column already serves the same icao_hex-only lookups.
+# raw_frames has no unique index (unlike positions/velocities below) --
+# legitimate dual 978+1090 frames land microseconds apart, and dropping one
+# to a timestamp collision would defeat its forensic purpose.
+# positions/velocities' unique index is created in _migrate_schema()
+# instead, since an existing db may hold duplicate rows that must be
+# cleaned up first -- CREATE UNIQUE INDEX fails outright otherwise.
 
 
 def _migrate_schema(db: sqlite3.Connection) -> None:
-    """Upgrade an active_flights.db created before receiver_sources/
-    force_archive existed. CREATE TABLE IF NOT EXISTS only handles a
-    brand-new file; a file created under the old schema still has the old
-    `source` column (left in place, unused) and is missing these two, so
-    ALTER TABLE fills the gap. Safe to call unconditionally on every
-    startup — checks column presence first. No backfill of the old `source`
-    column's values: active_flights.db only ever holds currently-in-progress
-    flights, not historical ones, so at most a handful of mid-flight rows
-    lose their old single-source value on the exact restart that upgrades
-    the schema — they simply start accumulating receiver_sources fresh from
-    that point on.
-    """
+    """Upgrade an active_flights.db predating a given column via ALTER
+    TABLE (CREATE TABLE IF NOT EXISTS only handles a brand-new file). Safe
+    to call unconditionally -- checks column presence first. No backfill of
+    the old `source` column: at most a handful of in-progress flights lose
+    their single-source value on the restart that upgrades the schema, then
+    accumulate receiver_sources fresh."""
     existing = {row[1] for row in db.execute("PRAGMA table_info(flights)").fetchall()}
     if "receiver_sources" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN receiver_sources TEXT")
     if "force_archive" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN force_archive INTEGER")
     if "route_resolution_attempted" not in existing:
-        # A flight recovered from a store predating this column has never
-        # had route resolution attempted -- NULL/0 (falsy) is the correct
-        # starting value, same as a brand-new flight, so no backfill needed
-        # beyond adding the column.
+        # NULL/0 (falsy) is the correct starting value, same as a
+        # brand-new flight -- no backfill needed.
         db.execute("ALTER TABLE flights ADD COLUMN route_resolution_attempted INTEGER")
     if "route_candidate_airports" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN route_candidate_airports TEXT")
     if "pending_squawk" not in existing:
-        # A flight recovered from a store predating this column has no
-        # in-progress squawk confirmation -- NULL (no pending candidate)
-        # is the correct starting value, same as a brand-new flight.
         db.execute("ALTER TABLE flights ADD COLUMN pending_squawk TEXT")
     if "pending_ident" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN pending_ident TEXT")
     if "registrant" not in existing:
         db.execute("ALTER TABLE flights ADD COLUMN registrant TEXT")
     if "map_metadata_hash" not in existing:
-        # A flight recovered from a store predating this column has never
-        # had a map UDP metadata message sent for it -- NULL (no prior
-        # snapshot) is the correct starting value, same as a brand-new
-        # flight, so the next message always sends one.
         db.execute("ALTER TABLE flights ADD COLUMN map_metadata_hash TEXT")
 
-    # positions/velocities had no uniqueness constraint before this
-    # migration, so RabbitMQ redelivery -- a normal at-least-once
-    # occurrence, not just a symptom of a bug -- could leave duplicate
-    # rows behind. Dedupe any that already exist before creating the
-    # unique index below (a no-op on a database with none), since
-    # CREATE UNIQUE INDEX fails outright on a table that already
-    # violates it.
+    # Dedupe rows left by RabbitMQ's at-least-once redelivery before adding
+    # the unique index below -- CREATE UNIQUE INDEX fails on a table that
+    # already violates it.
     db.execute(
         "DELETE FROM positions WHERE rowid NOT IN "
         "(SELECT MIN(rowid) FROM positions GROUP BY icao_hex, timestamp)"
@@ -560,15 +468,9 @@ class _RateTracker:
 
 class _CounterAccumulator:
     """Thread-safe in-memory delta accumulator for a Redis-backed period
-    counter (total_messages_processed / registration_misses / operator_misses).
-
-    record() is pure in-memory arithmetic under a lock -- zero I/O, safe to
-    call from the hot path (_on_message/_enrich_aircraft/_enrich_operator).
-    flush_and_reset() is called only from the telemetry thread, returning
-    (and zeroing) the delta accumulated since the last flush so the caller
-    can push it into Redis via incr_period_counter.lua/INCRBY. This never
-    talks to Redis itself -- it's pure bookkeeping, unlike receiver/main.py's
-    _RateTracker, which also tracks the hour/day bucket internally."""
+    counter. record() is safe to call from the hot path; flush_and_reset()
+    is called only from the telemetry thread, returning (and zeroing) the
+    delta since the last flush for the caller to push into Redis."""
 
     def __init__(self) -> None:
         self._pending = 0
@@ -587,10 +489,7 @@ class _CounterAccumulator:
 
 class _KeyedCounterAccumulator:
     """Same idea as _CounterAccumulator, but keyed (by rule identifier)
-    instead of a single scalar. record(key) is pure in-memory arithmetic
-    under a lock -- zero I/O, safe from the hot path. flush_and_reset()
-    returns (and clears) the whole accumulated {key: delta} dict, for the
-    telemetry thread to push into Redis in one pipeline."""
+    instead of a single scalar."""
 
     def __init__(self) -> None:
         self._pending: dict[str, int] = {}
@@ -635,11 +534,8 @@ class _TimeTracker:
             return self._total_ms / self._count
 
     def hwm_ms_and_reset(self) -> float:
-        """Returns the tracked high-water mark at full float precision --
-        no Python-side rounding/truncation. Any display-side rounding (e.g.
-        Home Assistant's suggested_display_precision) is applied by the
-        consumer, not here, so retained state/long-term statistics stay
-        exact."""
+        """Returns the tracked high-water mark at full float precision; any
+        display-side rounding is left to the consumer."""
         with self._lock:
             v = self._hwm_ms
             self._hwm_ms = 0.0
@@ -657,11 +553,8 @@ class _TimeTracker:
 
 class _Sensor(NamedTuple):
     """One HA autodiscovery sensor entity for a statistic/{field} topic.
-    `unit`/`extra` default to None so most entries only need the first four
-    positional fields; `extra` carries any additional discovery payload
-    keys a specific entity needs (e.g. suggested_display_precision,
-    expire_after) without every other entry having to spell out a "no
-    extras" placeholder."""
+    `extra` carries any additional discovery payload keys (e.g.
+    suggested_display_precision) a specific entity needs."""
     field: str
     name: str
     icon: str
@@ -705,36 +598,25 @@ class Flight:
         self.matched_rules: list[str] = []
         self.receiver_sources: list[str] = []
         self.force_archive: bool = False
-        # One-shot guard: route:{ident} resolution runs at most once per
-        # flight, the moment ident/altitude/heading are all available (see
-        # _maybe_resolve_route) -- without this, a valid ident with no
-        # known route (or an ambiguous leg) would otherwise be re-queried
-        # against Redis on every subsequent message for the rest of the
-        # flight.
+        # One-shot guard so route resolution (_maybe_resolve_route) isn't
+        # re-queried against Redis on every subsequent message.
         self.route_resolution_attempted: bool = False
-        # Raw JSON string of the airport records fetched from route_airports.lua,
-        # cached the first (and only) time it's fetched -- so a flight whose
-        # heading hasn't stabilized enough yet to trust (see
-        # route_resolver.heading_is_stable) can be re-evaluated on later
-        # messages without a repeat Redis round trip. None until fetched.
+        # Raw JSON of airport records from route_airports.lua, cached on
+        # first fetch so re-evaluation (heading not yet stable) skips the
+        # Redis round trip. None until fetched.
         self.route_candidate_airports: Optional[str] = None
         # Confirmation-in-progress candidate for a squawk/ident sourced from
-        # a message pyModeS can't CRC-verify (DF5/20/21) -- {"value": ...,
-        # "sightings": [msg.received_at, ...]} while unconfirmed, None once
-        # confirmed (or not yet pending). See _confirm_after_repeated_sightings.
+        # an unverifiable message; None once confirmed or not pending. See
+        # _confirm_after_repeated_sightings.
         self.pending_squawk: Optional[dict] = None
         self.pending_ident: Optional[dict] = None
         # Snapshot hash of the map UDP `metadata` fields as of the last
-        # time that message was sent -- None until the first send. See
-        # _flight_metadata_snapshot / MessageProcessor._maybe_publish_map_metadata.
+        # send -- None until the first send. See _flight_metadata_snapshot.
         self.map_metadata_hash: Optional[str] = None
         self.positions: list[Position] = []
         self.velocities: list[Velocity] = []
-        # Only ever populated by add_raw_frame() (CAPTURE_RAW_FRAMES on) or
-        # _load_raw_frames() (see to_completed_flight()) -- unlike
-        # positions/velocities, load() never reloads this on the ordinary
-        # per-message hot path; there's no "just the latest one" need the
-        # way those two have.
+        # Populated only by add_raw_frame() or _load_raw_frames() -- unlike
+        # positions/velocities, load() never reloads this on the hot path.
         self.raw_frames: list[RawFrame] = []
 
     # ------------------------------------------------------------------
@@ -846,10 +728,9 @@ class Flight:
             "VALUES (?,?,?,?,?)",
             (self.icao_hex, pos.timestamp, pos.latitude, pos.longitude, pos.altitude),
         )
-        # rowcount is 0 when the unique (icao_hex, timestamp) index caused
-        # this to be silently ignored as a redelivery duplicate -- skip the
-        # in-memory append too, or this list would drift from what's
-        # actually persisted (to_dict() serializes it directly).
+        # rowcount is 0 when the unique index silently ignored a redelivery
+        # duplicate -- skip the append too, or this list drifts from what's
+        # persisted.
         if cur.rowcount:
             self.positions.append(pos)
 
@@ -864,10 +745,8 @@ class Flight:
             self.velocities.append(vel)
 
     def add_raw_frame(self, frame: RawFrame) -> None:
-        """Plain INSERT, deliberately not "OR IGNORE" like add_position()/
-        add_velocity() -- there is no unique index on raw_frames to collide
-        with (see _SCHEMA's comment), so every call always persists and
-        always appends in memory."""
+        """Plain INSERT, not "OR IGNORE" like add_position()/add_velocity()
+        -- raw_frames has no unique index to collide with."""
         cur = self._db.cursor()
         cur.execute(
             "INSERT INTO raw_frames (icao_hex, timestamp, raw, source, decoded) "
@@ -877,13 +756,10 @@ class Flight:
         self.raw_frames.append(frame)
 
     def _load_raw_frames(self) -> None:
-        """Always loads the full history, unlike _load_positions()/
-        _load_velocities() -- raw_frames has no per-message hot-path need
-        for a "just the latest one" variant, so there's no `limit` param to
-        thread through. Called only from to_completed_flight(), and only
-        when the caller asks for it (see that method's `load_raw_frames`
-        parameter) -- never unconditionally, so a deployment with
-        CAPTURE_RAW_FRAMES off never issues this query at all."""
+        """Always loads full history, unlike _load_positions()/
+        _load_velocities() -- no per-message need for a "just the latest"
+        variant. Called only when the caller opts in, so
+        CAPTURE_RAW_FRAMES-off deployments never issue this query."""
         cur = self._db.cursor()
         cur.execute(
             "SELECT timestamp, raw, source, decoded FROM raw_frames "
@@ -902,23 +778,16 @@ class Flight:
 
     def to_completed_flight(self, load_all: bool = False, load_raw_frames: bool = False) -> CompletedFlight:
         """Reload all positions/velocities then build a CompletedFlight record.
-
-        `load_raw_frames` is independent of `load_all`: raw_frames is never
-        touched by load() (see its own docstring), so there's no in-memory
-        state to conditionally skip re-reading the way load_all does for
-        positions/velocities -- callers pass True only when
-        CAPTURE_RAW_FRAMES is actually enabled, so a deployment with the
-        flag off never runs this extra query (or ships a raw_frames list
-        that's non-empty only by a stale in-memory accident)."""
+        `load_raw_frames` is independent of `load_all` since load() never touches
+        raw_frames; callers pass True only when CAPTURE_RAW_FRAMES is enabled."""
         if load_all:
             self._load_positions(limit=False)
             self._load_velocities(limit=False)
         if load_raw_frames:
             self._load_raw_frames()
 
-        # Build aircraft dict — ensure icao_hex is present. Drop None-valued
-        # keys: aircraft is a plain dict, so a top-level exclude_none on the
-        # CompletedFlight dump can't reach inside it.
+        # Drop None-valued keys here -- aircraft is a plain dict, so a
+        # top-level exclude_none on the CompletedFlight dump can't reach it.
         aircraft = {k: v for k, v in self.aircraft.items() if v is not None}
         if "icao_hex" not in aircraft:
             aircraft["icao_hex"] = self.icao_hex
@@ -983,16 +852,13 @@ class MessageProcessor:
         self._queue_name = message_processor_queue_name(message_processor_id)
         self._started_at = datetime.now(timezone.utc).isoformat()
         self._shutdown = threading.Event()
-        # Set by the SIGUSR1 signal handler (see main()); polled from
-        # _eviction_loop() rather than a competing thread. Triggers a
-        # one-time decommission sequence -- see _decommission().
+        # Set by the SIGUSR1 handler; polled from _eviction_loop(), which
+        # runs the one-time decommission sequence (_decommission()).
         self._force_evict = threading.Event()
 
-        # SQLite active store — file-backed (WAL) so it survives an
-        # ungraceful process death. Reopening an existing file on restart
-        # recovers whatever flights were active when the previous process
-        # ended, whether that was a crash or a deliberate stop — there's no
-        # distinction, see shutdown().
+        # File-backed (WAL) so an existing active_flights.db survives a
+        # crash or restart identically, recovering whatever flights were
+        # active when the previous process ended.
         os.makedirs(DATA_DIR, exist_ok=True)
         self._db = sqlite3.connect(
             os.path.join(DATA_DIR, "active_flights.db"), check_same_thread=False
@@ -1003,23 +869,17 @@ class MessageProcessor:
         self._db.executescript(_SCHEMA)
         _migrate_schema(self._db)
 
-        # message_clock drives eviction instead of wall-clock time, so a
-        # backlog of messages replayed after a restart doesn't get archived
-        # just because real time passed while the process was down. Floor
-        # it at the most recent message any recovered flight actually saw;
-        # if the store was empty, there's nothing to protect and wall-clock
-        # time is fine to start from.
+        # Drives eviction instead of wall-clock time, so a backlog replayed
+        # after a restart isn't archived just because real time passed.
+        # Floored at the most recent recovered message, or wall-clock if
+        # the store was empty.
         row = self._db.execute("SELECT MAX(last_message) FROM flights").fetchone()
         self._message_clock: float = row[0] if row and row[0] is not None else time.time()
 
         # Archive fallback. An unroutable `archive` queue (archive-processor
-        # not deployed in this environment -- a legitimate, permanent config
-        # choice, not a per-flight fault) is classified non-poison: those
-        # rows retry forever and are never dead-lettered. Disk growth for
-        # that case is instead bounded by a ring-buffer cap on the retryable
-        # table itself, reusing the same 100MB ceiling the dead-letter
-        # directory uses; the oldest completed flights are evicted first
-        # once a deployment running no archive processor accumulates past it.
+        # not deployed here) is non-poison and retries forever, rather than
+        # dead-lettering; disk growth is instead bounded by a ring-buffer
+        # cap reusing the dead-letter directory's 100MB ceiling.
         self._fallback = FallbackQueue(
             os.path.join(DATA_DIR, "completed_flights.db"),
             non_poison_exceptions=(pika.exceptions.UnroutableError,),
@@ -1033,44 +893,21 @@ class MessageProcessor:
         self._message_latency = _TimeTracker()
         self._db_lock = threading.Lock()
 
-        # Single persistent, stateful 1090 decoder for the life of the
-        # process (#1841) -- replaces the old per-message
-        # pms.decode(raw, reference=<fixed receiver lat/lon>) call in
-        # _decode_1090. PipeDecoder tracks even/odd CPR pairs and a
-        # per-ICAO self-relative position reference internally, which is
-        # what fixes the "far from the fixed receiver reference" and
-        # "isolated CRC-lucky corrupt frame" teleport classes root-caused
-        # in #1835/#1836 -- see _decode_1090 for details. Not thread-safe
-        # (see PipeDecoder's own docstring), but that's fine here: every
-        # message is decoded synchronously on the single _consume_loop()
-        # thread that drives pika's start_consuming() -- no other thread
-        # ever calls into it. Left at pyModeS's own defaults throughout
-        # (pair_window/local_ref_window/motion_margin_km/eviction_ttl) --
-        # eviction_ttl's default of 300s happens to already match
-        # DEFAULT_FLIGHT_TTL_SECONDS below, but the two are independent
-        # and not wired together; no evidence yet that any of these need
-        # to diverge from pyModeS's defaults for this deployment.
+        # Single persistent, stateful 1090 decoder (per-ICAO CPR pairing +
+        # self-relative reference) for the process's life -- not
+        # thread-safe, but only ever called from _consume_loop()'s thread.
+        # Left at pyModeS's own defaults throughout.
         #
-        # Surface/taxi positions (BDS 0,6) are a different story (#1880):
-        # unlike airborne CPR, PipeDecoder has no self-bootstrap for them
-        # -- surface CPR is always resolved relative to *some* nearby
-        # known point, and PipeDecoder's `surface_ref` is exactly that
-        # slot. Left unset (the #1841 regression), `_resolve_pair` silently
-        # drops every surface pair before it ever produces a position --
-        # no exception, no log, no stat counter. The receiver's configured
-        # LATITUDE/LONGITUDE (the same values the pre-#1841 code passed as
-        # `reference=` to the old stateless per-message decode) are close
-        # enough to any local surface traffic to serve this purpose, so
-        # they're wired in here instead of being dropped as unused.
+        # Surface/taxi CPR has no self-bootstrap the way airborne CPR does:
+        # without `surface_ref` set, surface pairs are silently dropped, so
+        # the receiver's own lat/lon is wired in here instead.
         lat_cfg = self._cfg.get("latitude")
         lon_cfg = self._cfg.get("longitude")
         surface_ref = (lat_cfg, lon_cfg) if lat_cfg is not None and lon_cfg is not None else None
         self._pipe_decoder = PipeDecoder(surface_ref=surface_ref)
 
-        # Redis-backed period counters (total_messages_processed,
-        # registration_misses, operator_misses) -- pure in-memory
-        # accumulation on the hot path, flushed to Redis only from the
-        # telemetry thread. See _flush_period_counters().
+        # Pure in-memory accumulation on the hot path, flushed to Redis
+        # only from the telemetry thread. See _flush_period_counters().
         self._total_messages_processed = _CounterAccumulator()
         self._registration_misses = _CounterAccumulator()
         self._operator_misses = _CounterAccumulator()
@@ -1093,23 +930,16 @@ class MessageProcessor:
         # Rules engine
         self._rules_engine = RulesEngine(self._redis)
 
-        # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
-        # read once at startup and cached — read on every message in
+        # Read once at startup and cached -- read on every message in
         # _update_flight's gap check, so it must never be a synchronous
-        # Redis GET on the hot path. Not hot-reloaded; restart to pick up
-        # a changed value.
+        # Redis GET. Not hot-reloaded; restart to pick up a changed value.
         self._flight_ttl_seconds: int = DEFAULT_FLIGHT_TTL_SECONDS
 
-        # CAPTURE_RAW_FRAMES: read once at startup (shared.config's
-        # message_processor_config()), same "restart to pick up a change"
-        # contract as everything else read from config here. Controls only
-        # whether raw frames are persisted at reception time -- see
-        # _process()/_update_flight() -- and, downstream of that, whether
-        # the skyfollower-archive-raw-frames queue is declared at all (see
-        # _consume_loop()) and published to (see _maybe_publish_raw_frames()).
-        # Never affects the permanent skyfollower-archive path, which
-        # excludes raw_frames unconditionally regardless of this flag (see
-        # _archive()).
+        # Read once at startup; restart to pick up a change. Controls
+        # whether raw frames are persisted (_update_flight) and whether the
+        # raw-frames queue is declared/published to. Never affects the
+        # permanent archive path, which excludes raw_frames unconditionally
+        # (_archive()).
         self._capture_raw_frames: bool = bool(config.get("capture_raw_frames"))
 
         # MQTT
@@ -1157,10 +987,8 @@ class MessageProcessor:
 
     def _setup_logging(self) -> None:
         configure_logging(self._cfg.get("log_level"))
-        # pika's own loggers re-emit several ERROR-level lines plus a
-        # traceback on every reconnect attempt; message-processor's own
-        # WARNING line in _consume_loop already carries the real cause
-        # (see the %r repr there), so silence pika's duplicate noise.
+        # pika re-emits ERROR-level lines plus a traceback on every
+        # reconnect; _consume_loop's own WARNING already carries the cause.
         logging.getLogger("pika").setLevel(logging.CRITICAL)
 
     def _claim_message_processor_id(self) -> None:
@@ -1175,12 +1003,9 @@ class MessageProcessor:
         logger.info("Message processor %s claimed.", self._id)
 
     def _reset_lifetime_counters(self) -> None:
-        """"lifetime" means "since this process instance started," not
-        "forever" -- Redis is a separate, persistent service, so a
-        container restart does not clear these keys for free. Explicit
-        DELETE at boot, before the telemetry thread (and therefore the
-        first flush) ever starts, so no message processed before this call
-        completes can leak into the pre-reset lifetime total."""
+        """"lifetime" means "since this process started," not "forever" --
+        Redis persists across restarts, so these keys need an explicit
+        DELETE at boot, before the telemetry thread's first flush."""
         try:
             self._redis.delete(
                 metrics_registration_misses_key(self._id, "lifetime"),
@@ -1212,15 +1037,12 @@ class MessageProcessor:
                 declare_adsb_topology(self._rmq_channel)
                 bind_adsb_queue(self._rmq_channel, self._id)
                 if self._capture_raw_frames:
-                    # Only declared when the feature is actually on -- no
-                    # stray queue on a deployment that never enables it. See
-                    # declare_raw_frames_queue()'s docstring.
+                    # Only declared when the feature is on -- no stray
+                    # queue otherwise.
                     declare_raw_frames_queue(self._rmq_channel)
                 # Publisher confirms make basic_publish() synchronous and
-                # raise pika.exceptions.UnroutableError (mandatory=True) if
-                # the archive queue doesn't exist, instead of RabbitMQ
-                # silently dropping the message -- see _archive() and
-                # _drain_fallback()'s publish() closure.
+                # raise UnroutableError instead of silently dropping a
+                # message with no archive queue -- see _archive().
                 self._rmq_channel.confirm_delivery()
                 self._rmq_channel.basic_qos(prefetch_count=_RMQ_PREFETCH_COUNT)
                 self._rmq_channel.basic_consume(
@@ -1236,15 +1058,12 @@ class MessageProcessor:
 
                 self._rmq_channel.start_consuming()
 
-                # start_consuming() returned without raising. Either
-                # shutdown (the while guard below exits), or
-                # _force_rmq_reconnect_if_stale() scheduled stop_consuming
-                # because an archive publish latched _rmq_connected False
-                # while this connection kept delivering inbound messages
-                # (broker blocked publishers rather than dropping the
-                # socket). Rebuild the connection so the flag is
-                # re-validated -- otherwise every completed flight would
-                # route to the SQLite fallback indefinitely.
+                # start_consuming() returned without raising: either
+                # shutdown, or _force_rmq_reconnect_if_stale() broke it
+                # because a publish failure latched _rmq_connected False
+                # while the connection stayed up. Rebuild so the flag gets
+                # re-validated, or every completed flight routes to the
+                # SQLite fallback indefinitely.
                 self._rmq_connected = False
                 self._close_rmq_connection()
                 if not self._shutdown.is_set():
@@ -1285,14 +1104,12 @@ class MessageProcessor:
                 pass
 
     def _force_rmq_reconnect_if_stale(self) -> None:
-        """The archive publish path (_archive / _drain_fallback) latches
-        _rmq_connected False on any publish failure, including while the
-        broker has publishers blocked (disk-free alarm) but the connection
-        stays up and start_consuming() keeps delivering inbound messages.
-        Nothing clears the flag in that case, so completed flights pile
-        into the SQLite fallback forever. Break start_consuming() so
-        _consume_loop rebuilds the connection and re-validates the flag. A
-        genuine mid-reconnect False (no live connection) is a no-op."""
+        """Publish failures latch _rmq_connected False even when the
+        connection stays up (e.g. broker blocked publishers on a disk-free
+        alarm) and keeps delivering inbound messages -- nothing else clears
+        the flag, so completed flights would pile into the SQLite fallback
+        forever. Breaks start_consuming() so _consume_loop rebuilds and
+        re-validates it. No-op if there's no live connection."""
         if self._rmq_connected:
             return
         conn = self._rmq_connection
@@ -1324,14 +1141,10 @@ class MessageProcessor:
         self._processing_time.record(elapsed_ms)
         self._processing_time.record_hwm(elapsed_ms)
 
-        # message_latency_hwm_ms is receipt-through-processed, including
-        # any time the message spent waiting in RabbitMQ -- msg.received_at
-        # is stamped by the receiver on a different host and crosses the
-        # RabbitMQ hop, so this must use the wall clock (time.time()), not
-        # time.monotonic() like processing_time_hwm_ms above. That makes
-        # it sensitive to wall-clock adjustments (NTP drift, etc.) between
-        # the receiver and message-processor hosts -- an accepted
-        # tradeoff, documented on the HA entity too.
+        # Receipt-through-processed, including RabbitMQ wait time -- must
+        # use wall-clock time.time(), not time.monotonic(), since
+        # msg.received_at is stamped on a different host. Sensitive to
+        # NTP drift between hosts; an accepted tradeoff.
         latency_ms = (time.time() - msg.received_at) * 1000
         self._message_latency.record_hwm(latency_ms)
 
@@ -1346,13 +1159,9 @@ class MessageProcessor:
         if data is None:
             if not self._capture_raw_frames:
                 return
-            # CAPTURE_RAW_FRAMES is on: route the decode failure into
-            # _update_flight anyway, with a minimal stand-in `data` dict, so
-            # it's still recorded as a raw frame against whatever flight
-            # this icao_hex belongs to (creating one, exactly as a real
-            # message would, if none exists yet). msg.received_at/icao_hex
-            # are always present regardless of decode outcome, so there's
-            # no timestamp/routing gap to work around here.
+            # CAPTURE_RAW_FRAMES on: route the decode failure into
+            # _update_flight anyway with a minimal stand-in `data`, so it's
+            # still recorded as a raw frame against this icao_hex.
             data = {"icao_hex": msg.icao_hex}
         with self._db_lock:
             self._update_flight(data, msg)
@@ -1366,81 +1175,48 @@ class MessageProcessor:
         return self._decode_1090(msg)
 
     def _decode_1090(self, msg: InboundMessage) -> Optional[dict]:
-        """
-        Decode a raw Mode-S hex frame via the shared, per-process
-        PipeDecoder (self._pipe_decoder) instead of a per-message
-        pms.decode(raw, reference=<fixed receiver lat/lon>) call (#1841).
-        Pure field-presence extraction — no DF/typecode dispatch. Message
-        types that don't populate any of the fields below (e.g. ACAS RA
-        broadcasts) simply produce nothing and get dropped, with no need to
-        enumerate which typecodes to skip.
+        """Decode a raw Mode-S frame via the shared, per-process
+        PipeDecoder rather than a per-message pms.decode(reference=...)
+        call. Pure field-presence extraction -- message types with no
+        fields of interest just produce nothing.
 
-        PipeDecoder resolves airborne CPR positions itself, using
-        even/odd frame pairing plus a per-ICAO self-relative reference
-        (never this receiver's fixed lat/lon) -- see #1835/#1836 for the
-        two real teleport failure classes this replaces: a fixed
-        reference decoding the wrong CPR longitude zone for traffic past
-        ~180nm, and an isolated CRC-lucky corrupted frame producing a
-        phantom position. Both are now handled internally by
-        PipeDecoder's pairing/local-reference resolution and its
-        multi-point motion-consistency + bootstrap-cluster checks, so no
-        airborne `reference=` is passed here at all. A side effect: a
-        brand-new ICAO's first airborne position is held back (returns no
-        latitude/longitude) until a pair or a 3-candidate bootstrap
-        cluster resolves, instead of resolving instantly off a fixed
-        reference -- see #1841.
-
-        Surface/taxi positions (BDS 0,6) are the one case that still
-        needs the receiver's fixed location: PipeDecoder has no
-        self-bootstrap for surface CPR, so self._pipe_decoder is
-        constructed with the configured LATITUDE/LONGITUDE as its
-        `surface_ref` (see __init__) -- without it, surface pairs are
-        silently dropped and never reach `result` at all. See #1880.
+        PipeDecoder resolves airborne CPR itself via even/odd pairing and
+        a per-ICAO self-relative reference, fixing wrong-CPR-zone and
+        isolated-CRC-lucky teleports; a side effect is that a brand-new
+        ICAO's first position is held back until a pair/bootstrap cluster
+        resolves. Surface CPR has no such self-bootstrap, so it relies on
+        the `surface_ref` passed at construction (__init__) instead.
         """
         raw = msg.raw
         if len(raw) < 14:
             return None
 
-        # Read PipeDecoder's internal counters dict directly rather than
-        # through its public `stats` property, which returns a fresh
-        # dict(...) copy on every access -- this runs on every single
-        # decoded message, so two full-dict copies per call is overhead
-        # worth skipping. Relies on PipeDecoder's private `_stats` shape,
-        # acceptable here because pyModeS is pinned to an exact version
-        # (==3.6.0, requirements.txt) rather than a floating one.
+        # Reads PipeDecoder's private `_stats` dict directly instead of its
+        # `stats` property (which copies on every access) -- acceptable
+        # since pyModeS is pinned to an exact version (requirements.txt).
         rejected_before = self._pipe_decoder._stats["position_rejected"]
         try:
             result = self._pipe_decoder.decode(raw, timestamp=msg.received_at)
         except Exception:
             return None
-        # True when *this* message is the one that tripped PipeDecoder's
-        # motion-consistency check (a resolved CPR pair/local decode that
-        # implied an impossible groundspeed from recent position history)
-        # -- distinct from a message simply being held pending a pair or
-        # bootstrap cluster, which never touches this counter. Surfaced to
-        # _update_flight below so it can log with a flight_id -- see
-        # #1836, which this supersedes.
+        # True only when this message tripped PipeDecoder's
+        # motion-consistency check (implied an impossible groundspeed) --
+        # distinct from merely being held pending a pair. Surfaced to
+        # _update_flight for logging with a flight_id.
         position_rejected = self._pipe_decoder._stats["position_rejected"] > rejected_before
 
-        # A real corruption check only for DF17/18 (crc_valid there is a
-        # genuine crc==0 result). For DF5/20/21, pyModeS can't compute a
-        # real crc_valid without an ICAO hint we don't supply — it reports
-        # crc_valid=None (not True), which this check doesn't catch. That's
-        # not a gap we can close by passing an icao hint here — a hint only
-        # overrides what `icao` is reported as, it doesn't verify anything
-        # against a value we don't already trust. See #900: fields sourced
-        # from a crc_valid=None message get the "verified" flag below
-        # instead, and callers apply extra scrutiny to specific fields
-        # (squawk, ident) that are known to fabricate plausible-looking
-        # garbage from corrupted bits of these DF types.
+        # Rejects only a genuine DF17/18 CRC failure (crc_valid is False).
+        # DF5/20/21 report crc_valid=None -- pyModeS can't verify them
+        # without an ICAO hint we don't supply, and a hint wouldn't verify
+        # anything anyway. Those messages instead get the `verified` flag
+        # below, and callers apply extra scrutiny to squawk/ident, the
+        # fields known to fabricate plausible garbage from corrupted bits.
         if result.get("crc_valid") is False:
             return None
 
-        # True only for a genuinely CRC-verified message (DF17/18); False
-        # for DF5/20/21, where pyModeS reports crc_valid=None because it
-        # can't be determined at all without an ICAO hint. Only attached
-        # alongside squawk/ident, the two fields known to leak fabricated
-        # values from corrupted DF5/20/21 bits — see _update_flight.
+        # True only for a genuinely CRC-verified DF17/18 message; DF5/20/21
+        # always reports None. Attached alongside squawk/ident, the fields
+        # known to leak fabricated values from corrupted bits.
         verified = result.get("crc_valid") is True
 
         data: dict = {"icao_hex": msg.icao_hex}
@@ -1471,13 +1247,10 @@ class MessageProcessor:
             if emitter_category:
                 data["emitter_category"] = emitter_category
 
-        # Position/altitude are only trusted from a genuinely CRC-verified
-        # message (DF17/18). DF5/20/21 (crc_valid=None) can fabricate an
-        # in-range-looking position/altitude from corrupted bits just as
-        # readily as the squawk/ident cases above, but unlike those there's
-        # no repeat-sighting confirmation path for a lat/lon pair -- so
-        # these fields are simply never populated from an unverified
-        # message rather than trusted-then-confirmed.
+        # Position/altitude are trusted only from a CRC-verified message --
+        # DF5/20/21 can fabricate them too, but unlike squawk/ident there's
+        # no repeat-sighting path for a lat/lon pair, so unverified messages
+        # never populate these fields at all.
         if verified:
             if result.get("latitude") is not None:
                 lat, lon = result["latitude"], result["longitude"]
@@ -1515,8 +1288,8 @@ class MessageProcessor:
             data["adsb_version"] = result["version"]
 
         if position_rejected:
-            # Transient marker, not a real field -- popped and logged (with
-            # a flight_id) by _update_flight, then discarded. See #1841.
+            # Transient marker, not a real field -- popped and logged by
+            # _update_flight, then discarded.
             data["_position_rejected"] = True
 
         return data if len(data) > 1 else None
@@ -1601,10 +1374,9 @@ class MessageProcessor:
         if exists:
             ttl = self._flight_ttl_seconds
             if msg.received_at - flight.last_message > ttl:
-                # The loaded flight is already complete — a gap this size
-                # replayed through the backlog (or happened live) means it
-                # ended before this message. Archive it and start fresh
-                # rather than extending a flight that's actually over.
+                # This gap means the loaded flight already ended (replay
+                # or live) -- archive it and start fresh rather than
+                # extending a flight that's actually over.
                 completed = flight.to_completed_flight(
                     load_all=True, load_raw_frames=self._capture_raw_frames,
                 )
@@ -1622,13 +1394,10 @@ class MessageProcessor:
             self._enrich_aircraft(flight)
 
         if self._capture_raw_frames:
-            # Right after the flight is loaded/created, unconditional for
-            # every message while the flag is on -- decoded or not. `data`
-            # is always at least {"icao_hex": ...} (see _process()), so
-            # len(data) > 1 means something was actually extracted; exactly
-            # 1 means this message either failed to decode or decoded
-            # cleanly into nothing this system parses out (e.g. an ACAS RA
-            # broadcast) -- deliberately not distinguished (see #1842).
+            # Unconditional for every message while the flag is on, decoded
+            # or not. len(data) > 1 means something was extracted; exactly
+            # 1 means decode failure or a message with nothing to parse --
+            # deliberately not distinguished.
             flight.add_raw_frame(RawFrame(
                 timestamp=msg.received_at,
                 source=msg.source,
@@ -1639,15 +1408,10 @@ class MessageProcessor:
         if msg.source not in flight.receiver_sources:
             flight.receiver_sources.append(msg.source)
 
-        # #1956: a message can still arrive out of order for this aircraft
-        # -- cross-receiver skew (a 1090 and a 978 receiver, or redundant
-        # antennas, each publishing independently) is the expected residual
-        # source once the receiver's own ordering fix is in place; rare,
-        # not eliminated. Only ever advance last_message forward. Letting
-        # an older message regress it would corrupt the *next*
-        # (correctly-ordered) message's gap/TTL check above -- an inflated
-        # gap computed against a wrongly-rolled-back last_message could
-        # force-archive/split a flight that never actually ended.
+        # A message can still arrive out of order (cross-receiver skew) --
+        # only ever advance last_message forward. Letting an older message
+        # roll it back would corrupt the next message's gap/TTL check,
+        # potentially force-archiving a flight that never actually ended.
         out_of_order = exists and msg.received_at < flight.last_message
         if not out_of_order:
             flight.last_message = msg.received_at
@@ -1655,11 +1419,9 @@ class MessageProcessor:
 
         if data.pop("_position_rejected", False):
             # PipeDecoder's own motion-consistency check rejected this
-            # message's resolved CPR position as implausible relative to
-            # this aircraft's recent position history (superseded #1836's
-            # log-only implied-groundspeed diagnostic -- this is an actual
-            # rejection, not just an observation, so `data` never carried
-            # a latitude/longitude for this message in the first place).
+            # position as implausible relative to recent history -- an
+            # actual rejection, not just an observation, so `data` never
+            # carried a lat/lon for this message.
             logger.warning(
                 "PipeDecoder rejected an implausible 1090 CPR position for "
                 "%s (flight_id=%s, ident=%s): raw=%s -- see #1841",
@@ -1683,30 +1445,25 @@ class MessageProcessor:
                 vertical_speed=data.get("vertical_speed"),
             ))
 
-        # Map UDP `position` message -- throttled per aircraft to at most
-        # one per MAP_UDP_MIN_POSITION_INTERVAL_SECONDS; no-op when
-        # MAP_UDP_HOST is unset. Skipped entirely for an out-of-order
-        # message (#1956): unlike MAX_MESSAGE_LAG_SECONDS (which only
-        # catches a message that's stale in absolute terms), this message
-        # could well be "fresh enough" and still be older than a position
-        # already shown for this aircraft -- sending it would visibly snap
-        # a currently-displayed aircraft backward on the map.
+        # Throttled per aircraft; no-op when MAP_UDP_HOST is unset. Skipped
+        # for an out-of-order message -- unlike the lag check, this catches
+        # a message that's "fresh enough" but older than what's already
+        # shown, which would visibly snap the aircraft backward on the map.
         if not out_of_order:
             self._publish_map_position(flight, data, msg.received_at)
 
         if "squawk" in data and not flight.squawk:
             squawk = str(data["squawk"])
             if data.get("verified", True) or squawk not in _RESERVED_SQUAWKS:
-                # Verified source (DF17/18 TC=28), or an ordinary squawk
-                # value where a lone corrupted reading has no real-world
-                # consequence -- trust on first sighting, as before.
+                # Verified source, or an ordinary value where a lone
+                # corrupted reading has no real consequence -- trust on
+                # first sighting.
                 flight.squawk = squawk
                 flight.pending_squawk = None
             else:
-                # Reserved/emergency code from a message pyModeS can't
-                # CRC-verify (DF5/21) -- corrupted bits disproportionately
-                # land on exactly these values (see #900), so require
-                # multiple sightings before committing.
+                # Reserved/emergency code from an unverifiable message --
+                # corrupted bits disproportionately land on these values,
+                # so require multiple sightings before committing.
                 flight.pending_squawk, confirmed = _confirm_after_repeated_sightings(
                     flight.pending_squawk, squawk, msg.received_at,
                 )
@@ -1715,9 +1472,8 @@ class MessageProcessor:
                     flight.pending_squawk = None
 
         if "wake_turbulence_category" in data:
-            # Live decode is the sole writer (registry enrichment never seeds this
-            # field — see _WAKE_TURBULENCE_MAP), so each new reading just replaces
-            # the last one; no first-wins protection needed.
+            # Live decode is the sole writer (see _WAKE_TURBULENCE_MAP), so
+            # each new reading just replaces the last -- no first-wins guard.
             flight.aircraft["wake_turbulence_category"] = data["wake_turbulence_category"]
 
         if "ident" in data and not flight.ident:
@@ -1729,13 +1485,10 @@ class MessageProcessor:
                     flight.pending_ident = None
                     self._enrich_operator(flight)
                 else:
-                    # DF20/21 Comm-B BDS 2,0 -- unlike squawk there's no
-                    # "safe" subset of ident values to exempt, so every
-                    # unverified ident needs confirmation (see #900). Uses
-                    # its own, much more lenient count/window than squawk's
-                    # (#1915) -- see IDENT_CONFIRM_COUNT/
-                    # IDENT_CONFIRM_WINDOW_SECONDS's docstring in
-                    # shared/timing.py for why.
+                    # DF20/21 Comm-B -- unlike squawk, there's no "safe"
+                    # subset to exempt, so every unverified ident needs
+                    # confirmation, using its own more lenient count/window
+                    # (see shared/timing.py).
                     flight.pending_ident, confirmed = _confirm_after_repeated_sightings(
                         flight.pending_ident, ident, msg.received_at,
                         window_seconds=IDENT_CONFIRM_WINDOW_SECONDS,
@@ -1750,11 +1503,9 @@ class MessageProcessor:
             flight.aircraft.setdefault("adsb_version", data["adsb_version"])
 
         if "emitter_category" in data:
-            # Receiver-decoded, like adsb_version above -- a stable airframe
-            # property, so first sighting wins. Carried in the aircraft dict
-            # so it reaches the map UDP `metadata` payload inside the
-            # `aircraft` sub-object (keeping the map frontend's resolve-on-
-            # `aircraft`-change gate working unchanged).
+            # Receiver-decoded, like adsb_version -- stable, so first
+            # sighting wins. Kept in the aircraft dict so it reaches the
+            # map UDP metadata payload's `aircraft` sub-object.
             flight.aircraft.setdefault("emitter_category", data["emitter_category"])
 
         self._maybe_resolve_route(flight)
@@ -1764,11 +1515,8 @@ class MessageProcessor:
         # since the last send; no-op when MAP_UDP_HOST is unset.
         self._maybe_publish_map_metadata(flight, msg.received_at)
 
-        # Rules evaluation. Nanoseconds, not milliseconds -- a single
-        # evaluate() call is an in-process, no-I/O rule match against one
-        # flight's cached state, almost always sub-millisecond, so ms
-        # resolution mostly reads 0-1 and loses the signal needed to spot
-        # a real regression.
+        # Nanoseconds, not milliseconds -- evaluate() is in-process, no-I/O,
+        # almost always sub-millisecond, so ms resolution would lose signal.
         t_rules = time.monotonic()
         matched = self._rules_engine.evaluate(flight)
         rules_ns = (time.monotonic() - t_rules) * 1e9
@@ -1776,9 +1524,8 @@ class MessageProcessor:
 
         for rule in matched:
             flight.matched_rules.append(rule["identifier"])
-            # Once per flight, the first time this rule matches: evaluate()
-            # skips a rule already in flight.matched_rules, so this loop
-            # body runs once per (flight, rule). Pure in-memory.
+            # evaluate() skips a rule already in matched_rules, so this
+            # runs once per (flight, rule).
             self._rule_trigger_counts.record(rule["identifier"])
             if rule.get("force_archive"):
                 flight.force_archive = True
@@ -1798,10 +1545,9 @@ class MessageProcessor:
                 # Registry/Mictronics data must never seed wake_turbulence_category —
                 # it's receiver-decode-only (see _WAKE_TURBULENCE_MAP above).
                 aircraft.pop("wake_turbulence_category", None)
-                # registrant is an entity describing the aircraft's legal
-                # owner, not a property of the airframe -- the same category
-                # of thing as flight.operator, so it lives as its own sibling
-                # field on Flight/CompletedFlight rather than nested here.
+                # registrant describes the aircraft's legal owner, not the
+                # airframe -- same category as flight.operator, so it's its
+                # own sibling field rather than nested here.
                 flight.registrant = aircraft.pop("registrant", None) or {}
                 flight.aircraft = aircraft
             else:
@@ -1846,21 +1592,16 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def _route_ready(self, flight: Flight) -> bool:
-        """True once every field the resolution heuristics need has been
-        seen at least once for this flight: a route-bearing ident (not
-        empty/"00000000" -- already enforced before flight.ident is ever
-        set -- and not just the aircraft's own tail number), a position, an
-        altitude, and a heading. Order of arrival across messages doesn't
-        matter; each condition is checked against the flight's full history
-        via SQLite, not just whatever _update_flight's single-message
-        Flight.load(limit=True) happened to load in memory."""
+        """True once ident, position, altitude, and heading have all been
+        seen at least once for this flight, in any order -- checked against
+        full SQLite history, not just what Flight.load(limit=True) loaded
+        into memory for this message."""
         if not flight.ident or _ident_matches_registration(flight.ident, flight.aircraft):
             return False
 
-        # A stored position always has latitude/longitude (only ever
-        # inserted together, see _update_flight) -- altitude is the one
-        # that's sometimes absent (e.g. a surface-position typecode), so
-        # requiring it here also guarantees "a lat/long has been received".
+        # altitude is the one field sometimes absent from a stored position
+        # (e.g. surface typecodes) -- requiring it also guarantees a
+        # lat/lon has been received.
         cur = self._db.cursor()
         cur.execute(
             "SELECT 1 FROM positions WHERE icao_hex=? AND altitude IS NOT NULL LIMIT 1",
@@ -1876,28 +1617,18 @@ class MessageProcessor:
         return cur.fetchone() is not None
 
     def _maybe_resolve_route(self, flight: Flight) -> None:
-        """Runs route:{ident} leg resolution at most once per flight, the
-        moment ident/position/altitude/heading are all available — not at
-        archive time, so a rules-engine condition or MQTT notification
-        later in the same flight can see origin/destination too. See
-        message-processor/README.md's "Route Leg Resolution" section and
-        message_processor.route_resolver for the resolution/sanity-check
-        logic itself.
+        """Runs route:{ident} leg resolution at most once per flight, as
+        soon as ident/position/altitude/heading are all available -- not at
+        archive time, so later rule/notification logic in the same flight
+        can see origin/destination too. See route_resolver and
+        message-processor/README.md's "Route Leg Resolution" section.
 
-        route_resolution_attempted is only set once the result is final
-        (see route_resolver.resolve_origin_destination's is_final) — a
-        settled resolution, or a settled "no route"/"rejected" outcome — so
-        a valid ident with no known route is never re-queried against
-        Redis on every subsequent message for the rest of the flight. The
-        one exception is a multi-leg route whose heading data hasn't
-        stabilized enough yet to trust (e.g. an aircraft circling in a
-        holding pattern): that's deliberately re-evaluated on later
-        messages once more heading samples arrive, but the fetched airport
-        records are cached on route_candidate_airports the first time so
-        those re-evaluations never repeat the Redis round trip.
-        All-or-nothing: leaves both fields None on missing route data, an
-        unresolvable leg, or a failed sanity check, rather than writing a
-        partial or best-guess pair."""
+        route_resolution_attempted is set only once the result is final
+        (route_resolver.resolve_origin_destination's is_final), except a
+        route whose heading hasn't stabilized yet is re-evaluated on later
+        messages -- route_candidate_airports caches the fetched airports so
+        that re-evaluation skips the Redis round trip. All-or-nothing: both
+        fields stay None on any unresolved/failed case."""
         if flight.route_resolution_attempted or not self._route_ready(flight):
             return
 
@@ -1924,10 +1655,9 @@ class MessageProcessor:
             )
             return
 
-        # Reload full history -- flight.positions/velocities may hold only
-        # the most recently loaded row (Flight.load's default limit=True),
-        # not the whole flight, and the low-altitude heuristic specifically
-        # needs the earliest position.
+        # flight.positions/velocities may hold only the most recent row
+        # (Flight.load's default limit=True) -- the low-altitude heuristic
+        # needs the earliest position, so reload full history.
         flight._load_positions(limit=False)
         flight._load_velocities(limit=False)
         positions = [p.to_dict() for p in flight.positions]
@@ -1957,10 +1687,8 @@ class MessageProcessor:
     def _eviction_loop(self) -> None:
         while not self._shutdown.is_set():
             time.sleep(10)
-            # SIGUSR1 (see main()) only sets this event -- the actual
-            # decommission work runs here, on this existing background
-            # thread, rather than on a second competing thread or
-            # directly in the signal handler itself.
+            # SIGUSR1 (main()) only sets this event -- the decommission
+            # work runs here, not in the signal handler itself.
             if self._force_evict.is_set():
                 self._decommission()
                 return
@@ -1969,10 +1697,9 @@ class MessageProcessor:
     def _evict_stale(self) -> None:
         ttl = self._flight_ttl_seconds
         with self._db_lock:
-            # message_clock, not wall-clock time, gates eviction — after a
-            # restart it only advances as far as the RabbitMQ backlog has
-            # actually been drained, so recovered flights aren't archived
-            # just because real time passed while the process was down.
+            # message_clock, not wall-clock time, gates eviction -- after a
+            # restart it only advances as the backlog drains, so recovered
+            # flights aren't archived just because real time passed.
             cutoff = self._message_clock - ttl
             cur = self._db.cursor()
             cur.execute("SELECT icao_hex FROM flights WHERE last_message < ?", (cutoff,))
@@ -1982,11 +1709,9 @@ class MessageProcessor:
             self._evict_flight(icao_hex)
 
     def _force_evict_all(self) -> None:
-        """Unconditional counterpart to _evict_stale(): force every active
-        flight through the same per-flight eviction path regardless of
-        message_clock/TTL. Used only by the SIGUSR1 decommission sequence
-        (_decommission()) -- never by the ordinary TTL-gated sweep, which
-        must keep gating on message_clock exactly as today."""
+        """Unconditional counterpart to _evict_stale(): forces every active
+        flight through the same eviction path regardless of TTL. Used only
+        by the SIGUSR1 decommission sequence (_decommission())."""
         with self._db_lock:
             cur = self._db.cursor()
             cur.execute("SELECT icao_hex FROM flights")
@@ -2000,11 +1725,9 @@ class MessageProcessor:
             self._evict_flight(icao_hex)
 
     def _evict_flight(self, icao_hex: str) -> None:
-        """Shared per-flight eviction body: load the flight, convert it to
-        a CompletedFlight, remove it from the active store, and queue it
-        for archive. Reused by both _evict_stale()'s TTL-gated sweep and
-        _force_evict_all()'s unconditional decommission sweep so the two
-        paths can't drift apart."""
+        """Shared per-flight eviction body, reused by _evict_stale()'s
+        TTL-gated sweep and _force_evict_all()'s decommission sweep so the
+        two paths can't drift apart."""
         with self._db_lock:
             flight = Flight(self._db)
             if not flight.load(icao_hex, limit=False):
@@ -2020,25 +1743,17 @@ class MessageProcessor:
 
     def _archive(self, flight: CompletedFlight) -> None:
         """Queue a completed flight for the archive processor. May be
-        called from the thread driving start_consuming() itself (a
-        same-message archive-and-restart inside _update_flight) or from
-        the eviction background thread -- self._rmq_channel/_rmq_connection
-        must only ever be touched by the former, so every call routes
-        through add_callback_threadsafe uniformly rather than branching on
-        the calling thread (harmless -- and still safe -- when called from
-        the connection's own thread too). The scheduled callback decides
-        success/failure and falls back to self._fallback.put() itself,
-        since the caller can no longer observe the outcome synchronously.
+        called from the connection's own thread or the eviction thread --
+        self._rmq_channel/_rmq_connection must only be touched by the
+        former, so every call routes through add_callback_threadsafe
+        uniformly. The scheduled callback decides success/failure and
+        falls back to self._fallback.put() itself.
 
-        exclude={"raw_frames"} below is unconditional -- not gated on
-        self._capture_raw_frames at all (see #1842). It doesn't matter
-        whether that setting is on, off, or a future bug in the
-        capture-side gating left raw_frames populated when it shouldn't be:
-        this is the one and only code path that can ever reach the
-        permanent archive / S3, and this line always drops the field
-        before anything reaches it. Raw frames headed anywhere at all only
-        ever travel via _maybe_publish_raw_frames()'s separate,
-        short-lived skyfollower-archive-raw-frames queue."""
+        exclude={"raw_frames"} is unconditional, regardless of
+        self._capture_raw_frames: this is the only path that reaches the
+        permanent archive/S3, so it always drops the field here. Raw
+        frames only ever travel via _maybe_publish_raw_frames()'s separate
+        short-lived queue."""
         payload = flight.model_dump_json(by_alias=True, exclude_none=True, exclude={"raw_frames"})
 
         def _publish_on_rmq_thread() -> None:
@@ -2069,27 +1784,18 @@ class MessageProcessor:
         self._fallback.put(payload)
 
     def _maybe_publish_raw_frames(self, flight: CompletedFlight) -> None:
-        """Companion to _archive(), called right alongside every one of its
-        call sites. A no-op unless CAPTURE_RAW_FRAMES is on and this
-        specific completed flight actually captured any frames -- most
-        flights won't have any beyond an empty default list when the
-        feature is off, and there's no reason to publish an empty
-        raw_frames payload even when it's on."""
+        """Companion to _archive(), called alongside every call site. A
+        no-op unless CAPTURE_RAW_FRAMES is on and this flight actually
+        captured frames."""
         if self._capture_raw_frames and flight.raw_frames:
             self._publish_raw_frames(flight)
 
     def _publish_raw_frames(self, flight: CompletedFlight) -> None:
-        """Best-effort publish of a completed flight -- raw_frames intact,
-        no exclude= at all -- to the short-lived forensic queue
-        skyfollower-archive-raw-frames. Unlike _archive(), a failure here
-        never falls back to self._fallback/SQLite durability and never
-        touches self._rmq_connected: losing a completed flight from the
-        permanent archive is a real loss worth retrying and reconnecting
-        over; losing a raw-frame debug record because RabbitMQ was briefly
-        unavailable is not, so this just logs and moves on. Only ever
-        called when self._capture_raw_frames is True (see
-        _maybe_publish_raw_frames()) -- the queue itself is only declared
-        under that same condition (see _consume_loop())."""
+        """Best-effort publish (raw_frames intact) to the short-lived
+        forensic raw-frames queue. Unlike _archive(), a failure here never
+        falls back to SQLite or touches self._rmq_connected -- losing a
+        debug record is not worth retrying over, so this just logs and
+        moves on."""
         payload = flight.model_dump_json(by_alias=True, exclude_none=True)
 
         def _publish_on_rmq_thread() -> None:
@@ -2113,18 +1819,13 @@ class MessageProcessor:
             logger.debug("Raw-frames publish scheduling failed: %s", exc)
 
     def _drain_fallback(self) -> None:
-        """FallbackQueue.drain() (shared/fallback_queue.py) calls
-        process_fn(payload) synchronously and decides retry/dead-letter
-        per row based on whether it raises -- that per-row contract can't
-        change, so this closure can't just fire-and-forget the publish
-        like _archive() does. Instead it schedules the real basic_publish
-        via add_callback_threadsafe (self._rmq_channel must only be
-        touched by the connection's own thread) and blocks on a
-        threading.Event the scheduled callback sets once it has actually
-        attempted the publish, re-raising whatever exception it recorded
-        -- preserving drain()'s synchronous per-row contract from its own
-        point of view while the actual socket write happens on the
-        correct thread."""
+        """FallbackQueue.drain() calls process_fn(payload) synchronously
+        and decides retry/dead-letter based on whether it raises, so this
+        can't fire-and-forget like _archive() does. It schedules the real
+        publish via add_callback_threadsafe and blocks on a threading.Event
+        the callback sets once it's attempted the publish, re-raising
+        whatever it recorded -- preserving drain()'s synchronous contract
+        while the socket write happens on the connection's own thread."""
         def publish(payload: str) -> None:
             connection = self._rmq_connection
             if not connection:
@@ -2193,19 +1894,13 @@ class MessageProcessor:
 
     def _build_flight_notification_payload(self, flight: Flight) -> dict:
         """CompletedFlight-shape payload shared by the MQTT rule
-        notification and the map UDP `metadata` message -- same
-        field-dropping logic (positions/velocities/raw_frames/_id popped;
-        empty operator/registrant/origin/destination/force_archive omitted
-        rather than published as falsy). Callers add their own extra key
-        on top: MQTT adds `rule`, the map UDP metadata message adds
-        `type`.
+        notification and the map UDP `metadata` message: positions/
+        velocities/raw_frames/_id popped, empty optional fields omitted.
+        Callers add their own key on top (MQTT's `rule`, map UDP's `type`).
 
-        to_completed_flight() is called here with its defaults
-        (load_raw_frames=False), so raw_frames is never freshly loaded from
-        SQLite for this payload -- but with CAPTURE_RAW_FRAMES on, `flight`
-        may already carry this message's own just-added frame in memory
-        (see _update_flight()), so it's popped explicitly below rather than
-        relied upon to stay empty."""
+        raw_frames is popped explicitly rather than relied upon to stay
+        empty, since with CAPTURE_RAW_FRAMES on, `flight` may already carry
+        this message's just-added frame in memory."""
         notification = flight.to_completed_flight().model_dump(
             by_alias=True, mode="json", exclude_none=True
         )
@@ -2253,21 +1948,15 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def _publish_map_position(self, flight: Flight, data: dict, received_at: float) -> None:
-        """Sent once per flight per MAP_UDP_MIN_POSITION_INTERVAL_SECONDS
-        (default 1s -- see _MapUdpPublisher.should_send_position) once the
-        map UDP feed is enabled -- one flat object merging whatever
-        Position/Velocity fields this particular message carried. Fields
-        absent from `data` are omitted, not sent as null, matching
-        Position.to_dict() / Velocity.to_dict()'s existing convention.
-        Carries `processor_id` (like `metadata` and `heartbeat`) so the map
-        service's per-processor liveness roster can be updated from
-        ordinary traffic, not just the dedicated heartbeat -- see
-        _map_heartbeat_loop.
+        """Throttled to at most one per MAP_UDP_MIN_POSITION_INTERVAL_SECONDS
+        per flight (see should_send_position). Fields absent from `data`
+        are omitted, not sent as null. Carries `processor_id` so the map
+        service's liveness roster updates from ordinary traffic too, not
+        just the dedicated heartbeat.
 
-        The throttle is keyed on `received_at` (the source message's own
-        timestamp), not wall-clock send time -- see should_send_position.
-        `metadata` sends (_maybe_publish_map_metadata) are never throttled
-        here; they're already change-gated on their own terms."""
+        Throttle is keyed on `received_at`, not wall-clock time, so replay
+        stays stable. `metadata` sends are never throttled here -- they're
+        already change-gated on their own terms."""
         if not self._map_udp.enabled:
             return
         lag = time.time() - received_at
@@ -2298,13 +1987,9 @@ class MessageProcessor:
         self._map_udp.send(payload)
 
     def _maybe_publish_map_metadata(self, flight: Flight, received_at: float) -> None:
-        """Sent the first time a flight's metadata fields (ident, aircraft
-        enrichment, operator, registrant, squawk, origin, destination,
-        matched_rules) are known, and again only when one of them changes
-        -- never on every message. See _flight_metadata_snapshot for the change-detection
-        approach and Flight.map_metadata_hash for the persisted snapshot
-        this is compared against. Carries `processor_id` -- see
-        _publish_map_position's docstring."""
+        """Sent the first time a flight's metadata fields are known, and
+        again only when one changes -- never on every message. See
+        _flight_metadata_snapshot for the change-detection approach."""
         if not self._map_udp.enabled:
             return
         lag = time.time() - received_at
@@ -2324,23 +2009,16 @@ class MessageProcessor:
         flight.map_metadata_hash = snapshot
 
     def _map_heartbeat_loop(self) -> None:
-        """Fixed MAP_HEARTBEAT_INTERVAL_SECONDS (5s) liveness beacon toward
-        the map service, independent of aircraft traffic -- mirrors
-        _heartbeat_loop's structure below, but that one refreshes the
-        unrelated Redis NX duplicate-ID guard on HEARTBEAT_INTERVAL_SECONDS;
-        this is a separate concern entirely. No-op when the map UDP feed is
-        disabled, same as position/metadata.
+        """Fixed MAP_HEARTBEAT_INTERVAL_SECONDS liveness beacon toward the
+        map service, independent of aircraft traffic and unrelated to
+        _heartbeat_loop's Redis NX guard below. No-op when the map UDP
+        feed is disabled.
 
-        Traffic-reduction skip: if a position/metadata datagram already
-        went out (for any aircraft -- _map_udp is one shared publisher, not
-        per-aircraft) within the last MAP_HEARTBEAT_INTERVAL_SECONDS, this
-        tick is skipped entirely. A busy processor's own ordinary traffic
-        already tells the map service it's alive; only an idle/low-traffic
-        processor actually needs the standalone datagram.
-
-        Not gated by MAX_MESSAGE_LAG_SECONDS, unlike position/metadata -- a
-        heartbeat is about the processor being up *now*, not about a
-        source message's recency."""
+        Skipped if a position/metadata datagram already went out (any
+        aircraft, one shared publisher) within the interval -- a busy
+        processor's own traffic already proves liveness. Not gated by
+        MAX_MESSAGE_LAG_SECONDS, unlike position/metadata, since this is
+        about the processor being up now, not a message's recency."""
         while not self._shutdown.is_set():
             time.sleep(MAP_HEARTBEAT_INTERVAL_SECONDS)
             if not self._map_udp.enabled:
@@ -2356,16 +2034,10 @@ class MessageProcessor:
 
     def _resend_all_map_metadata(self) -> None:
         """Unconditional counterpart to _maybe_publish_map_metadata: resends
-        every active flight's `metadata` datagram regardless of whether any
-        field changed since the last send. Enumeration pattern mirrors
-        _force_evict_all() -- snapshot the active icao_hex list under
-        _db_lock, then reload/process each individually.
-
-        Deliberately does NOT touch flight.map_metadata_hash: that field is
-        owned entirely by the change-gated path in
-        _maybe_publish_map_metadata, which stays independent of this sweep
-        -- a real change still goes out immediately on the message that
-        caused it, not just on the next periodic tick here."""
+        every active flight's metadata regardless of whether anything
+        changed. Deliberately does not touch flight.map_metadata_hash,
+        which stays owned by the change-gated path -- a real change still
+        goes out immediately, not just on this periodic tick."""
         if not self._map_udp.enabled:
             return
         with self._db_lock:
@@ -2384,25 +2056,12 @@ class MessageProcessor:
             self._map_udp.send(payload)
 
     def _map_metadata_resend_loop(self) -> None:
-        """Dedicated thread, mirroring _map_heartbeat_loop's shape, that
-        drives _resend_all_map_metadata() every
-        MAP_METADATA_RESEND_INTERVAL_SECONDS.
-
-        Kept as its own loop rather than folded into _telemetry_loop: even
-        though MQTT_PUBLISH_INTERVAL_SECONDS (30s) already sits comfortably
-        under the 60s ceiling here, riding it would couple this map-facing
-        concern to an unrelated MQTT-publish/fallback-drain cadence that
-        happens to qualify today but isn't defined in terms of this
-        requirement -- a future change to one cadence should never have to
-        reason about the other. A dedicated loop keeps the two independent,
-        at the cost of one more daemon thread, which this class already
-        starts several of.
-
-        Not gated by MAX_MESSAGE_LAG_SECONDS or self._map_udp.enabled here
-        in the loop itself -- _resend_all_map_metadata() applies the
-        enabled-guard, and, like _map_heartbeat_loop, this isn't reacting
-        to any particular message's recency, so there is no lag to gate
-        on."""
+        """Dedicated thread driving _resend_all_map_metadata() every
+        MAP_METADATA_RESEND_INTERVAL_SECONDS. Kept separate from
+        _telemetry_loop so this map-facing cadence never has to be
+        reasoned about jointly with an unrelated MQTT-publish cadence.
+        _resend_all_map_metadata() applies its own enabled-guard, so
+        there's no gating here."""
         while not self._shutdown.is_set():
             time.sleep(MAP_METADATA_RESEND_INTERVAL_SECONDS)
             self._resend_all_map_metadata()
@@ -2415,19 +2074,14 @@ class MessageProcessor:
         while not self._shutdown.is_set():
             time.sleep(MQTT_PUBLISH_INTERVAL_SECONDS)
             # Independent of _consume_loop's reconnect-triggered drain: a
-            # publish failure can leave messages queued without the
-            # underlying connection ever raising AMQPConnectionError. This
-            # periodic sweep is a cheap no-op when the queue is empty and
-            # doesn't depend on _consume_loop's edge-triggered reconnect
-            # firing. _drain_fallback() itself spawns the actual drain in
-            # the background (or skips if one's already running from the
-            # reconnect path), so this call returns immediately and never
-            # delays the telemetry publish below it.
+            # publish failure can leave messages queued without ever
+            # raising AMQPConnectionError. Cheap no-op when empty;
+            # _drain_fallback() spawns the actual drain in the background,
+            # so this never delays the telemetry publish below.
             if self._rmq_connected:
                 self._drain_fallback()
             else:
-                # _rmq_connected can also be latched False by a publish
-                # failure while start_consuming() keeps running on a
+                # Can also be latched False by a publish failure on a
                 # still-open connection -- break it so _consume_loop
                 # rebuilds and re-validates.
                 self._force_rmq_reconnect_if_stale()
@@ -2436,14 +2090,11 @@ class MessageProcessor:
             self._publish_telemetry()
 
     def _flush_period_counters(self) -> None:
-        """Pushes each in-memory counter's delta accumulated since the last
-        flush into Redis -- incr_period_counter.lua (hour/today, resetting
-        at the real UTC boundary via shared.metrics.next_period_boundary())
-        or a plain INCRBY (lifetime, which never expires). Called only from
-        the telemetry thread -- _on_message/_enrich_aircraft/_enrich_operator
-        never touch Redis for these counters themselves. Not self-published
-        via MQTT/HA -- core-health reads these keys and publishes them on
-        this component's behalf (see message-processor/README.md)."""
+        """Pushes each in-memory counter's delta into Redis --
+        incr_period_counter.lua for hour/today (resets at the UTC boundary),
+        plain INCRBY for lifetime. Called only from the telemetry thread.
+        Not self-published via MQTT/HA -- core-health reads these keys and
+        publishes them on this component's behalf."""
         now = datetime.now(timezone.utc)
         for accumulator, key_fn, periods in (
             (self._total_messages_processed, metrics_total_messages_processed_key,
@@ -2468,15 +2119,10 @@ class MessageProcessor:
                 logger.debug("Period counter flush failed for %s: %s", key_fn(self._id, "lifetime"), exc)
 
     def _flush_rule_trigger_counts(self) -> None:
-        """Push each rule's accumulated trigger delta into Redis: a plain
-        INCRBY on the never-expiring lifetime key, plus INCRBY + EXPIRE on
-        today's UTC day key. One pipelined round trip per flush cycle
-        regardless of how many distinct rules fired. Repeated EXPIRE on an
-        already-live day key is harmless (same 31-day value). Fails soft on
-        a Redis error -- flush_and_reset() has already cleared the deltas,
-        so a failed flush loses that cycle's counts, acceptable for a
-        display-only metric. Not self-published via MQTT -- the
-        management-ui backend reads these keys on demand."""
+        """Push each rule's trigger delta into Redis: INCRBY on the
+        lifetime key, plus INCRBY + EXPIRE on today's UTC day key, one
+        pipelined round trip. Fails soft -- a failed flush just loses that
+        cycle's counts, acceptable for a display-only metric."""
         deltas = self._rule_trigger_counts.flush_and_reset()
         if not deltas:
             return
@@ -2498,10 +2144,9 @@ class MessageProcessor:
 
         pid = self._id
 
-        # No self._db_lock here: self._db is opened with check_same_thread=False
-        # and PRAGMA journal_mode=WAL, so this standalone read gets snapshot
-        # isolation without blocking (or being blocked by) the main thread's
-        # per-message writes under the same lock.
+        # No self._db_lock: WAL mode gives this standalone read snapshot
+        # isolation without blocking (or being blocked by) per-message
+        # writes under that lock.
         cur = self._db.cursor()
         cur.execute("SELECT COUNT(*) FROM flights")
         active = cur.fetchone()[0]
@@ -2528,12 +2173,10 @@ class MessageProcessor:
             f"{base}/rabbitmq_connected", str(self._rmq_connected), retain=True
         )
 
-        # The rules/areas config hash this instance has actually loaded --
-        # last 8 chars only, short-hash style, for a compact read in Home
-        # Assistant and direct comparison against core-health's canonical
-        # sensor. Truncation happens only here at the publish boundary; the
-        # engine keeps and compares the full hash internally. "unknown"
-        # until the first successful load.
+        # Last-8-chars short-hash, for a compact HA read and direct
+        # comparison against core-health's canonical sensor. Truncation
+        # happens only at this publish boundary; the engine compares full
+        # hashes internally.
         self._mqtt.publish(
             f"{base}/rules_version", _short_hash(self._rules_engine.rules_version), retain=True
         )
@@ -2542,12 +2185,8 @@ class MessageProcessor:
         )
 
         # registration_misses/operator_misses/total_messages_processed are
-        # write-only from this component's perspective -- accumulated in
-        # memory and flushed to Redis by _flush_period_counters() above,
-        # never self-published via MQTT/HA here. core-health reads those
-        # Redis keys and publishes them on this component's behalf, using
-        # the exact same topic paths/unique_id/device block this method
-        # would otherwise have used -- see message-processor/README.md.
+        # write-only here -- core-health reads those Redis keys and
+        # publishes them on this component's behalf instead.
 
         # Refresh heartbeat
         try:
@@ -2638,41 +2277,31 @@ class MessageProcessor:
             _Sensor("started_at", "Start Time", "mdi:clock-start", None,
                     extra={"device_class": "timestamp"}),
             _Sensor("messages_per_second", "Message Rate", "mdi:broadcast", "measurement", "msg/s"),
-            # suggested_display_precision only rounds what Home Assistant
-            # *displays* -- the retained MQTT state and any long-term
-            # statistics stay at full float precision (see
-            # _TimeTracker.hwm_ms_and_reset()). 1 decimal place: this
-            # metric typically reads in the low single-digit milliseconds,
-            # where 0 decimal places would round away most of its signal.
+            # suggested_display_precision only rounds the HA display; the
+            # retained state stays full precision. 1 decimal here since
+            # this metric reads in low single-digit ms.
             _Sensor("processing_time_hwm_ms", "Processing Time HWM", "mdi:clock", "measurement", "ms",
                     extra={"suggested_display_precision": 1}),
-            # Same precision rationale as processing_time_hwm_ms above --
-            # this metric is a superset of it (receipt-through-processed,
-            # including RabbitMQ queue wait time), so it never reads
-            # narrower.
+            # Same precision rationale as processing_time_hwm_ms -- this
+            # metric is a superset of it, so it never reads narrower.
             _Sensor("message_latency_hwm_ms", "Message Latency HWM", "mdi:clock-alert", "measurement", "ms",
                     extra={"suggested_display_precision": 1}),
-            # Nanosecond values are large integers (thousands+); a
-            # fractional nanosecond carries no real signal (time.monotonic()
-            # doesn't resolve that finely), so 0 decimal places is the
-            # deliberate choice here, unlike processing_time_hwm_ms above.
+            # Nanosecond values are large integers; a fractional ns carries
+            # no real signal, so 0 decimal places here, unlike above.
             _Sensor("rules_engine_hwm_ns", "Rules Engine HWM", "mdi:clock", "measurement", "ns",
                     extra={"suggested_display_precision": 0}),
             _Sensor("local_archive_queue_depth", "Local Archive Queue Depth", "mdi:tray-full", "measurement"),
             _Sensor("dead_letter_queue_depth", "Dead Letter Queue Depth", "mdi:skull-crossbones", "measurement"),
             _Sensor("active_flights", "Active Flights", "mdi:airplane", "measurement"),
             # Opaque short-hash identifiers, not measurements -- no
-            # state_class, no unit. The last 8 chars of the config hash
-            # this instance has actually loaded; compare against
-            # core-health's canonical rules_version/areas_version to see
-            # whether this processor is up to date.
+            # state_class/unit. Compare against core-health's canonical
+            # sensor to see whether this processor is up to date.
             _Sensor("rules_version", "Rules Version", "mdi:file-document-check", None),
             _Sensor("areas_version", "Areas Version", "mdi:map-check", None),
             _Sensor("rabbitmq_connected", "RabbitMQ Connected", "mdi:rabbit", None),
             # registration_misses/operator_misses/total_messages_processed
             # have no entry here -- core-health publishes their HA discovery
-            # config on this component's behalf, using this exact device
-            # block/unique_id/object_id pattern. See _flush_period_counters().
+            # config on this component's behalf instead.
         ]
         for sensor in sensors:
             payload = {
@@ -2702,14 +2331,10 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def _decommission(self) -> None:
-        """Runs on the eviction thread once _eviction_loop() notices
-        self._force_evict is set. Force-evicts every active flight, waits
-        indefinitely for the retryable archive fallback queue to drain
-        (never for the dead-letter queue -- see module-level design notes
-        in message-processor/README.md's "Decommissioning a Message
-        Processor" section), logs a high-severity warning if anything
-        ended up dead-lettered, then hands off to the normal shutdown()
-        sequence so the process exits on its own."""
+        """Runs on the eviction thread once _force_evict is set.
+        Force-evicts every active flight, waits indefinitely for the
+        retryable archive queue to drain (never the dead-letter queue),
+        warns if anything was dead-lettered, then hands off to shutdown()."""
         logger.warning(
             "SIGUSR1 received: decommissioning -- force-evicting all active "
             "flights and waiting for the archive queue to drain…"
@@ -2744,25 +2369,17 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
-        # No eager flush: the active store is durable, so a deliberate
-        # stop and a crash are recovered identically on the next startup —
-        # nothing needs to be force-archived here. (The SIGUSR1
-        # decommission path force-archives everything itself, up front,
-        # before ever calling this -- see _decommission().)
+        # No eager flush: the active store is durable, so a stop and a
+        # crash recover identically on next startup. (SIGUSR1's
+        # decommission path force-archives everything itself first.)
         logger.info("Shutdown requested…")
         self._shutdown.set()
         if self._rmq_channel:
-            # SIGTERM/SIGINT call this from the main thread, which is the
-            # same thread blocked inside start_consuming() -- Python runs
-            # signal handlers on the main thread even when delivered while
-            # it's blocked in a C call, so a direct call is safe there.
-            # The SIGUSR1 decommission path calls this from the eviction
-            # thread instead, so it has to go through
-            # add_callback_threadsafe like every other cross-thread touch
-            # of self._rmq_channel/self._rmq_connection in this file (see
-            # _archive()/_drain_fallback()) -- stop_consuming() sends real
-            # AMQP frames and isn't safe to call concurrently with the
-            # main thread's own socket I/O.
+            # SIGTERM/SIGINT run on the main thread, same thread blocked
+            # inside start_consuming(), so a direct call is safe. SIGUSR1's
+            # decommission path calls this from the eviction thread
+            # instead, so it must go through add_callback_threadsafe like
+            # every other cross-thread touch of self._rmq_channel.
             if threading.current_thread() is threading.main_thread():
                 try:
                     self._rmq_channel.stop_consuming()
@@ -2804,12 +2421,9 @@ def main() -> None:
         sys.exit(0)
 
     def _handle_decommission(sig, frame):
-        # Deliberately minimal: just flag it and return. The actual
-        # force-evict/drain/shutdown sequence runs on the eviction thread
-        # (see MessageProcessor._eviction_loop/_decommission), not here --
-        # a signal handler runs on the main thread even when delivered
-        # while it's blocked inside start_consuming(), and that sequence
-        # can block for an unbounded time waiting on the fallback queue.
+        # Deliberately minimal: just flag it. The actual force-evict/
+        # drain/shutdown sequence runs on the eviction thread instead,
+        # since it can block indefinitely waiting on the fallback queue.
         processor._force_evict.set()
 
     signal.signal(signal.SIGTERM, _handle_signal)

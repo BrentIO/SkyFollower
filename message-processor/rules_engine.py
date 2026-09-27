@@ -89,15 +89,11 @@ class RulesEngine:
         self._removed_rules: list[dict] = []
         self._rules_version: Optional[str] = None
         self._areas_version: Optional[str] = None
-        # Set on the most recent failed _load_rules/_load_areas call, or on a
-        # lenient rules reload that skipped one or more invalid rules;
-        # consumed by the UI backend to return a 400 with a useful detail
-        # message instead of only the logger.critical() output below.
+        # Set on a failed load or a lenient reload that skipped invalid
+        # rules; consumed by the UI backend for a useful 400 detail message.
         self.last_error: Optional[str] = None
-        # Which subsystem last set last_error ("rules" or "areas"), so a
-        # successful areas reload doesn't silently clobber a still-pending
-        # rules-skip summary set earlier in the same poll cycle (or vice
-        # versa). None whenever last_error is None.
+        # Which subsystem last set last_error, so a successful reload of
+        # one doesn't silently clobber the other's still-pending summary.
         self._last_error_owner: Optional[str] = None
 
     # ------------------------------------------------------------------
@@ -132,16 +128,10 @@ class RulesEngine:
         """Reload one config (rules or areas) from Redis if it has changed.
         Returns (did_reload, version_to_record).
 
-        The `config:*:version` key is used as a fast-path "nothing changed"
-        signal, never as the sole gate. A missing version key (an older
-        deployment from before it existed, a partially-restored volume, a
-        manual seed), a version key written out of step with the body, or a
-        config that loaded as empty while the body actually has content all
-        fall through to hashing the body itself. Without this, a processor
-        started against a Redis that has `config:rules` but no
-        `config:rules:version` would poll forever with `rv == self._rules_version
-        == None` and never load the rules that are sitting right there.
-        """
+        The version key is a fast-path "nothing changed" signal, never the
+        sole gate -- a missing/stale/out-of-step version key falls through
+        to hashing the body itself, so a processor with no version key ever
+        set still loads the config sitting right there."""
         redis_version = self._redis.get(version_key)
         if redis_version is not None and redis_version == current_version and loaded:
             return False, current_version
@@ -152,12 +142,9 @@ class RulesEngine:
 
         body_hash = self._hash(raw)
         if body_hash == current_version:
-            # We already processed exactly this body (the version key was
-            # just missing or stale). Nothing to reload -- but adopt the
-            # real hash so the fast path and the published version sensor
-            # are correct from here on. Not gated on `loaded`: a body that
-            # loads to an empty list still counts as "already handled", so
-            # an empty config doesn't re-run load_fn every poll.
+            # Already processed this exact body (version key was just
+            # missing/stale) -- adopt the real hash so the fast path is
+            # correct from here on, even if it loaded to an empty list.
             return False, body_hash
 
         if load_fn(raw):
@@ -232,17 +219,14 @@ class RulesEngine:
     # ------------------------------------------------------------------
 
     def _load_rules(self, json_str: str, strict: bool = True) -> bool:
-        """Parse, validate and stage rules.  Only replaces the active set on success.
+        """Parse, validate and stage rules. Only replaces the active set on
+        success.
 
-        In strict mode (default — used by the UI backend's save-time
-        validation via load_rules_json), a single invalid rule rejects the
-        entire ruleset and the previous set is kept unchanged.
-
-        In lenient mode (used only by reload_if_changed()'s periodic poll
-        from Redis), a rule that fails validation is logged at error level
-        and skipped, but every other valid rule in the array still loads —
-        the reload as a whole succeeds with the valid subset.
-        """
+        Strict mode (default, used by the UI backend's save-time
+        validation): a single invalid rule rejects the entire ruleset.
+        Lenient mode (used only by reload_if_changed()'s periodic poll): an
+        invalid rule is skipped and logged, but every other valid rule
+        still loads."""
         try:
             rules = json.loads(json_str)
         except json.JSONDecodeError:
@@ -286,11 +270,8 @@ class RulesEngine:
             self.last_error = f"{len(skipped_errors)} rule(s) skipped on reload: " + " | ".join(skipped_errors)
             self._last_error_owner = "rules"
         elif self._last_error_owner != "areas":
-            # Only clear last_error on success if it isn't a still-pending
-            # areas-owned error (e.g. an invalid areas payload) set earlier
-            # in the same poll cycle -- a rules success should never
-            # silently erase that. A rules-owned (or absent) last_error is
-            # cleared normally.
+            # Don't clear a still-pending areas-owned error set earlier in
+            # the same poll cycle -- only a rules-owned (or absent) one.
             self.last_error = None
             self._last_error_owner = None
         logger.info("Rules loaded: %d active.", len(self._rules))
@@ -416,12 +397,9 @@ class RulesEngine:
                 continue
 
         self._areas = staged
-        # Only clear last_error on success if it isn't a still-pending
-        # rules-owned summary (e.g. a lenient reload's skipped-rules
-        # summary) set earlier in the same poll cycle -- an areas success
-        # should never silently erase that, the only visible signal that
-        # some rules were excluded. An areas-owned (or absent) last_error
-        # is cleared normally.
+        # Don't clear a still-pending rules-owned skipped-rules summary set
+        # earlier in the same poll cycle -- only an areas-owned (or absent)
+        # one.
         if self._last_error_owner != "rules":
             self.last_error = None
             self._last_error_owner = None
@@ -470,13 +448,9 @@ class RulesEngine:
             raise _ConditionError("date only supports 'minimum' or 'maximum'")
         raw = str(c["value"]).strip()
         if "T" in raw:
-            # YYYY-MM-DDTHH:MMZ, or any ISO 8601 offset (e.g.
-            # YYYY-MM-DDTHH:MM-05:00) -- datetime.fromisoformat() parses
-            # both; the only requirement enforced below is that *some*
-            # timezone designator is present, not specifically 'Z'.
-            # Comparison in _eval_date() (against datetime.now(timezone.utc))
-            # is offset-correct either way, so no normalisation to UTC is
-            # needed here -- the value is stored/echoed exactly as submitted.
+            # ISO 8601 with any offset -- fromisoformat() parses it, and
+            # comparison in _eval_date() is offset-correct either way, so
+            # no normalization to UTC is needed here.
             try:
                 parsed = datetime.fromisoformat(raw)
                 if parsed.tzinfo is None:

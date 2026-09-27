@@ -1,22 +1,13 @@
 """
-Resolves a flight's origin/destination from its route:{ident} entry (already
-normalized into an ordered array of full airport records by
-shared/lua/route_airports.lua), reconciled against the flight's own observed
-position/heading/altitude. Called mid-flight, the moment ident/position/
-altitude/heading are all known -- see message_processor.main's
-_maybe_resolve_route -- not at archive time.
+Resolves a flight's origin/destination from its route:{ident} entry
+(already normalized by shared/lua/route_airports.lua), reconciled against
+the flight's own observed position/heading/altitude. Called mid-flight, the
+moment ident/position/altitude/heading are all known -- not at archive
+time. See message-processor/README.md's "Route Leg Resolution" section for
+the full design rationale and worked examples.
 
-See message-processor/README.md's "Route Leg Resolution" section for the
-full design rationale and worked examples, including the holding-pattern
-case (an aircraft circling well below cruise groundspeed near a route's
-midpoint can momentarily present a heading matching a *different* leg's
-bearing, and a position that coincidentally isn't far off that other leg's
-line either) that motivates the along-track bound and heading-stability
-requirement below.
-
-All functions here are pure — no Redis, no I/O — so the resolution and
-sanity-check logic can be unit tested independently of the Lua round trip
-that produces the `airports` array.
+All functions here are pure -- no Redis, no I/O -- so this can be unit
+tested independently of the Lua round trip that produces `airports`.
 """
 
 from __future__ import annotations
@@ -26,9 +17,8 @@ from typing import Optional
 
 EARTH_RADIUS_NM = 3440.065
 
-# Below this altitude, proximity to a route waypoint (plus climb/descent
-# direction) is treated as a near-dispositive signal for which leg is
-# active — near an airport at low altitude almost certainly means
+# Below this altitude, proximity to a route waypoint plus climb/descent
+# direction is a near-dispositive signal for which leg is active -- likely
 # just-departed or about-to-land.
 LOW_ALTITUDE_FT = 10000
 
@@ -40,45 +30,33 @@ PROXIMITY_NM = 25
 # at all.
 HEADING_TOLERANCE_DEG = 30
 
-# ...and must beat the second-closest candidate by at least this many
-# degrees to count as unambiguous — prevents picking the "least-bad" match
-# among several similarly-plausible candidates (e.g. a genuine multi-city
-# route whose legs happen to share a similar general direction).
+# ...and must beat the second-closest candidate by this many degrees to
+# count as unambiguous -- prevents picking the "least-bad" match among
+# several similarly-plausible candidates.
 HEADING_MARGIN_DEG = 15
 
 # Cross-track sanity check: threshold_nm = max(floor, percentage * route_distance).
-# A single flat nm value doesn't work at either end of the route-length
-# spectrum -- too loose for a short hop (nearly any position "counts" as on
-# the route) and too tight for a long one (routine GPS/heading noise on a
-# multi-thousand-nm leg would fail the check), so the threshold scales with
-# the route's own distance, floored so a very short route still gets a
-# sane minimum.
+# A flat nm value doesn't work at either end of the route-length spectrum,
+# so the threshold scales with the route's own distance, floored for very
+# short routes.
 CROSS_TRACK_FLOOR_NM = 150
 CROSS_TRACK_PERCENTAGE = 0.30
 
 # Along-track sanity check: a position must project onto the great-circle
-# line somewhere between the origin and destination (plus this much slack
-# for ordinary departure/arrival maneuvering) to count as "on this leg" at
-# all. Cross-track distance alone only measures perpendicular distance to
-# the *infinite* line through both airports -- a position far beyond one
-# endpoint, or off along a completely different (but coincidentally
-# similarly-bearing) leg, can still land well within the cross-track
-# threshold. A small fixed allowance, not a percentage of route length, is
-# deliberate: unlike lateral routing variance (jet stream, ATC, weather),
-# there's no legitimate reason for a position to be materially further from
-# the destination than the destination itself.
+# line between origin and destination (plus this slack) to count as "on
+# this leg" -- cross-track alone only measures perpendicular distance to
+# the infinite line, so a position far beyond one endpoint could still
+# pass it. A fixed allowance, not a percentage, since there's no legitimate
+# reason to be materially further from the destination than the
+# destination itself.
 ALONG_TRACK_SLACK_NM = 50
 
-# Heading-vs-bearing stability: a single instantaneous heading reading is
-# unreliable while an aircraft is circling/holding (e.g. an IFR holding
-# pattern) -- its heading sweeps through a full circle and can momentarily
-# align with an entirely wrong leg's bearing, passing both the heading
-# tolerance/margin checks *and* the cross-track check (a holding pattern
-# near one end of a leg can sit well within cross-track distance of a
-# totally different, similarly-oriented leg). Requiring several recent
-# headings to agree before trusting the heuristic catches this: cruise
-# flight naturally produces consistent consecutive headings, while
-# circling does not.
+# A single instantaneous heading reading is unreliable while an aircraft is
+# circling/holding -- its heading sweeps through a full circle and can
+# momentarily align with an entirely wrong leg's bearing, passing both the
+# heading and cross-track checks. Requiring several recent headings to
+# agree catches this: cruise flight produces consistent headings, holding
+# does not.
 MIN_HEADING_SAMPLES = 3
 HEADING_STABILITY_TOLERANCE_DEG = 20
 
@@ -135,11 +113,9 @@ def _heading_diff_deg(a: float, b: float) -> float:
 
 def heading_is_stable(velocities: list[dict]) -> bool:
     """True once at least MIN_HEADING_SAMPLES recent headings all agree
-    within HEADING_STABILITY_TOLERANCE_DEG of each other. False both when
-    there isn't enough data yet and when the aircraft is genuinely
-    circling/holding -- either way, the heading-vs-bearing heuristic isn't
-    safe to trust yet, and the caller should treat this as "try again once
-    more data arrives" rather than a settled answer."""
+    within HEADING_STABILITY_TOLERANCE_DEG. False both when there isn't
+    enough data yet and when genuinely circling/holding -- either way, the
+    caller should treat this as "try again later," not a settled answer."""
     headings = [v["heading"] for v in velocities if v.get("heading") is not None]
     if len(headings) < MIN_HEADING_SAMPLES:
         return False
@@ -160,19 +136,14 @@ def _resolve_by_proximity(
     airports: list[dict], positions: list[dict], velocities: list[dict]
 ) -> Optional[tuple[dict, dict]]:
     """Low-altitude signal: is the flight's earliest position near a route
-    waypoint, and is it climbing away (departing) or descending toward
-    (arriving at) it? Returns None — deferring to the cruise heading
-    heuristic — on any ambiguity (no nearby waypoint, or no clear vertical
-    trend).
+    waypoint, and is it climbing away or descending toward it? Returns None
+    (deferring to the heading heuristic) on any ambiguity.
 
     A waypoint can appear more than once in a round-trip route (e.g.
-    KMIA-KJFK-KMIA), so "nearby" alone doesn't uniquely pick an index —
-    climbing only makes structural sense for a nearby occurrence that has a
-    next hop (an origin), descending only for one with a previous hop (a
-    destination). That structural filter is usually enough to disambiguate
-    duplicate occurrences on its own; if more than one nearby occurrence
-    still survives it, this is genuinely ambiguous and defers to heading.
-    """
+    KMIA-KJFK-KMIA), so "nearby" alone doesn't uniquely pick an index --
+    climbing only fits an occurrence with a next hop, descending only one
+    with a previous hop. If more than one occurrence still survives that
+    filter, it's genuinely ambiguous and defers to heading."""
     if not positions:
         return None
     first_pos = positions[0]
@@ -243,17 +214,13 @@ def select_candidate_leg(
     airports: list[dict], positions: list[dict], velocities: list[dict]
 ) -> tuple[Optional[tuple[dict, dict]], bool]:
     """Picks the one adjacent airport pair the flight is most likely flying.
-    A 2-airport route has no ambiguity. A 3+ airport (multi-leg) route is
-    resolved low-altitude-first (proximity + climb/descent), falling back to
-    cruise heading-vs-bearing.
+    A 2-airport route has no ambiguity; 3+ (multi-leg) resolves low-altitude
+    first (proximity + climb/descent), falling back to heading.
 
-    Returns (leg, is_final):
-    - leg is the (origin, destination) dict pair, or None if unresolved.
-    - is_final is True once this is a settled determination -- resolved, or
-      confidently ruled out -- and False only when heading data exists but
-      hasn't yet stabilized enough to trust (see heading_is_stable): more
-      messages may still turn this into a real answer, so the caller should
-      try again later rather than treating None as final."""
+    Returns (leg, is_final): leg is the (origin, destination) pair or None.
+    is_final is False only when heading data exists but hasn't stabilized
+    yet (see heading_is_stable) -- the caller should try again later rather
+    than treating None as final."""
     if len(airports) < 2:
         return None, True
     if len(airports) == 2:
@@ -273,11 +240,8 @@ def _sanity_check_violation(
     positions: list[dict], origin: dict, destination: dict
 ) -> Optional[str]:
     """Returns None if the pair passes both sanity checks; otherwise a short
-    human-readable description of which check failed, at which position,
-    and by how much -- used to build a diagnostic log message when a
-    candidate is rejected. See passes_cross_track_check for what each check
-    means; this is the same logic, just reporting *why* instead of a bare
-    bool."""
+    description of which check failed and by how much, for a diagnostic log
+    message. See passes_cross_track_check for what each check means."""
     a, b = _coords(origin), _coords(destination)
     if a is None or b is None:
         return "origin or destination airport record is missing latitude/longitude"
@@ -310,24 +274,17 @@ def _sanity_check_violation(
 
 def passes_cross_track_check(positions: list[dict], origin: dict, destination: dict) -> bool:
     """Rejects a candidate origin/destination pair whose great-circle line
-    the flight's actual track never came close to, or which the track only
-    approaches well beyond one of the two endpoints — the VRS standing-data
+    the flight's actual track never came close to -- the VRS standing-data
     source is community-maintained and a callsign can carry a stale or
     mismatched route with no way to detect that from the string alone.
-    Requires at least one position to check against; with none available
-    there's nothing to verify the pair against, so it's rejected rather
+    Requires at least one position; with none available, rejected rather
     than trusted unconditionally.
 
-    Two independent checks, both against every recorded position:
-    - Cross-track: perpendicular distance to the great-circle line, capped
-      at max(150nm, 30% of route distance) -- generous for genuine
-      long-haul routing variance (jet stream, ATC, weather).
-    - Along-track: the position's projection onto that line must fall
-      within [0, route_distance] (plus a small fixed slack for ordinary
-      terminal-area maneuvering) -- catches a position that's coincidentally
-      near the line's bearing but nowhere close to the actual leg, e.g. well
-      past the destination (see this module's own docstring for the
-      holding-pattern case this specifically catches)."""
+    Two independent checks against every recorded position: cross-track
+    (perpendicular distance, capped at max(150nm, 30% of route distance))
+    and along-track (projection must fall within [0, route_distance] plus
+    slack), catching a position that's coincidentally near the line's
+    bearing but far past the destination."""
     return _sanity_check_violation(positions, origin, destination) is None
 
 
@@ -335,17 +292,11 @@ def resolve_origin_destination(
     airports: list[dict], positions: list[dict], velocities: list[dict]
 ) -> tuple[Optional[dict], Optional[dict], bool, Optional[str]]:
     """Top-level entry point. Returns (origin, destination, is_final,
-    rejection_reason):
-    - origin/destination are the full airport dicts (as returned by
-      route_airports.lua), both None unless exactly one unambiguous,
-      sanity-checked leg was resolved -- never a partial or best-guess pair.
-    - is_final is False only for the "heading not yet stable" case (see
-      select_candidate_leg) -- the caller should not treat a (None, None,
-      False, None) result as a permanent answer.
-    - rejection_reason is None whenever a pair was resolved (or is_final is
-      False -- nothing to report yet); otherwise a short human-readable
-      string describing why a final result has no origin/destination, for
-      the caller to log alongside what Redis returned."""
+    rejection_reason): origin/destination are both None unless exactly one
+    unambiguous, sanity-checked leg was resolved. is_final is False only for
+    the "heading not yet stable" case (see select_candidate_leg).
+    rejection_reason is None whenever a pair was resolved or is_final is
+    False; otherwise a short string describing why, for the caller to log."""
     leg, is_final = select_candidate_leg(airports, positions, velocities)
     if leg is None:
         if not is_final:
