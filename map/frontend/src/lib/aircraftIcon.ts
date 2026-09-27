@@ -2,70 +2,41 @@
 // from src/assets/aircraft-shapes/*.svg -- GPL-3.0) into an ImageData
 // suitable for `map.addImage(id, imageData, { sdf: true })`.
 //
-// SDF (signed-distance-field), same as the icon this replaced: MapLibre's
-// `icon-color` recolors it per feature (the continuous altitude hsl(), not
-// a fixed palette) and `icon-halo-*` draws the selection ring -- neither
-// works on a plain raster icon. Each shape is filled solid to a canvas
-// (the source path is a closed outline; its thin "Accent" detail layer is
-// dropped at generation time for nearly every shape -- see
-// generate-aircraft-shapes.mjs's ACCENT_CUTOUT_RATIO_THRESHOLD) and every
-// shape is scaled to the same pixel footprint here, so the SDF resolution
-// is uniform; real relative size is applied on the map via `icon-size` and
-// each shape's `scale`. For the rare shape whose Accent layer survives
-// generation (`shape.accentD`), a flat single-color fill has no way to show
-// a *second* color for interior detail, so it's composited onto the filled
-// outline one of two ways depending on `shape.accentMode`: `"cutout"`
-// strokes it with `destination-out`, carving a thin transparent gap through
-// the fill (for detail that sits inside the outline, e.g. BALL's gore
-// lines); `"add"` strokes it with `source-over` in the same solid fill
-// color, drawing on top instead (for detail that extends beyond the
-// outline and would carve nothing visible as a cutout, e.g. EC35's rotor
-// blades, wider than the fuselage).
+// SDF (signed-distance-field): MapLibre's `icon-color` recolors it per
+// feature and `icon-halo-*` draws the selection ring -- neither works on a
+// plain raster icon. A flat single-color fill can't show a *second* color
+// for a shape's rare surviving Accent detail layer, so it's composited
+// depending on `shape.accentMode`: `"cutout"` strokes it with
+// `destination-out` (detail inside the outline, e.g. BALL's gore lines);
+// `"add"` strokes it with `source-over` in the same fill color (detail
+// extending beyond the outline, e.g. EC35's rotor blades).
 //
-// Source paths are drawn nose-up (north), matching `icon-rotate` bound to
-// heading -- no rotation offset.
-//
-// Why a distance transform and not just the filled path: MapLibre's
-// `sdf: true` interprets the image's alpha channel as a *signed distance
-// field* -- for every texel, the distance to the nearest silhouette edge,
-// encoded so the edge sits at a fixed alpha and the field ramps linearly
-// on either side. Filling a Path2D only produces a *coverage mask* (alpha
-// ~255 inside, ~0 outside, one anti-aliased texel between). Handed that,
-// `icon-color` still works but `icon-halo-width`/`-blur` have almost no
-// field to grow into, so the selection ring collapses to a hard ~1px
-// offset, and scaled-up thin features (a fighter's tail, wingtip pods)
-// soften more than a real SDF would. `buildShapeIconImageData` therefore
-// fills the path, then runs `coverageToSdf` over the coverage alpha to
-// produce a true 8-bit SDF before returning.
-//
-// SDF encoding matches MapLibre's glyph convention (as produced by
-// @mapbox/tiny-sdf, which MapLibre uses for text): the edge is at
-// alpha 255 * (1 - SDF_CUTOFF) = ~191, and SDF_RADIUS_PX pixels of
-// distance map to the full 0..255 range (so ~32 alpha units per pixel).
-// The distance transform is the Felzenszwalb & Huttenlocher two-pass
-// 1-D squared-distance algorithm, run once over the "outside" coverage
-// and once over the "inside" coverage and combined into a signed value.
+// Filling a Path2D only produces a *coverage mask* (binary alpha with one
+// anti-aliased edge texel), not a true SDF -- handed that, icon-halo-*
+// collapses to a hard ~1px offset instead of a smooth ring.
+// `buildShapeIconImageData` fills the path, then runs `coverageToSdf` over
+// the coverage alpha to produce a true 8-bit SDF. Encoding matches
+// MapLibre's glyph convention (@mapbox/tiny-sdf): the edge sits at alpha
+// 255 * (1 - SDF_CUTOFF) = ~191, and SDF_RADIUS_PX pixels of distance map
+// to the full 0..255 range. The distance transform is the Felzenszwalb &
+// Huttenlocher two-pass 1-D squared-distance algorithm, run over the
+// "outside" and "inside" coverage and combined into a signed value.
 
 import type { AircraftShape } from "./aircraftShapes.generated";
 
-// SDF canvas edge, in pixels. Larger than the old 64 for finer silhouette
-// detail; the shape occupies the central SDF_SHAPE_PX, leaving a margin
-// the distance field / halo needs. The margin (13 px each side) must be
-// >= SDF_RADIUS_PX so the outside distance can ramp fully to 0 before it
-// hits the canvas edge.
+// SDF canvas edge, in pixels. The shape occupies the central SDF_SHAPE_PX,
+// leaving a margin (13px each side) that must be >= SDF_RADIUS_PX so the
+// outside distance can ramp fully to 0 before hitting the canvas edge.
 export const SDF_CANVAS_PX = 96;
 const SDF_SHAPE_PX = 70;
 
 // Distance, in canvas pixels, over which the field ramps from the edge
-// value to fully saturated (0 outside / 255 inside). MapLibre reads SDF
-// icons at a nominal 8 px field, and its `icon-halo-width` is expressed
-// in the same units -- a 3 px halo needs at least 3 px of field outside
-// the edge to render.
+// value to fully saturated. MapLibre's `icon-halo-width` is expressed in
+// the same units -- a 3px halo needs at least 3px of field outside the edge.
 export const SDF_RADIUS_PX = 8;
 
-// Fraction of the field that lies outside the edge. tiny-sdf's default;
-// with it the edge lands at alpha 255 * (1 - 0.25) = ~191, matching the
-// `(256 - 64) / 256` threshold MapLibre's SDF shader uses for the fill.
+// Fraction of the field that lies outside the edge -- tiny-sdf's default,
+// matching the threshold MapLibre's SDF shader uses for the fill.
 export const SDF_CUTOFF = 0.25;
 
 /** Alpha value the silhouette edge sits at in a `coverageToSdf` result. */
@@ -79,13 +50,11 @@ export function shapeIconId(shapeKey: string): string {
 const INF = 1e20;
 
 // One pass of the Felzenszwalb & Huttenlocher 1-D squared Euclidean
-// distance transform along a single row or column of `grid` (stepping by
-// `stride`, `length` samples starting at `offset`). Overwrites those
-// samples in place with the squared distance to the nearest zero-valued
-// sample. `f`, `v`, `z` are caller-provided scratch buffers sized to the
-// longest line, reused across calls to avoid per-line allocation.
-// Verbatim structure from @mapbox/tiny-sdf (ISC/MIT); this is the
-// canonical lower-envelope form.
+// distance transform along a single row or column of `grid`. Overwrites
+// those samples in place with the squared distance to the nearest
+// zero-valued sample. `f`, `v`, `z` are caller-provided scratch buffers
+// reused across calls to avoid per-line allocation. Verbatim structure
+// from @mapbox/tiny-sdf (ISC/MIT).
 function edt1d(
   grid: Float64Array,
   offset: number,
@@ -151,11 +120,9 @@ export function coverageToSdf(
   height: number,
 ): Uint8ClampedArray {
   const size = width * height;
-  // gridOuter: 0 at fully-covered texels, INF at fully-empty ones -> its
-  // transform is the distance from each texel to the nearest covered one
-  // (0 inside the shape, growing outside).
-  // gridInner: the mirror -- distance to the nearest empty texel (0
-  // outside, growing inside).
+  // gridOuter: distance to the nearest covered texel (0 inside the shape,
+  // growing outside). gridInner: the mirror -- distance to the nearest
+  // empty texel (0 outside, growing inside).
   const gridOuter = new Float64Array(size);
   const gridInner = new Float64Array(size);
 

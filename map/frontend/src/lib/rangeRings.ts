@@ -11,9 +11,9 @@ import type { Feature, FeatureCollection } from "geojson";
 import type { CenterPoint } from "./config";
 
 // Mean earth radius (IUGG), expressed in nautical miles. Exported so
-// geo.ts's greatCircleNm() -- the inverse of this file's destinationPoint(),
-// per map/geo.py's own header comment cross-referencing the pair -- shares
-// this exact value rather than carrying a second copy that could drift.
+// geo.ts's greatCircleNm() -- the inverse of this file's destinationPoint()
+// -- shares this exact value rather than carrying a second copy that
+// could drift.
 export const EARTH_RADIUS_NM = 3440.065;
 
 // One vertex every 5 degrees of bearing around the ring.

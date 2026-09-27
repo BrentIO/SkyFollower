@@ -1,11 +1,8 @@
 // Pure sort-state/comparator logic for the aircraft list flyout (see
-// components/AircraftListPanel.tsx). Mirrors management-ui/frontend's
-// lib/resultsSort.ts (same column-click toggle convention -- see
-// HistoryView.tsx's SortableColumnHeader), but this is a plain client-side
-// array sort over the live in-memory AircraftMap rather than a
-// server-paginated one, so there's no "unsorted server order" null state
-// to preserve between clicks -- callers seed this with a real default
-// (Distance ascending) rather than null.
+// components/AircraftListPanel.tsx). A plain client-side array sort over
+// the live in-memory AircraftMap, so there's no "unsorted server order"
+// null state to preserve between clicks -- callers seed this with a real
+// default (Distance ascending) rather than null.
 
 export type SortDirection = "asc" | "desc";
 

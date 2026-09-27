@@ -1,9 +1,7 @@
 // Presentation logic for ControlsPanel's connection-status dot: turns a
-// GET /api/processors roster (see api/types.ts's ProcessorRoster) plus the
-// browser's own WebSocket connection state into the dot's color and hover
-// tooltip. Pure functions, kept out of the component so they're testable
-// without a DOM/React-rendering dependency, same convention as
-// labelStackOrder.ts/infoBox.ts.
+// GET /api/processors roster plus the browser's own WebSocket connection
+// state into the dot's color and hover tooltip. Pure functions, kept out
+// of the component so they're testable without a DOM/React dependency.
 
 import type { ProcessorRoster, ProcessorStatusValue } from "../api/types";
 
@@ -13,8 +11,6 @@ export const PROCESSOR_STATUS_DOT_COLOR: Record<ProcessorStatusValue, string> = 
   red: "bg-red-500",
 };
 
-// "Connected"/"Reconnecting"/"Disconnected" -- the issue's own wording for
-// each per-processor row in the hover tooltip.
 export const PROCESSOR_STATUS_LABEL: Record<ProcessorStatusValue, string> = {
   green: "Connected",
   amber: "Reconnecting",

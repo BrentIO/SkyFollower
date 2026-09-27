@@ -1,13 +1,8 @@
 // Runtime configuration, fetched from the backend's GET /api/config at
-// startup (see map/main.py's get_config) -- Vite's build-time
-// import.meta.env.VITE_* mechanism only ever produces one baked-in bundle,
-// and the published ghcr.io/brentio/skyfollower-map image is built with
-// none of these set, so a per-deployment value (the "center" reference
-// point) has to come from the network instead. VITE_MAP_API_BASE_URL is
-// still resolved at build time -- see resolveApiBaseUrl() below -- since
-// same-origin is the correct default for this project's bundled
-// single-container deployment and there's no bootstrapping problem there
-// (unlike center, which has no sane build-time default at all).
+// startup -- Vite's build-time import.meta.env.VITE_* mechanism only ever
+// produces one baked-in bundle, and the published image ships with none
+// of these set, so a per-deployment value (the "center" reference point)
+// has to come from the network instead.
 
 export interface CenterPoint {
   latitude: number;

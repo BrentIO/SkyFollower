@@ -1,10 +1,8 @@
-// Persists the aircraft list drawer's operator-resized width (#1784) to
-// this browser's localStorage -- same pattern as controlsPersistence.ts
-// (versioned blob, safe parse/fallback on anything missing or malformed,
-// silently swallow write failures), a separate small module rather than
-// folding into controlsPersistence.ts, which is explicitly scoped to
-// ControlsPanel's own four toggles. Scoped to this browser only --
-// localStorage never syncs across devices/accounts.
+// Persists the aircraft list drawer's operator-resized width to this
+// browser's localStorage -- same pattern as controlsPersistence.ts
+// (versioned blob, safe parse/fallback, silently swallow write failures),
+// a separate small module since controlsPersistence.ts is explicitly
+// scoped to ControlsPanel's own toggles.
 
 const STORAGE_KEY = "skyfollower-map:aircraft-list-panel:v1";
 const STORAGE_VERSION = 1;
@@ -33,11 +31,9 @@ export function clampPanelWidth(widthPx: number): number {
 
 // Reads and parses the persisted width, falling back to
 // DEFAULT_PANEL_WIDTH_PX for anything missing, malformed, under a
-// different version, or if localStorage itself throws (private browsing,
-// blocked site data, quota weirdness on read). Never throws. The
-// fallback's own result is still run through clampPanelWidth, in case a
-// future change lowers MIN/MAX below what an older DEFAULT_PANEL_WIDTH_PX
-// used to be.
+// different version, or if localStorage itself throws. Never throws. The
+// fallback is still run through clampPanelWidth, in case a future change
+// lowers MIN/MAX below what an older DEFAULT_PANEL_WIDTH_PX used to be.
 export function loadPersistedPanelWidth(): number {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);

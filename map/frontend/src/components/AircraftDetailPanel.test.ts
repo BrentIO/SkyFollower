@@ -1,20 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { BADGE_BASE, BADGE_CLASSES, PILL, PILL_GREEN, PILL_RED, SQUAWK_EMERGENCY_TEXT, TAG_PILL } from "./AircraftDetailPanel";
-// Vite's `?raw` suffix (see MapView.test.ts's own use of this) -- the action
-// row is built from four adjacent <ActionButton> JSX call sites, which is
-// easiest to check for order/props by reading the actual source text rather
-// than rendering (no jsdom in this project -- see lib/config.test.ts).
+// Vite's `?raw` suffix -- the action row is built from four adjacent
+// <ActionButton> JSX call sites, easiest to check for order/props by
+// reading the source text rather than rendering (no jsdom in this project).
 import panelSource from "./AircraftDetailPanel.tsx?raw";
 
-// This project has no jsdom/component-render test setup (see
-// lib/config.test.ts's own note on the constraint, and MapView.test.ts's
-// raw-source-extraction approach for a comparable gap). Rather than render
-// the panel, these assert the exact Tailwind class strings this component
-// exports are byte-for-byte identical to the management-ui source they were
-// copied from -- the thing the issue's acceptance criteria actually cares
-// about ("verified identical ... not just visually similar"), and the one
-// thing a render test wouldn't check any more rigorously than a plain
-// string comparison would.
+// Rather than render the panel, these assert the exact Tailwind class
+// strings this component exports are byte-for-byte identical to the
+// management-ui source they were copied from.
 
 describe("Badge classes -- copied verbatim from management-ui/frontend/src/views/LookupView.tsx", () => {
   it("matches BADGE_CLASSES.green (Military) and its base classes exactly", () => {

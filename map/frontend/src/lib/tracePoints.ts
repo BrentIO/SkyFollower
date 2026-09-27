@@ -1,34 +1,24 @@
 // Trace Points rendering logic for the aircraft detail panel's Trace
-// Points action (components/AircraftDetailPanel.tsx). Ported verbatim
-// (same logic, same output for the same input) from management-ui/
-// frontend/src/lib/flightView.ts's traceLabelSortKey()/formatTraceLabel()/
-// tracePointsFeatureCollection() -- this is a separate, standalone
-// frontend project, so it carries its own copy rather than importing
-// across the two (same convention as altitudeColor.ts). darkenColor()
-// itself is ported into lib/altitudeColor.ts, colocated with
-// altitudeColor() there the same way management-ui colocates the two.
+// Points action. Ported from management-ui/frontend's traceLabelSortKey()/
+// formatTraceLabel()/tracePointsFeatureCollection() -- this is a separate,
+// standalone frontend project, so it carries its own copy.
 //
 // Only the *rendering* is ported: dot color, label format, and the
 // decluttering sort-key. The *data source* is this frontend's own live,
 // client-accumulated Trace Points samples (aircraftState.ts's
-// AircraftRecord.tracePoints) rather than an archived S3 flight path's
-// GeoJSON coordinates/coordTimes/coordSpeeds arrays -- so
-// tracePointsFeatureCollection below takes one TracePoint[] instead of
-// three parallel arrays. See the issue this implements for why the data
-// source differs and why that's fine.
+// AircraftRecord.tracePoints), so tracePointsFeatureCollection below
+// takes one TracePoint[] instead of parallel coordinate/time/speed arrays.
 
 import type { Feature, FeatureCollection, Point } from "geojson";
 import type { TracePoint } from "./aircraftState";
 import { altitudeColor, darkenColor } from "./altitudeColor";
 
-// A lower key wins MapLibre's `symbol-sort-key` conflict resolution (kept
-// preferentially when labels collide). Plain index order would mean "first
-// N points visible" always wins, clumping surviving labels at the start of
-// the track regardless of zoom. Recursive bisection instead ranks the very
+// A lower key wins MapLibre's `symbol-sort-key` conflict resolution. Plain
+// index order would clump surviving labels at the start of the track
+// regardless of zoom, so recursive bisection instead ranks the very
 // first/last point highest, then the midpoint, then each remaining
-// quarter-point, etc. -- so whichever subset MapLibre's collision detection
-// keeps at a given zoom is always roughly evenly spread across the whole
-// track, not bunched at one end.
+// quarter-point -- so whichever subset survives collision detection stays
+// roughly evenly spread across the track.
 export function traceLabelSortKey(index: number, total: number): number {
   if (total <= 1 || index === 0 || index === total - 1) return 0;
   let level = 0;

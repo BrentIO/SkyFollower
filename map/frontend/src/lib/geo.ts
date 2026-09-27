@@ -1,14 +1,8 @@
 // Spherical-earth great-circle distance -- the inverse of rangeRings.ts's
-// destinationPoint() (a "reckon"/destination-point calculation). Mirrors
-// map/geo.py's great_circle_nm(lat1, lon1, lat2, lon2) (haversine, same
-// mean earth radius); see that module's own header comment, which
-// explicitly cross-references this frontend's rangeRings.ts as its pair.
-//
-// Used for the aircraft detail panel's Distance row:
-// greatCircleNm(config.center, { latitude: flight.lat, longitude: flight.lon }).
-// config.center is CenterPoint | null -- when null, callers simply omit the
-// distance row; it is not this function's job to handle a missing point,
-// only to compute a distance when given two real ones.
+// destinationPoint(). Mirrors map/geo.py's great_circle_nm() (haversine,
+// same mean earth radius). config.center is CenterPoint | null -- when
+// null, callers simply omit the distance row; it is not this function's
+// job to handle a missing point.
 
 import type { CenterPoint } from "./config";
 import { EARTH_RADIUS_NM } from "./rangeRings";
@@ -34,12 +28,11 @@ export function greatCircleNm(from: CenterPoint, to: CenterPoint): number {
   return 2 * EARTH_RADIUS_NM * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-// Ported verbatim from map/geo.py's initial_bearing(lat1, lon1, lat2, lon2)
-// (#1950) -- same great-circle bearing formula, same [0, 360) normalisation.
-// Two identical points return 0 (atan2(0, 0) == 0 in both Python and JS),
-// which callers relying on a minimum-separation gate before calling this
-// (see #1950's trail-heading correction in featureCollections.ts) should
-// never actually hit in practice.
+// Ported from map/geo.py's initial_bearing() -- same great-circle bearing
+// formula, same [0, 360) normalisation. Two identical points return 0
+// (atan2(0, 0) == 0 in both Python and JS), which callers relying on a
+// minimum-separation gate before calling this (see
+// featureCollections.ts's trail-heading correction) should never hit.
 /**
  * Initial great-circle bearing from `from` to `to`, in degrees clockwise
  * from true north, normalised to [0, 360).

@@ -8,14 +8,11 @@ import { MAX_LABEL_Z_INDEX } from "../lib/labelStackOrder";
 import { formatRelativeTime, relativeTimeTickIntervalMs } from "../lib/relativeTime";
 import { IconButton } from "./IconButton";
 
-// Copied verbatim (Tailwind class strings, not just visually similar hex
-// values) from management-ui/frontend/src/views/LookupView.tsx's
-// BADGE_CLASSES/Badge -- "green" (Military), "yellow" (Special Livery), and
-// "blue" (#1901, UAT/978 and External source tags on the Aircraft list) are
-// used here. Exported so a plain unit test (no jsdom/render harness in this
-// project -- see lib/config.test.ts) can assert byte-for-byte equality
-// against that source, rather than only exercising these strings through a
-// rendered DOM.
+// Copied verbatim (Tailwind class strings) from
+// management-ui/frontend/src/views/LookupView.tsx's BADGE_CLASSES/Badge --
+// "green" (Military), "yellow" (Special Livery), "blue" (UAT/External
+// source tags). Exported so a plain unit test (no jsdom/render harness in
+// this project) can assert byte-for-byte equality against that source.
 export const BADGE_CLASSES = {
   yellow: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
   green: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
@@ -23,25 +20,21 @@ export const BADGE_CLASSES = {
 } as const;
 export const BADGE_BASE = "rounded px-2 py-0.5 text-xs font-semibold";
 
-// Copied verbatim from management-ui/frontend/src/components/FlightViewModal.tsx --
-// PILL is sized up to px-3 py-1 text-base for the route pills, exactly as
-// AirportBlock itself does there. PILL_RED doubles as the Squawk row's
-// emergency-code text color (`text-red-800`/dark `text-red-200`).
+// Copied verbatim from management-ui/frontend/src/components/FlightViewModal.tsx.
+// PILL_RED doubles as the Squawk row's emergency-code text color.
 export const PILL = "rounded px-2 py-0.5 text-xs font-semibold";
 export const PILL_GREEN = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
 export const PILL_RED = "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
 export const SQUAWK_EMERGENCY_TEXT = "text-red-800 dark:text-red-200";
 
 // FlightViewModal.tsx's Matched Rules/Receiver Sources pill treatment,
-// verbatim -- right-justified here (`justify-end`) instead of that
-// component's left-aligned `flex-wrap`, per this panel's own convention of
-// hanging values against the right edge.
+// right-justified here instead of that component's left-aligned flex-wrap,
+// per this panel's convention of hanging values against the right edge.
 export const TAG_PILL =
   "rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300";
 
-// Exported so components/SettingsPanel.tsx (#2012) can reuse the exact same
-// headed-section/divider look rather than a second, driftable copy of the
-// same Tailwind classes.
+// Exported so components/SettingsPanel.tsx can reuse the exact same
+// headed-section/divider look rather than a second, driftable copy.
 export const SECTION_BAR =
   "bg-slate-100 px-4 py-1 text-[10px] font-bold tracking-wider text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300";
 export const DIVIDER = "border-t border-slate-200 dark:border-slate-700";
@@ -52,16 +45,12 @@ const ROW_VALUE = "text-sm text-slate-900 dark:text-slate-100";
 export interface AircraftDetailPanelProps {
   /** `lastReceivedAt` (epoch ms) is AircraftRecord's client-stamped field --
    * optional here so this prop stays structurally compatible with a bare
-   * MapFlight (e.g. in tests) as well as the real AircraftMap record this
-   * panel is actually given. See lib/aircraftState.ts's AircraftRecord
-   * docstring. */
+   * MapFlight (e.g. in tests) as well as the real AircraftMap record. */
   aircraft: MapFlight & { lastReceivedAt?: number };
   center: CenterPoint | null;
   onClose: () => void;
   /** Isolate/Follow/Trace Points are real toggles; Zoom To is one-shot and
-   * never shows an "active" state, so it has no *Active prop. All of the
-   * on/off decisions (re-targeting Isolate on reselect, resetting Follow/
-   * Trace Points on reselect vs. close, deferred eviction) live in
+   * never shows an "active" state. All on/off decisions live in
    * MapView.tsx -- this component is just the controlled button row. */
   isolateActive: boolean;
   onToggleIsolate: () => void;
@@ -73,17 +62,12 @@ export interface AircraftDetailPanelProps {
 }
 
 // Persistent left-docked side panel for the single currently-selected
-// aircraft (see lib/selection.ts's single-select nextSelection) -- a
-// different, additional surface from the floating per-aircraft info-box
-// labels (components/InfoBoxLayer.tsx's DOM boxes), not a replacement for
-// them. Same visual language as ControlsPanel (rounded-md, shadow-md),
-// docked left with the matching top-4/left-4 margin so it never collides
-// with that top-right panel. Unlike ControlsPanel, this panel is fully
-// opaque (not /90) and pinned at MAX_LABEL_Z_INDEX + 1 -- above every
-// info-box label, regardless of that aircraft's own altitude-based stack
-// order -- reusing the same labelStackOrder.ts constant AircraftListPanel.tsx
-// does for its own "always above the map" guarantee, rather than
-// introducing a new magic number.
+// aircraft -- an additional surface alongside the floating per-aircraft
+// info-box labels, not a replacement for them. Docked left with a
+// top-4/left-4 margin so it never collides with ControlsPanel's top-right
+// panel. Pinned at MAX_LABEL_Z_INDEX + 1, above every info-box label
+// regardless of altitude-based stack order, reusing the same constant
+// AircraftListPanel.tsx uses for its own "always above the map" guarantee.
 export function AircraftDetailPanel({
   aircraft,
   center,
@@ -98,13 +82,11 @@ export function AircraftDetailPanel({
 }: AircraftDetailPanelProps) {
   const data = useMemo(() => buildAircraftDetail(aircraft, center), [aircraft, center]);
 
-  // Live-ticking clock for the Last Message Received row below -- re-renders
-  // the formatted relative age while the panel stays open and no new
-  // message arrives (e.g. "3s ago" -> "4s ago"), backing off from every
-  // second to every 15s to every minute as the age grows
-  // (relativeTimeTickIntervalMs). Re-armed whenever the selected aircraft
-  // changes or a new position/metadata event moves lastReceivedAt forward;
-  // cleared on unmount or aircraft change via the effect's own cleanup.
+  // Live-ticking clock for the Last Message Received row -- re-renders the
+  // formatted relative age while the panel stays open (e.g. "3s ago" ->
+  // "4s ago"), backing off from every second to every 15s to every minute
+  // as the age grows. Re-armed whenever the selected aircraft changes or
+  // lastReceivedAt moves forward.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (data.lastReceivedAt == null) return;
@@ -126,24 +108,12 @@ export function AircraftDetailPanel({
   const hasBadges = data.military || data.specialLivery != null;
 
   return (
-    // w-80 is the preferred width. max-w-[calc(100vw-2rem)] (#2010) is a
-    // pure overflow safety net, not a viewport-percentage cap: it only binds
-    // once the viewport itself is narrower than 320px + 2rem (~336px), so on
-    // any normal phone/tablet/desktop width the panel renders at its full
-    // preferred 320px. The calc() accounts for the panel's left-4 (1rem)
-    // offset plus a matching 1rem margin on the right, so the panel can
-    // never overflow off-screen horizontally even on an unusually narrow
-    // viewport. (A prior version of this cap used max-w-[20vw], which
-    // crushed the panel to ~75-85px on phone-width viewports -- see #2010.)
-    // max-h-[80vh] + overflow-y-auto scrolls a fully-populated panel instead
-    // of letting it grow past 80% viewport height or clipping content
-    // (previously plain overflow-hidden, with no cap at all). Only the y
-    // axis is set explicitly because content here wraps (flex-wrap pill
-    // rows, unconstrained text) rather than forcing single lines, so
-    // horizontal overflow shouldn't occur in practice; per the CSS overflow
-    // spec, pairing a non-"visible" overflow-y with a "visible" overflow-x
-    // still makes the x axis behave as "auto", so it would scroll rather
-    // than clip in the rare case some content doesn't wrap.
+    // w-80 is the preferred width; max-w-[calc(100vw-2rem)] is a pure
+    // overflow safety net, not a viewport-percentage cap -- it only binds
+    // once the viewport is narrower than 320px + 2rem, accounting for the
+    // panel's left-4 offset plus a matching right margin. max-h-[80vh] +
+    // overflow-y-auto scrolls a fully-populated panel instead of growing
+    // past 80% viewport height or clipping content.
     <div
       className="absolute top-4 left-4 max-h-[80vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
       style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
@@ -335,11 +305,8 @@ function FlightRows({
         </div>
       )}
       {data.sources.length > 0 && (
-        // flex-wrap (not the plain ROW row layout) so the label shares the
-        // first line with the pills whenever they fit, only wrapping to a
-        // second line when they don't -- matching every other row's
-        // "label, then value" flow instead of always forcing its own line
-        // (#1793).
+        // flex-wrap so the label shares the first line with the pills
+        // whenever they fit, only wrapping to a second line when they don't.
         <div className={`flex flex-wrap items-baseline justify-between gap-3 px-4 py-2 ${divider()}`}>
           <span className={ROW_LABEL}>Sources</span>
           <div className="flex flex-wrap justify-end gap-1.5">

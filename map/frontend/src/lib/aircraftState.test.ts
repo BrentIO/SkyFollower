@@ -315,15 +315,12 @@ describe("applyWsEvent -- stale/remove", () => {
   });
 });
 
-// pushTrailPoint's spread-and-slice cap check is O(current trail length)
-// per call, so pushing MAX_TRAIL_POINTS-scale events through applyWsEvent
-// one at a time (as these tests used to, back when the cap was a cheap
-// 300) would be needlessly slow now that it's 25,000. Since the cap logic
-// is a simple "keep the last N" applied fresh on every call, seeding most
-// of the trail directly and only pushing the last handful of points
-// through the real applyWsEvent path is behaviorally identical to pushing
-// every point through it, as long as the seeded points and the pushed
-// ones never collide on lat/lon (which would trip the same-as-last dedupe).
+// Seeding most of the trail directly and only pushing the last handful of
+// points through the real applyWsEvent path is behaviorally identical to
+// pushing every point through it (the cap logic is a simple "keep the last
+// N" applied fresh on every call), as long as the seeded and pushed points
+// never collide on lat/lon (which would trip the same-as-last dedupe) --
+// much faster than pushing MAX_TRAIL_POINTS-scale events one at a time.
 function seedTrail(state: ReturnType<typeof applySnapshot>, icaoHex: string, count: number) {
   return {
     ...state,
@@ -444,14 +441,11 @@ describe("applyWsEvents", () => {
     expect("A1B2C3" in next).toBe(false);
   });
 
-  // #1775: MapView.tsx's sync effect diffs two AircraftMap snapshots by
-  // per-key object *reference* (not deep equality) to find which aircraft
-  // actually changed, so it can push an incremental updateData() diff to
-  // MapLibre instead of rebuilding every feature on every tick. That's
-  // only correct if applyWsEvent(s) never touches an untouched aircraft's
-  // record reference -- these two tests pin that contract explicitly, so
-  // a future change to the merge logic that broke it would fail loudly
-  // here rather than silently degrading into stale/incorrect map features.
+  // MapView.tsx's sync effect diffs two AircraftMap snapshots by per-key
+  // object *reference*, not deep equality, to push an incremental
+  // updateData() diff instead of rebuilding every feature every tick.
+  // These two tests pin that applyWsEvent(s) never touches an untouched
+  // aircraft's record reference, so a regression fails loudly here.
   it("preserves the exact record reference for an aircraft untouched by any event in the batch", () => {
     const base = applyWsEvent(applySnapshot([]), { type: "position", icao_hex: "UNTOUCH", lat: 1, lon: 2 });
     const untouchedBefore = base.UNTOUCH;
@@ -466,16 +460,11 @@ describe("applyWsEvents", () => {
     expect(next.A1B2C3).not.toBe(before);
   });
 
-  // #1820: applyWsEvents previously reduced over applyWsEvent, spreading
-  // the *entire* AircraftMap fresh once per event in the batch -- O(batch
-  // size x tracked fleet size) work, confirmed via a live trace as a real
-  // CPU cost with the full live fleet. It's now a single lazily-created
-  // (copy-on-write) clone for the whole batch instead. These tests pin
-  // the two things that refactor must never regress: applying N events
-  // still only ever touches the map once (not N times), and a batch that
-  // turns out to be entirely no-ops still returns the exact same
-  // top-level reference untouched -- same as a single no-op
-  // applyWsEvent call always has, matching every other reducer here.
+  // applyWsEvents uses a single lazily-created (copy-on-write) clone for
+  // the whole batch, not one spread per event. These tests pin what that
+  // must never regress: applying N events only ever touches the map once,
+  // and a batch that's entirely no-ops returns the exact same top-level
+  // reference untouched.
   it("an empty batch returns the exact same map reference", () => {
     const base = applySnapshot([{ icao_hex: "A1B2C3", lat: 1, lon: 2 }]);
     expect(applyWsEvents(base, [])).toBe(base);
@@ -505,11 +494,8 @@ describe("applyWsEvents", () => {
 
   it("processes a large batch against the fleet only once (regression guard for the O(batch x fleet) full-map-clone-per-event bug)", () => {
     // Not a strict call-count assertion (this module has no clone-tracking
-    // seam) -- instead pins the actual observable contract: every
-    // untouched aircraft's record reference survives a batch that only
-    // names a handful of other hexes, exactly as it would if the batch
-    // were applied against one shared working copy rather than one fresh
-    // spread per event.
+    // seam) -- instead pins that every untouched aircraft's record
+    // reference survives a batch naming only a handful of other hexes.
     let base = applySnapshot([]);
     for (let i = 0; i < 200; i++) {
       base = applyWsEvent(base, { type: "position", icao_hex: `AC${i}`, lat: i, lon: i });

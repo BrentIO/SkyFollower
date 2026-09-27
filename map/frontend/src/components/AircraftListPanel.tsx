@@ -16,14 +16,10 @@ import type { ProcessorRoster } from "../api/types";
 import { BADGE_BASE, BADGE_CLASSES } from "./AircraftDetailPanel";
 
 // Column definitions -- a data-driven array rather than hardcoded per-column
-// JSX, so per-column show/hide (explicitly deferred by the issue this
-// implements) is additive later instead of a restructure. `sortKey` reads
-// only the plain, comparable value a column sorts by -- for Ident, that is
-// deliberately just the ident string, never the Military/Special-livery
-// badges (now the Tags column, see #1881), which sort on their own rank
-// instead. `className` is optional and only set where a column needs a
-// fixed/narrow width (e.g. Tags, #1881) beyond the default per-cell padding
-// applied generically in the <th>/<td> map below.
+// JSX, so per-column show/hide is additive later instead of a restructure.
+// `sortKey` reads only the plain, comparable value a column sorts by --
+// for Ident, that's just the ident string, never the Tags column's own
+// badges, which sort on their own rank instead.
 interface AircraftListColumn {
   key: string;
   header: string;
@@ -32,17 +28,11 @@ interface AircraftListColumn {
   className?: string;
 }
 
-// The country-of-registration flag (#1848) is its own column, to the left
-// of Ident -- VRS-style tools that already do this hex-range
-// lookup conventionally lead each row with the flag, but as a distinct
-// column rather than folded into Ident's cell so it lines up in its own
-// vertical strip instead of shifting per-row with ident text width.
-// Rendered client-side from countryCode alone via lib/countryFlag.ts (the
-// same regional-indicator-symbol trick as shared/country_flags.py);
-// silently omitted (not a placeholder glyph) when no country has
-// resolved, or when countryCode isn't a syntactically valid 2-letter
-// code. Sorts by the resolved country name/code, same convention as every
-// other column sorting on its own underlying value rather than decoration.
+// The country-of-registration flag is its own column, to the left of
+// Ident, so it lines up in its own vertical strip instead of shifting
+// per-row with ident text width. Silently omitted (not a placeholder
+// glyph) when no country has resolved, or countryCode isn't a valid
+// 2-letter code.
 const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
   {
     key: "flag",
@@ -60,30 +50,16 @@ const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
     sortKey: (row) => row.ident,
     render: (row) => row.ident ?? "",
   },
-  // Tags column (#1881) -- the Military/Special-livery badges used to live
-  // inside the Ident cell; they're their own column now, immediately after
-  // Ident, so Ident stays plain text and the badges get a stable strip that
-  // doesn't shift with ident text width. Reuses AircraftDetailPanel's own
-  // BADGE_BASE/BADGE_CLASSES convention exactly (green "M" for military,
-  // yellow "S" for special livery, blue "U"/"E" for UAT/External source,
-  // #1901), each with a native `title` tooltip -- this codebase's
-  // established tooltip convention (see the flag column's title above, or
-  // connectionTooltip() elsewhere in this file) -- since no dedicated
-  // tooltip component exists or should be added for this.
+  // Tags column: the Military/Special-livery/UAT/External-source badges,
+  // its own column so Ident stays plain text. Reuses AircraftDetailPanel's
+  // BADGE_BASE/BADGE_CLASSES convention, each with a native `title` tooltip.
   //
-  // Sorts by a numeric rank -- 0: has specialLivery, 1: military, 2: has
-  // isUat or isExternal, 3: none of the above (#1901 extends #1881's
-  // original 0/1/2 scheme by inserting the new source-tag tier ahead of
-  // "untagged" rather than leaving U/E sort-neutral). specialLivery/
-  // military stay the top two tiers -- they mark a notable *aircraft*;
-  // U/E mark a data-source characteristic, a real but lower-priority
-  // signal, so they sort above plain untagged rows without outranking the
-  // two existing tags. isUat and isExternal share one tier rather than
-  // being split into two more ranks -- neither is more "notable" than the
-  // other, and a row can carry both. Fixed narrow width (`w-16`, per the
-  // locked decision on #1901 -- not widened even with up to 4 badges
-  // possible on one row) so badges wrap onto a second line at the widest
-  // combination rather than forcing every other row's cell wider.
+  // Sorts by rank: 0 specialLivery, 1 military, 2 isUat/isExternal, 3
+  // none -- specialLivery/military mark a notable *aircraft* so they stay
+  // the top two tiers; isUat/isExternal mark a data-source characteristic,
+  // lower priority, and share one tier since neither is more notable than
+  // the other. Fixed narrow width (`w-16`) so badges wrap onto a second
+  // line at the widest combination rather than widening every row.
   {
     key: "tags",
     header: "Tags",
@@ -143,37 +119,27 @@ const AIRCRAFT_LIST_COLUMNS: AircraftListColumn[] = [
   },
 ];
 
-// Default sort on first open: Distance, ascending (closest first) -- see
-// the issue's "Sorting" section.
+// Default sort on first open: Distance, ascending (closest first).
 const DEFAULT_SORT_STATE: AircraftListSortState = { columnKey: "distance", dir: "asc" };
 
-// The edge tab's own width (h-12 w-6 button -- see its className below).
-// Kept as a named constant since the wrapper's open/closed width (below)
-// needs it alongside the panel's own (now operator-resizable, see #1784)
-// width, rather than hardcoding "24" a second time disconnected from the
-// button's own w-6 class.
+// The edge tab's own width (h-12 w-6 button, see className below). Named
+// so the wrapper's open/closed width below can reference it rather than
+// hardcoding "24" disconnected from the button's own w-6 class.
 const TAB_WIDTH_PX = 24;
 
-// A floor under the map area's own width during an active resize drag, so
-// a narrow browser window can't have its map squeezed to nothing -- on
-// top of aircraftListPanelPersistence.ts's own static MIN/MAX_PANEL_WIDTH_PX
+// A floor under the map area's own width during an active resize drag, on
+// top of aircraftListPanelPersistence.ts's static MIN/MAX_PANEL_WIDTH_PX
 // clamp, which is independent of the live viewport.
 const MIN_MAP_AREA_WIDTH_PX = 320;
 
 const ROW_BAND_EVEN = "bg-white dark:bg-slate-900";
 const ROW_BAND_ODD = "bg-slate-50 dark:bg-slate-800/60";
-// Consistent with AircraftDetailPanel.tsx's SQUAWK_EMERGENCY_TEXT red
-// family -- overrides normal banding entirely (not blended) for a row
-// squawking 7500/7600/7700/7777.
+// Overrides normal banding entirely (not blended) for a row squawking
+// 7500/7600/7700/7777.
 const ROW_EMERGENCY = "bg-red-100 dark:bg-red-900/70";
 
-// Same chevron-up/chevron-down glyph shapes as lucide-react's ChevronUp/
-// ChevronDown (management-ui/frontend's HistoryView.tsx uses that package
-// directly) -- this frontend has no lucide-react dependency and instead
-// hand-rolls every icon as inline SVG (see lib/actionIcons.ts/IconButton.tsx's
-// ActionIcon), so this is drawn the same way rather than adding a second
-// icon mechanism for one component. Rendered only for the active sort
-// column, matching HistoryView's own convention exactly.
+// This frontend has no lucide-react dependency and hand-rolls every icon
+// as inline SVG instead; rendered only for the active sort column.
 function SortChevron({ direction }: { direction: "asc" | "desc" }) {
   return (
     <svg
@@ -195,18 +161,12 @@ function SortChevron({ direction }: { direction: "asc" | "desc" }) {
 
 export interface AircraftListPanelProps {
   aircraft: AircraftMap;
-  /** Same value ControlsPanel used to show -- see the issue's "Status box
-   * changes" section, which relocates this text rather than recomputing
-   * it from a different source. */
   aircraftCount: number;
   /** The browser's own WebSocket connection to this map backend -- distinct
-   * from `roster`, which is the message-processor liveness roster *that
-   * backend* has derived from UDP traffic. If this is false there is no
-   * live proof of anything, so the indicator renders red regardless of the
-   * last-known roster snapshot. Formerly ControlsPanel's own props -- see
-   * the issue that moved the connection-status dot into this header
-   * alongside the aircraft count, after repeated top-right corner
-   * collisions (#1768, #1789) with ControlsPanel's icon column. */
+   * from `roster`, the message-processor liveness roster that backend has
+   * derived from UDP traffic. If this is false there is no live proof of
+   * anything, so the indicator renders red regardless of the last-known
+   * roster snapshot. */
   wsConnected: boolean;
   roster: ProcessorRoster;
   center: CenterPoint | null;
@@ -215,19 +175,14 @@ export interface AircraftListPanelProps {
 }
 
 // Right-side flyout: a sortable, columnar list of every currently-tracked,
-// non-hidden aircraft -- see the issue this implements for the full
-// design. Opens/closes via its own edge-tab handle, vertically centered
-// on the viewport (not top-aligned) so it can never collide with
-// ControlsPanel's top-right icon column/status dot, both of which are
-// anchored top-right.
+// non-hidden aircraft. Opens/closes via its own edge-tab handle, vertically
+// centered on the viewport (not top-aligned) so it never collides with
+// ControlsPanel's top-right icon column/status dot.
 //
-// A real flex sibling of the map area (see MapView.tsx's root layout), not
-// an absolute overlay on top of it -- this component's own box width is
-// what actually pushes the map narrower while open, so the drawer can
-// never cover ControlsPanel (which tracks the map area's own, now-
-// narrower, right edge) and the map keeps its configured center centered
-// in whatever width remains, the same way resizing any MapLibre container
-// does.
+// A real flex sibling of the map area, not an absolute overlay on top of
+// it -- this component's own box width pushes the map narrower while open,
+// so the map keeps its configured center centered in whatever width
+// remains, the same way resizing any MapLibre container does.
 export function AircraftListPanel({
   aircraft,
   aircraftCount,
@@ -239,16 +194,13 @@ export function AircraftListPanel({
 }: AircraftListPanelProps) {
   const overallStatus = overallConnectionStatus(wsConnected, roster);
   // Closed by default -- an on-demand addition to the view, not something
-  // that should claim screen space (and partially occlude the map) on
-  // every page load the way the always-selected AircraftDetailPanel does.
+  // that should claim screen space on every page load.
   const [open, setOpen] = useState(false);
   const [sort, setSort] = useState<AircraftListSortState>(DEFAULT_SORT_STATE);
 
-  // Operator-resizable width (#1784) -- seeded from whatever this browser
-  // last persisted, defaulting to the original fixed 720px otherwise. Kept
-  // in a ref alongside the state so handleResizeEnd's save always sees the
-  // latest value regardless of closure timing (same pattern as aircraftRef
-  // above).
+  // Operator-resizable width, seeded from whatever this browser last
+  // persisted. Kept in a ref alongside the state so handleResizeEnd's save
+  // always sees the latest value regardless of closure timing.
   const [width, setWidth] = useState(() => loadPersistedPanelWidth());
   const widthRef = useRef(width);
   widthRef.current = width;
@@ -283,11 +235,8 @@ export function AircraftListPanel({
   }
 
   // Coalesces this panel's own row rebuild the same way MapView.tsx
-  // coalesces its MapLibre source rebuild (see syncThrottle.ts's module
-  // docstring) -- a WebSocket batch touching hundreds of aircraft would
-  // otherwise re-sort/re-render the full row list on every single event.
-  // One throttle instance for this component's whole lifetime, not
-  // per-render, so `lastRunAt` actually accumulates across requests.
+  // coalesces its MapLibre source rebuild, so a WebSocket batch touching
+  // hundreds of aircraft doesn't re-sort/re-render on every single event.
   const aircraftRef = useRef(aircraft);
   aircraftRef.current = aircraft;
   const [displayedAircraft, setDisplayedAircraft] = useState<AircraftMap>(aircraft);
@@ -324,44 +273,25 @@ export function AircraftListPanel({
   }
 
   return (
-    // The wrapper's own inline-style `width` (not a `transform`) is what's
-    // transitioned -- a transform doesn't change a flex sibling's layout
-    // box the way it could get away with as an absolute overlay, which is
-    // exactly what let the map area's box actually shrink/grow here.
-    // `overflow-hidden` clips the panel content out of view once the
-    // wrapper narrows to just the tab's own width, rather than reflowing
-    // or wrapping it. The open/close width transition is suppressed while
-    // actively resize-dragging (#1784) so the live width tracks the
-    // pointer instead of lagging behind a 200ms transition.
+    // The wrapper's inline-style `width` (not `transform`) is transitioned
+    // -- a transform doesn't change a flex sibling's layout box, which is
+    // what lets the map area actually shrink/grow here. The transition is
+    // suppressed while actively resize-dragging so the live width tracks
+    // the pointer instead of lagging behind.
     <div
       className={`flex h-full flex-none items-stretch overflow-hidden ${resizing ? "" : "transition-[width] duration-200"}`}
-      // zIndex: this panel is a flex sibling of the map area (MapView.tsx),
-      // which has no z-index of its own. Originally set to outrank
-      // InfoBoxLayer's DOM-positioned label boxes (up to MAX_LABEL_Z_INDEX),
-      // which otherwise painted over this plain flex child regardless of
-      // DOM order (#1790) -- InfoBoxLayer itself is gone as of #1808 (its
-      // labels are now a MapLibre layer inside the map's own canvas, not a
-      // DOM sibling competing for z-index at all), but this stays at the
-      // same value: harmless, and still reuses MAX_LABEL_Z_INDEX rather
-      // than a second magic constant should a future DOM overlay need the
-      // same "always above the map" guarantee. Matches AircraftDetailPanel's
-      // own MAX_LABEL_Z_INDEX + 1.
+      // Reuses MAX_LABEL_Z_INDEX rather than a second magic constant,
+      // matching AircraftDetailPanel's own MAX_LABEL_Z_INDEX + 1, in case a
+      // future DOM overlay needs the same "always above the map" guarantee.
       style={{ width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX, zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
-      {/* Tab stays vertically centered within the drawer's full height --
-          not top-aligned -- so it can never collide with ControlsPanel's
-          top-right icon column/status dot.
-          `bg-white`/`dark:bg-slate-900` here (not just on the button below)
-          is load-bearing, not decorative (#1803): this wrapper's own
-          zIndex (from the outer div above) only wins the paint order where
-          it actually paints a pixel. InfoBoxLayer's boxes are absolutely
-          positioned with no overflow clipping on the map area, so a box
-          anchored near the map's right edge can visually spill into this
-          strip; above/below the h-12 button, an unpainted (transparent)
-          wrapper let that spilled label show straight through even though
-          it was technically stacked underneath. An opaque background
-          spanning the wrapper's full height closes that gap regardless of
-          z-index. */}
+      {/* Tab stays vertically centered within the drawer's full height, not
+          top-aligned, so it never collides with ControlsPanel's top-right
+          icon column/status dot. `bg-white`/`dark:bg-slate-900` here (not
+          just on the button below) is load-bearing: zIndex only wins the
+          paint order where it actually paints a pixel, and an unpainted
+          wrapper above/below the button would let a map overlay spill
+          through even though it's stacked underneath. */}
       <div
         className="flex h-full flex-none items-center bg-white dark:bg-slate-900"
         style={{ width: TAB_WIDTH_PX }}
@@ -382,14 +312,11 @@ export function AircraftListPanel({
         className="relative flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
         style={{ width }}
       >
-        {/* Drag-to-resize handle (#1784) -- absolutely positioned so it
-            doesn't add to the panel's own flex width, straddling the
-            panel's left edge. Only rendered while open: resizing a
-            collapsed, invisible drawer doesn't make sense, and this keeps
-            it out of the tab-order/accessibility tree when it can't do
-            anything. Pointer Events (not mouse-only) so this works for
-            touch too; pointer capture keeps receiving move/up events even
-            if the pointer leaves this thin strip mid-drag. */}
+        {/* Drag-to-resize handle -- absolutely positioned, straddling the
+            panel's left edge. Only rendered while open. Pointer Events
+            (not mouse-only) so touch works too; pointer capture keeps
+            receiving move/up events if the pointer leaves this thin strip
+            mid-drag. */}
         {open && (
           <div
             role="separator"
@@ -407,12 +334,9 @@ export function AircraftListPanel({
 
         <div className="flex items-baseline justify-between gap-3 border-b border-slate-200 px-4 py-2.5 dark:border-slate-700">
           <div className="text-base font-bold">Aircraft List</div>
-          {/* Connection-status dot, relocated here (from ControlsPanel's
-              top-right corner -- see the issue this implements) as a sibling
-              of the aircraft count, same line, so it only renders while the
-              drawer is open -- matching the count's own existing
-              hide-when-collapsed behavior, rather than needing its own
-              always-visible floating spot. */}
+          {/* Connection-status dot, a sibling of the aircraft count so it
+              only renders while the drawer is open, matching the count's
+              own hide-when-collapsed behavior. */}
           <div className="flex items-center gap-1.5 tabular-nums text-xs text-slate-500 dark:text-slate-400">
             <span>{aircraftCount} aircraft</span>
             <span
@@ -423,13 +347,9 @@ export function AircraftListPanel({
         </div>
 
         {/* overflow-auto (not just -y): a user-dragged width narrower than
-            the table's natural content width (#1784) scrolls horizontally
-            instead of visually overflowing the rounded panel card.
-            flex-1 (not just overflow-auto) so this wrapper -- not the
-            version footer below it -- absorbs the panel's remaining
-            height; without it, an unconstrained-height flex child and
-            `mt-auto` on the footer wouldn't produce a sticky footer at
-            all, just two children sized to their content. */}
+            the table's natural content width scrolls horizontally instead
+            of overflowing the panel card. flex-1 so this wrapper, not the
+            version footer, absorbs the panel's remaining height. */}
         <div className="flex-1 overflow-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
@@ -480,11 +400,7 @@ export function AircraftListPanel({
         </div>
 
         {/* Sticky version/commit footer -- mt-auto pins it to the bottom of
-            this flex column regardless of table content length (see the
-            table wrapper's flex-1 above). Right-aligned since this panel
-            docks at the map's right edge (management-ui's SideNav is the
-            same build-time-injected VITE_VERSION/VITE_COMMIT pattern, but
-            left-aligned there since that's a left-docked nav). */}
+            this flex column regardless of table content length. */}
         <div className="mt-auto shrink-0 border-t border-slate-200 px-4 py-1.5 text-right text-[10px] text-slate-400 dark:border-slate-700 dark:text-slate-600">
           {import.meta.env.VITE_VERSION || "dev"}
           {import.meta.env.VITE_COMMIT && import.meta.env.VITE_COMMIT !== "unknown"

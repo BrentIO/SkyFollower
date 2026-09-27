@@ -1,19 +1,13 @@
 // Coalesces rapid, repeated requests to rebuild MapView's aircraft/trail
 // GeoJSON sources into a single call, rather than one full rebuild per
-// request. Pure timer logic, MapLibre-agnostic, so it's covered by plain
-// unit tests (see the "throttle" test file) -- same pure-logic-extraction
-// pattern as trailSegments.ts/trailSeeding.ts.
+// request. Pure timer logic, MapLibre-agnostic, so it's unit-testable.
 //
-// Leading + trailing semantics (matching a standard UI throttle, not a
-// debounce): the first request after an idle period runs immediately --
-// so an isolated update is never delayed -- and any further requests
-// arriving before `intervalMs` has elapsed since that run are coalesced
-// into exactly one trailing run, using only the *latest* request's
-// function (earlier ones in the same window are superseded, never run).
-// This is what makes a burst of WebSocket batches or rapid user-driven
-// state changes (see MapView.tsx's sync effect) cost one rebuild instead
-// of one per request, without adding latency to the common case where
-// requests already arrive further apart than `intervalMs`.
+// Leading + trailing semantics (a standard UI throttle, not a debounce):
+// the first request after an idle period runs immediately, and any
+// further requests arriving before `intervalMs` has elapsed are coalesced
+// into exactly one trailing run using only the *latest* request's
+// function. A burst of WebSocket batches or rapid state changes then costs
+// one rebuild instead of one per request.
 
 export interface Throttle {
   /**
@@ -70,35 +64,20 @@ export function createTrailingThrottle(intervalMs: number, now: () => number = D
   return { request, cancel };
 }
 
-// The coalescing window for MapView's aircraft/trail sync effect.
-//
-// Raised from 200ms to 500ms in #1787 to cut steady-state GPU/compositor
-// load: a DevTools trace showed the map redrawing at ~47fps continuously
-// even with the camera stationary, driven by how often this effect marks
-// the aircraft/trail sources dirty. This is now above the map service's own
-// MAP_WS_BATCH_INTERVAL_SECONDS (250ms, see shared/timing.py), so unlike the
-// prior 200ms window, a real isolated position/metadata update can now sit
+// The coalescing window for MapView's aircraft/trail sync effect. Above
+// the map service's own MAP_WS_BATCH_INTERVAL_SECONDS (250ms, see
+// shared/timing.py), so a real isolated position/metadata update can sit
 // in the throttle's trailing edge rather than always firing on the leading
 // edge -- a deliberate trade of on-screen update latency for lower render
-// frequency (#1787 raised this over #1775's stated preference for faster
-// updates; see that issue for the explicit call). A burst of backlogged
-// WebSocket frames or several user-driven state changes (selection,
-// Isolate, Follow, History: All) landing in the same tick still only pays
-// the full-fleet rebuild cost once per window, which is this constant's
-// other purpose -- see that effect's own comment on prevVisibilityInputsRef.
+// frequency. A burst of backlogged WebSocket frames or several
+// user-driven state changes landing in the same tick still only pays the
+// full-fleet rebuild cost once per window.
 export const MAP_SYNC_THROTTLE_MS = 500;
 
-// SCREEN_POSITION_THROTTLE_MS was removed in #1808 (InfoBoxLayer.tsx's
-// `"move"`-driven screen-position sync no longer existed once the DOM info
-// box was replaced by a MapLibre symbol layer), then restored here in #1851
-// when that GPU layer was reverted back to the DOM box -- see #1851's issue
-// body for why the CPU concern behind #1808 no longer holds.
-//
 // Deliberately tighter than MAP_SYNC_THROTTLE_MS: unlike the data-source
 // sync above (which waits on new WebSocket data), this handler only
 // re-projects positions the app already has, so there's no reason to trail
-// the same distance behind -- this just needs to read as instantaneous
-// during continuous camera movement while still bounding the unthrottled
-// per-frame `project()`-over-the-fleet cost `"move"` would otherwise pay on
-// every transform tick. Same value the removed code used.
+// the same distance behind -- this needs to read as instantaneous during
+// continuous camera movement while still bounding the unthrottled
+// per-frame `project()`-over-the-fleet cost `"move"` would otherwise pay.
 export const SCREEN_POSITION_THROTTLE_MS = 50;

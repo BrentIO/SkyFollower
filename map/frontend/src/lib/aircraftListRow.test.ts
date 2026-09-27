@@ -3,12 +3,11 @@ import { applySnapshot, type AircraftRecord } from "./aircraftState";
 import { buildAircraftListRow, buildAircraftListRows } from "./aircraftListRow";
 import type { CenterPoint } from "./config";
 
-// Builds a real AircraftRecord via applySnapshot (same convention as
-// lib/featureCollections.test.ts's withOnePositionedAircraft) rather than
-// a hand-rolled partial -- AircraftRecord carries several fields
-// (trail/tracePoints/shape/iconScale) that only applySnapshot knows how to
-// derive correctly. `overrides` is applied on top so AircraftRecord-only
-// fields (hidden/stale) can still be set directly.
+// Builds a real AircraftRecord via applySnapshot rather than a hand-rolled
+// partial -- AircraftRecord carries several fields
+// (trail/tracePoints/shape/iconScale) that only applySnapshot derives
+// correctly. `overrides` is applied on top so AircraftRecord-only fields
+// (hidden/stale) can still be set directly.
 function baseAircraft(overrides: Partial<AircraftRecord> = {}): AircraftRecord {
   const icaoHex = overrides.icao_hex ?? "A2C9E4";
   const built = applySnapshot([{ ...overrides, icao_hex: icaoHex }])[icaoHex];

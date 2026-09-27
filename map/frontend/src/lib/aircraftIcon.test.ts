@@ -133,18 +133,13 @@ describe("shapeIconId", () => {
 });
 
 describe("buildShapeIconImageData -- accent modes", () => {
-  // `buildShapeIconImageData` needs a 2D canvas, which this project's
-  // "node" vitest environment doesn't provide (see the file-header note
-  // above). Rather than pull in jsdom + a canvas polyfill, this installs a
-  // minimal fake `document`/`Path2D`/`CanvasRenderingContext2D` for just
-  // this suite -- only the handful of calls the function under test
-  // actually makes (clearRect, setTransform, fill, stroke,
-  // globalCompositeOperation, strokeStyle, getImageData), and only geometry
-  // this suite needs: an axis-aligned filled rectangle (a synthetic outline
-  // `d`) and a straight horizontal line (a synthetic `accentD`). That's
-  // enough to exercise the real "cutout" and "add" accent logic in
-  // aircraftIcon.ts end-to-end (including the real `coverageToSdf`),
-  // without reimplementing a general SVG path rasterizer.
+  // Rather than pull in jsdom + a canvas polyfill for the 2D canvas this
+  // function needs, this installs a minimal fake
+  // `document`/`Path2D`/`CanvasRenderingContext2D` -- only the handful of
+  // calls the function under test actually makes, and only the geometry
+  // this suite needs (an axis-aligned rectangle plus a straight line).
+  // That's enough to exercise the real "cutout"/"add" accent logic
+  // end-to-end without reimplementing a general SVG path rasterizer.
 
   class FakePath2D {
     constructor(public readonly d: string) {}

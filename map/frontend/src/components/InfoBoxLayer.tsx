@@ -2,14 +2,9 @@ import { useMemo } from "react";
 import { buildInfoBoxLines, type InfoBoxAircraft, type TrendDirection } from "../lib/infoBox";
 import { altitudeZIndex, sortByLabelStackOrder } from "../lib/labelStackOrder";
 
-// Restored (#1851) as the aircraft info-box's only implementation, after
-// #1808 replaced it with a GPU/MapLibre symbol layer over CPU concerns that
-// a live trace comparison (see #1851's own issue body) showed no longer
-// hold now that #1838/#1840 fixed the actual dominant cost (trail
-// rendering). This is an unmodified drop-in of the pre-#1808 component --
-// lib/infoBox.ts's buildInfoBoxLines() and lib/labelStackOrder.ts's
-// altitudeZIndex()/sortByLabelStackOrder() were confirmed unchanged in
-// shape since #1808's removal, so no adaptation was needed here.
+// DOM-based rendering is this component's only implementation (a prior
+// GPU/MapLibre symbol-layer variant was reverted after a CPU trace showed
+// no material benefit once trail rendering's own cost was fixed).
 
 export interface InfoBoxLayerItem {
   id: string;
@@ -35,14 +30,11 @@ export interface InfoBoxLayerProps {
   showAll: boolean;
   /** icao_hex of the aircraft currently hovered, if any -- shown as a transient label. */
   hoveredId?: string | null;
-  /** #2000: ControlsPanel's operator-facing display-scale multiplier
-   * (MapView.tsx state, persisted via controlsPersistence.ts), shared with
-   * the aircraft icon's own icon-size expression so both scale together
-   * from one control. Applied as a CSS transform (see the box's style
-   * below) rather than by recomputing each font-size/padding value --
-   * scales the whole box uniformly, including its background/padding, with
-   * no risk of drifting out of proportion with the text inside it. 1 is
-   * the no-op default. */
+  /** ControlsPanel's operator-facing display-scale multiplier, shared with
+   * the aircraft icon's own icon-size expression so both scale together.
+   * Applied as a CSS transform (see the box's style below) rather than by
+   * recomputing each font-size/padding value, so the whole box scales
+   * uniformly. 1 is the no-op default. */
   displayScale: number;
 }
 
@@ -78,15 +70,12 @@ export function InfoBoxLayer({ items, selected, showAll, hoveredId, displayScale
             left: b.item.x + b.item.offset,
             top: b.item.y + b.item.offset,
             zIndex: altitudeZIndex(b.item.aircraft.alt),
-            // #2000: scaling from the top-left corner (the box's own
-            // anchor point, per infoBoxOffset.ts) keeps that corner fixed
-            // on screen as the box grows/shrinks, so this needs no changes
-            // to the left/top math above. Only added when displayScale
-            // actually differs from the 1.0 no-op default -- an unused
-            // `transform` would still promote every box to its own
-            // compositor layer, a real cost this component has been tuned
-            // to avoid (see this file's own #1851 history) for zero visual
-            // benefit at the default setting.
+            // Scaling from the top-left corner (the box's own anchor
+            // point) keeps that corner fixed on screen as the box
+            // grows/shrinks, needing no changes to the left/top math
+            // above. Only added when displayScale differs from 1 -- an
+            // unused `transform` would still promote every box to its own
+            // compositor layer, a real cost with zero benefit at default.
             ...(displayScale !== 1
               ? { transform: `scale(${displayScale})`, transformOrigin: "top left" }
               : {}),
@@ -110,18 +99,12 @@ export function InfoBoxLayer({ items, selected, showAll, hoveredId, displayScale
   );
 }
 
-// #2001: the vertical-speed trend used to be a plain Unicode up/down arrow
-// character rendered inline as text. A specific character isn't guaranteed
-// to be in every font's glyph table -- on macOS the font-mono stack's SF
-// Mono glyph for it fell back to a different, undersized substitute font,
-// while the surrounding digits (which every font covers) rendered fine. An SVG
-// shape sized in `em`s (tied to the line's own font-size) sidesteps
-// per-glyph font-fallback entirely and renders identically on every
-// platform. `fill="currentColor"` picks up the box's white text color for
-// free, matching how the arrow character inherited it before. `align-*`
-// nudges the shape up from its own bottom edge onto the text baseline --
-// a flat SVG's baseline is its bottom edge by default, which reads low
-// next to the digits' x-height otherwise.
+// An SVG shape rather than a Unicode arrow character, sized in `em`s so it
+// sidesteps per-glyph font-fallback (a specific character isn't guaranteed
+// to render consistently across platform fonts) and renders identically
+// everywhere. `fill="currentColor"` picks up the box's text color for
+// free. `align-*` nudges the shape up onto the text baseline, since a flat
+// SVG's baseline is its bottom edge by default.
 function TrendGlyph({ direction }: { direction: NonNullable<TrendDirection> }) {
   return (
     <svg

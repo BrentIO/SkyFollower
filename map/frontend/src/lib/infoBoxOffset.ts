@@ -1,22 +1,17 @@
 // Screen-pixel gap between an aircraft icon's screen position and its info
-// box's near (top-left) corner (see components/InfoBoxLayer.tsx's `left`/
-// `top` offset math). Boxes are never nudged to avoid a collision -- this
-// is the box's only position, not just a default (see
-// lib/labelStackOrder.ts for how overlapping boxes are stacked instead). A
-// single fixed gap reads fine at a normal zoom level, but at a zoomed-out
-// view the same screen-pixel gap is much more likely to have another
-// aircraft or a basemap place-name label sitting inside it, making a box
-// read as detached from its icon. Scaling the gap down as the view zooms
-// out keeps every box visually anchored to its icon without any
-// collision-avoidance/nudging.
+// box's near (top-left) corner. Boxes are never nudged to avoid a
+// collision -- this is the box's only position (see lib/labelStackOrder.ts
+// for how overlapping boxes are stacked instead). A single fixed gap reads
+// fine at a normal zoom level, but at a zoomed-out view the same
+// screen-pixel gap is more likely to have another aircraft or basemap
+// label sitting inside it, making a box read as detached. Scaling the gap
+// down as the view zooms out keeps every box visually anchored to its icon.
 
-// Gap at MAX_OFFSET_ZOOM and above. Previously 34px -- confirmed live that
-// even this closest-zoom maximum still read as detached from the icon,
-// since the info box draws no leader line connecting box to icon and
-// proximity is the only anchoring cue.
+// Gap at MAX_OFFSET_ZOOM and above -- the info box draws no leader line
+// connecting box to icon, so proximity is the only anchoring cue.
 export const MAX_INFO_BOX_OFFSET = 9;
 
-// Gap at MIN_OFFSET_ZOOM and below. Previously 12px.
+// Gap at MIN_OFFSET_ZOOM and below.
 export const MIN_INFO_BOX_OFFSET = 3;
 
 // Zoom levels bounding the ramp between the two gaps above -- outside this
@@ -24,20 +19,14 @@ export const MIN_INFO_BOX_OFFSET = 3;
 const MAX_OFFSET_ZOOM = 10;
 const MIN_OFFSET_ZOOM = 4;
 
-// Maps the map's current zoom onto the info box's screen-pixel gap from its
-// aircraft icon: MAX_INFO_BOX_OFFSET at MAX_OFFSET_ZOOM and above, ramping
-// down to MIN_INFO_BOX_OFFSET at MIN_OFFSET_ZOOM and below.
-//
-// The ramp is a cubic ease-in (t^3), not linear, on the zoom fraction `t`
-// between the two thresholds. A linear ramp spends its "budget" evenly
-// across the whole 4-10 span, so a regional view at zoom 8-9 -- most of an
-// operator's normal working range -- still sat at ~80-90% of the max offset
-// (only a 12-20% reduction), leaving labels visibly detached from their
-// icon. Cubing `t` keeps the offset close to the minimum through most of
-// the range and saves the climb to the full-size gap for the last stretch
-// right below MAX_OFFSET_ZOOM, so the full-size gap stays reserved for
-// genuinely close-in views while zoom 7-9 gets a meaningfully smaller one
-// (e.g. ~4.8px at zoom 8, ~6.5px at zoom 9).
+// Maps the map's current zoom onto the info box's screen-pixel gap:
+// MAX_INFO_BOX_OFFSET at MAX_OFFSET_ZOOM and above, ramping down to
+// MIN_INFO_BOX_OFFSET at MIN_OFFSET_ZOOM and below. The ramp is a cubic
+// ease-in (t^3), not linear, on the zoom fraction `t`: a linear ramp would
+// leave a regional view at zoom 8-9 -- most of an operator's normal
+// working range -- still near the max offset, so cubing keeps the offset
+// close to the minimum through most of the range and reserves the
+// full-size gap for genuinely close-in views.
 export function infoBoxOffsetForZoom(zoom: number): number {
   if (zoom >= MAX_OFFSET_ZOOM) return MAX_INFO_BOX_OFFSET;
   if (zoom <= MIN_OFFSET_ZOOM) return MIN_INFO_BOX_OFFSET;

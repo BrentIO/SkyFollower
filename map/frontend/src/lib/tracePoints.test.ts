@@ -3,13 +3,10 @@ import type { TracePoint } from "./aircraftState";
 import { altitudeColor, darkenColor } from "./altitudeColor";
 import { formatTraceLabel, traceLabelSortKey, tracePointsFeatureCollection } from "./tracePoints";
 
-// Reference values mirrored from management-ui/frontend/src/lib/
-// flightView.test.ts's traceLabelSortKey/formatTraceLabel/
-// tracePointsFeatureCollection suites -- same input/output pairs must hold
-// here too, since the rendering logic is a verbatim port (see this
-// module's docstring for why tracePointsFeatureCollection's *signature*
-// differs -- one TracePoint[] instead of three parallel arrays -- while
-// its behavior does not).
+// Reference values mirrored from management-ui/frontend's own
+// traceLabelSortKey/formatTraceLabel/tracePointsFeatureCollection suites
+// -- same input/output pairs must hold here too, since the rendering
+// logic is a ported copy.
 
 describe("traceLabelSortKey", () => {
   it("gives the first and last point the top priority (0)", () => {

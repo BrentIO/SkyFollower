@@ -1,31 +1,18 @@
 // Centralized MapLibre source/layer ids for MapView.tsx, plus the
 // authoritative list of layers queried for aircraft click-selection.
 // Keeping that list here (rather than inline in MapView.tsx) lets the
-// "range rings must never be selectable" rule (see #1587) be covered by a
-// plain unit test instead of a full MapLibre mount.
+// "range rings must never be selectable" rule be covered by a plain unit
+// test instead of a full MapLibre mount.
 
 export const AIRCRAFT_SOURCE_ID = "sf-aircraft";
 export const AIRCRAFT_LAYER_ID = "sf-aircraft-icons";
 // Dilated-silhouette outline for shapes whose icon_scale < 1 -- a second,
 // enlarged copy of the same per-shape SDF icon, drawn underneath
-// AIRCRAFT_LAYER_ID's real icon (#1816, following up on #1806's
-// fixed-circle version -- see MapView.tsx's AIRCRAFT_LAYER_ID paint block
-// for why the icon's own SDF icon-halo-* can't render a clean fitted ring
-// below that scale: a fixed EDGE_GAMMA shader term doesn't cancel against
-// the shrinking fontScale, so the halo overflows into a filled box).
-//
-// #1912: broadened from "selected aircraft only" to every icon_scale < 1
-// aircraft -- tar1090-style contrast against busy backgrounds (originally
-// the radar overlay's own green returns, but a general readability fix)
-// needs a permanent thin black outline on every aircraft, not just a
-// selection indicator. This one layer now serves both: a thin black
-// dilated silhouette for an unselected aircraft, the original larger white
-// one when selected (see MapView.tsx's icon-size/icon-color, both now
-// data-driven on `selected` instead of the layer being selected-only).
-// icon_scale >= 1 aircraft don't use this layer at all -- the icon's own
-// icon-halo-* is safe there (no wash bug above icon_scale 1) and now
-// always draws a thin black halo too, brightening to the same white
-// selection ring when selected (see AIRCRAFT_LAYER_ID's paint block).
+// AIRCRAFT_LAYER_ID's real icon (see MapView.tsx's AIRCRAFT_LAYER_ID paint
+// block for why the icon's own SDF icon-halo-* can't render a clean
+// fitted ring below that scale). Matches every icon_scale < 1 aircraft,
+// not just a selected one: a thin black outline unselected, the original
+// larger white ring selected, both data-driven on `selected`.
 //
 // Shares AIRCRAFT_SOURCE_ID -- no separate data-sync wiring needed. Not in
 // SELECTABLE_LAYER_IDS -- purely decorative, like TRACE_POINTS_CIRCLE_LAYER_ID.
@@ -62,15 +49,13 @@ export const TRACE_POINTS_LABEL_LAYER_ID = "sf-trace-points-label";
 export const CENTER_POINT_SOURCE_ID = "sf-center-point";
 export const CENTER_POINT_CIRCLE_LAYER_ID = "sf-center-point-circle";
 
-// Live weather radar overlay (#1896, see lib/radar.ts for the tile-URL/
-// zoom-bounds/frame-sequence/ambient-cache logic). Both the always-current
-// display and playback are built from per-frame sources+layers (
-// radarAmbientFrameId / radarPlaybackFrameId in lib/radar.ts, #1965) added
-// and removed whole (not layout-visibility-toggled) when the operator turns
+// Live weather radar overlay (see lib/radar.ts). Both the always-current
+// display and playback are built from per-frame sources+layers
+// (radarAmbientFrameId / radarPlaybackFrameId in lib/radar.ts) added and
+// removed whole (not layout-visibility-toggled) when the operator turns
 // the layer on/off, so there's a hard guarantee nothing fetches a tile
-// while off rather than relying on whether an invisible layer's source
-// still requests tiles -- so there's no fixed id constant for either one
-// here, unlike this file's other single-instance layers.
+// while off -- so there's no fixed id constant for either one here, unlike
+// this file's other single-instance layers.
 
 // The only layer(s) MapView.tsx's click handler queries for aircraft
 // selection. Range rings, the range outline, the center reference point,

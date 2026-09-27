@@ -1,5 +1,4 @@
-// Ported verbatim (same 3-line regional-indicator-symbol trick, no lookup
-// table) from shared/country_flags.py's country_flag() -- see #1848. The
+// Ported verbatim from shared/country_flags.py's country_flag(). The
 // map's aircraft list panel renders the flag client-side from
 // AircraftInfo.country_code so the WebSocket/REST payload never carries
 // extra bytes for it.
