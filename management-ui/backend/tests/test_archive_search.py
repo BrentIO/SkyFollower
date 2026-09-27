@@ -1,15 +1,8 @@
-"""
-Tests for management-ui/backend/main.py's archive search endpoints (Athena/
-Glue query layer over the archive's Parquet index).
-
-Redis, Athena, and S3 are all faked with small in-memory stand-ins rather
-than MagicMocks, since these endpoints are read-modify-write against
-records/state a single static mock return value can't reflect across a
-POST -> poll -> GET/DELETE sequence within the same test.
-
-main.py is loaded directly by file path (same workaround test_main.py
-uses) rather than via a normal package import, since the hyphen in
-"management-ui" isn't a valid Python identifier.
+"""Tests for main.py's archive search endpoints (Athena/Glue over the
+archive's Parquet index). Redis/Athena/S3 are faked with in-memory
+stand-ins (not MagicMocks) since these are read-modify-write across a
+POST -> poll -> GET/DELETE sequence. main.py is loaded by file path since
+"management-ui" isn't a valid package identifier.
 """
 
 from __future__ import annotations
@@ -42,11 +35,9 @@ _spec.loader.exec_module(ui_main)
 # ---------------------------------------------------------------------------
 
 class FakeRedis:
-    """Minimal in-memory stand-in supporting exactly what archive search
-    needs (get/set with ex/xx/keepttl, delete, sadd/srem/smembers for the
-    archive_search:index set) plus no-op stubs for script_load/evalsha,
-    since lifespan() unconditionally loads the rules/areas Lua scripts
-    regardless of which endpoints a given test actually exercises."""
+    """Minimal in-memory stand-in for what archive search needs, plus
+    no-op script_load/evalsha stubs since lifespan() always loads the
+    rules/areas Lua scripts regardless of the test."""
 
     def __init__(self):
         self.store: dict[str, str] = {}
@@ -82,11 +73,8 @@ class FakeRedis:
         return None
 
     def ft(self, index: str) -> "_FakeFt":
-        # lifespan() unconditionally ensures all three RediSearch indices
-        # exist at startup (see #934) regardless of which endpoints a given
-        # test in this file actually exercises -- archive search doesn't
-        # use search indices at all, so this just reports every index as
-        # already present and never needs create_index() to do anything.
+        # lifespan() always ensures the RediSearch indices exist (#934);
+        # archive search itself never uses them.
         return _FakeFt()
 
 
@@ -99,15 +87,9 @@ class _FakeFt:
 
 
 class FakeAthenaClient:
-    """Each start_query_execution call gets its own incrementing
-    QueryExecutionId. Defaults the new execution straight to SUCCEEDED
-    (not Athena's real initial RUNNING state) so tests using the
-    synchronous-thread patch don't spin the real poll loop against a
-    perpetually-running fake for up to two real wall-clock minutes --
-    tests that specifically need RUNNING/FAILED/timeout behavior set
-    .executions[qid]["State"] (and ["Reason"]) themselves right after
-    start_query_execution returns, before the synchronous thread's first
-    poll ever runs."""
+    """Defaults each execution to SUCCEEDED (not Athena's real RUNNING);
+    tests needing RUNNING/FAILED/timeout set .executions[qid] themselves
+    before the first poll."""
 
     def __init__(self, bucket: str = "test-bucket"):
         self._bucket = bucket
@@ -115,15 +97,10 @@ class FakeAthenaClient:
         self.started_queries: list[dict] = []
         self.stopped: list[str] = []
         self._next_id = 1
-        # QueryExecutionId -> list of data-row tuples (column order matching
-        # whatever SELECT that execution's query actually used) -- what
-        # get_query_results serves back for that id. Never touches fake_s3;
-        # this models Athena's own result-rows API, independent of the CSV
-        # file Athena separately writes to S3 for the same execution.
+        # QueryExecutionId -> data rows served by get_query_results; models
+        # Athena's result-rows API independent of the CSV it writes to S3.
         self.results: dict[str, list[tuple]] = {}
-        # Set by a test to simulate an AWS-side failure (e.g. a permissions
-        # mismatch) on the next call -- covers the 502 paths in main.py that
-        # a plain state-transition can't exercise.
+        # Set by a test to simulate an AWS-side failure on the next call.
         self.raise_on_start: Optional[Exception] = None
         self.raise_on_get_query_execution: Optional[Exception] = None
         self.raise_on_get_query_results: Optional[Exception] = None
@@ -160,11 +137,9 @@ class FakeAthenaClient:
         }
 
     def get_query_results(self, QueryExecutionId, MaxResults=1000, NextToken=None):
-        """Row 0 is always the column header (real Athena behavior, which
-        main.py's _fetch_and_cache_results skips) -- unlike real Athena,
-        MaxResults here bounds DATA rows only (not the header), matching how
-        main.py requests _RESULT_ROW_CAP + 1 to learn whether a
-        (_RESULT_ROW_CAP + 1)th row exists in a single call."""
+        """Row 0 is the column header (real Athena behavior). Unlike real
+        Athena, MaxResults here bounds data rows only, matching how main.py
+        requests _RESULT_ROW_CAP + 1 to detect a row past the cap."""
         if self.raise_on_get_query_results is not None:
             raise self.raise_on_get_query_results
         all_rows = self.results.get(QueryExecutionId, [])
@@ -215,13 +190,9 @@ def _csv_body(rows: list[tuple]) -> bytes:
 
 @contextmanager
 def _synchronous_thread():
-    """Patch threading.Thread so the polling thread runs synchronously in
-    the caller's thread instead of racing the test's own assertions
-    against a real background thread, and patch time.sleep to a no-op for
-    the same scope only -- ui_main.time is the real stdlib time module (a
-    process-wide singleton), so leaving this patch active any longer than
-    this one synchronous call risks starving anyio/ASGI internals that
-    also rely on real sleep behavior."""
+    """Runs the polling thread synchronously (no race against a real
+    background thread) and no-ops time.sleep for this scope only -- left
+    active longer, it would starve anyio/ASGI's own real sleep use."""
     class _ImmediateThread:
         def __init__(self, target=None, args=(), daemon=None, name=None):
             self._target = target
@@ -238,10 +209,9 @@ def _synchronous_thread():
 
 @contextmanager
 def _frozen_today(today: date):
-    """Pins ui_main's `datetime.now(timezone.utc)` to noon UTC on `today` --
-    create_archive_search's "tomorrow UTC" default and _resolve_search_range
-    both read the clock through this, so a test asserting an exact resolved
-    range needs it pinned rather than racing the real clock."""
+    """Pins ui_main's `datetime.now(timezone.utc)` to noon UTC on `today`,
+    since create_archive_search's default range and _resolve_search_range
+    both read the real clock otherwise."""
     class _Frozen(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -379,8 +349,7 @@ class TestQueryConstruction:
         with _frozen_today(date(2026, 9, 3)):
             _create_search(client, where_clause="icao_hex = 'A8AE7F'")
         query = fake_athena.started_queries[0]["QueryString"]
-        # No derivable timestamp predicate -> full default range
-        # (_ARCHIVE_EPOCH .. tomorrow UTC of the frozen clock).
+        # No derivable timestamp predicate -> full default range.
         assert query.startswith(
             "SELECT icao_hex, registration, type_designator, military, "
             "operator_designator, ident, first_message, last_message, s3_key "
@@ -408,8 +377,7 @@ class TestQueryConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Partition predicate generator -- coarsest-clause-per-span, from the
-# worked-examples table.
+# Partition predicate generator: coarsest-clause-per-span.
 # ---------------------------------------------------------------------------
 
 class TestPartitionPredicate:
@@ -458,9 +426,7 @@ class TestPartitionPredicate:
 
 
 # ---------------------------------------------------------------------------
-# _ARCHIVE_EPOCH must stay coupled to the Glue table's own partition
-# projection lower bound -- a range wider than the projection can never
-# match anything.
+# _ARCHIVE_EPOCH must stay coupled to the Glue projection's lower bound.
 # ---------------------------------------------------------------------------
 
 class TestArchiveEpochCoupling:
@@ -475,8 +441,7 @@ class TestArchiveEpochCoupling:
 
 # ---------------------------------------------------------------------------
 # Partition-range derivation from the WHERE clause's own timestamp
-# predicates (see _derive_bounds) -- the highest-risk part of this change.
-# Vectors mirror the issue's own "Deriving the partition range" table.
+# predicates (_derive_bounds).
 # ---------------------------------------------------------------------------
 
 class TestDeriveBounds:
@@ -545,9 +510,9 @@ class TestDeriveBounds:
 
 
 # ---------------------------------------------------------------------------
-# Timestamp literal coercion (#1439) -- a bare string literal compared
-# against first_message/last_message is rewritten into a proper
-# TIMESTAMP '...' literal so Athena doesn't reject it with TYPE_MISMATCH.
+# Timestamp literal coercion (#1439): bare string literals compared against
+# first_message/last_message are rewritten to TIMESTAMP '...' so Athena
+# doesn't reject them with TYPE_MISMATCH.
 # ---------------------------------------------------------------------------
 
 class TestCoerceTimestampLiterals:
@@ -663,9 +628,8 @@ class TestFriendlyAthenaError:
 
 
 # ---------------------------------------------------------------------------
-# Range resolution -- intersecting the archive epoch/tomorrow defaults, the
-# WHERE clause's own derived bounds (widened +/-1 day), and any explicit
-# UI-supplied range.
+# Range resolution: intersects the epoch/tomorrow defaults, the WHERE
+# clause's derived bounds (widened +/-1 day), and any explicit UI range.
 # ---------------------------------------------------------------------------
 
 class TestResolveSearchRange:
@@ -766,9 +730,8 @@ class TestDateRangeValidation:
         detail = client.get(f"/api/archive/search/{uuid}").json()
         first_query = fake_athena.started_queries[0]["QueryString"]
 
-        # Resubmit with a later frozen clock -- the persisted, already-
-        # resolved dates must be reused verbatim rather than re-resolving
-        # "tomorrow" against the new clock.
+        # Resubmit with a later clock -- persisted dates must be reused
+        # verbatim, not re-resolved against "tomorrow".
         with _frozen_today(date(2026, 12, 25)):
             second = _create_search(
                 client, name="resubmitted", where_clause="icao_hex='A445B0'",
@@ -781,9 +744,8 @@ class TestDateRangeValidation:
 
 # ---------------------------------------------------------------------------
 # Empty-intersection short-circuit: a contradiction only visible after
-# derivation must resolve to a real, zero-row COMPLETE search without ever
-# calling Athena -- distinct from the 400 above on the operator's own
-# explicit start > end.
+# derivation resolves to a zero-row COMPLETE search without calling Athena
+# (distinct from the explicit-start>end 400 above).
 # ---------------------------------------------------------------------------
 
 class TestEmptyIntersectionShortCircuit:
@@ -828,20 +790,14 @@ class TestEmptyIntersectionShortCircuit:
 
 # ---------------------------------------------------------------------------
 # Property test: partition-predicate derivation is an optimisation only --
-# it must never change which rows a query matches. Executes the ACTUAL
-# generated SQL (via sqlglot's own pure-Python executor, against an
-# in-memory table) with derivation enabled (the real, possibly-narrowed
-# partition predicate) vs. forced off (a partition predicate spanning the
-# full archive range, i.e. every partition), and asserts the two produce
-# identical row sets for every vector -- not just the worked examples, a
-# real end-to-end evaluation of the generated WHERE clause.
+# it must never change which rows a query matches. Runs the generated SQL
+# via sqlglot's executor with derivation enabled vs. forced off (full
+# archive range) and asserts identical row sets.
 # ---------------------------------------------------------------------------
 
 class TestDerivationSupersetProperty:
-    # icao_hex doubles as the row's identity for comparing result sets.
-    # year/month/day mirror what the real S3 key layout/Parquet index would
-    # carry for each row's first_message -- exactly what the partition
-    # predicate is written to filter on.
+    # icao_hex is the row identity for comparing result sets; year/month/day
+    # mirror the real partition layout the predicate filters on.
     _TABLE_ROWS = [
         {"icao_hex": "A00001", "operator_designator": "DAL", "first_message": "2022-01-01 00:00:00.000",
          "last_message": "2022-01-01 01:00:00.000", "year": "2022", "month": "01", "day": "01"},
@@ -940,10 +896,8 @@ class TestCreateAndListSearches:
         assert resp.status_code == 404
 
     def test_create_adds_uuid_to_archive_search_index(self, client, fake_redis):
-        """Listing goes through archive_search:index (SMEMBERS), not a
-        keyspace SCAN, specifically to stay cheap on a production Redis
-        with hundreds of thousands of unrelated keys -- create must keep
-        that index in sync or every search becomes invisible to list."""
+        """Listing uses archive_search:index (SMEMBERS) instead of a
+        keyspace SCAN; create must keep it in sync or list can't see it."""
         create_resp = _create_search(client)
         uuid = create_resp.json()["uuid"]
         assert uuid in fake_redis.smembers("archive_search:index")
@@ -955,10 +909,8 @@ class TestCreateAndListSearches:
         assert uuid not in fake_redis.smembers("archive_search:index")
 
     def test_list_prunes_a_stale_index_entry_for_an_already_expired_record(self, client, fake_redis):
-        """A uuid whose backing archive_search:{uuid} key has already
-        expired (7-day TTL) has no way to notify the index set directly --
-        list must self-heal by pruning it from the index the next time
-        anyone asks, not just silently omit it from the response forever."""
+        """A uuid whose backing key already expired (7-day TTL) can't
+        notify the index set -- list must self-heal by pruning it."""
         fake_redis.sadd("archive_search:index", "long-gone-uuid")
         resp = client.get("/api/archive/search")
         assert resp.status_code == 200
@@ -984,13 +936,9 @@ class TestCreateAndListSearches:
 
 class TestBackgroundPolling:
     def test_succeeded_query_marks_search_complete(self, client, fake_athena):
-        # The synchronous thread runs to completion before start_query_execution's
-        # caller (the POST handler) even returns, so seed the eventual SUCCEEDED
-        # state via a side effect: patch get_query_execution to flip state after
-        # the first call, simulating "still running on attempt 1, done by attempt 2".
-        # Simpler here: the fake starts RUNNING: flip it before the thread body
-        # even gets a chance to poll, using a wrapping Thread that mutates state
-        # first.
+        # The synchronous thread runs before start_query_execution's caller
+        # returns, so flip state to SUCCEEDED via a wrapper before the poll
+        # loop gets a chance to run.
         real_start = fake_athena.start_query_execution
 
         def start_and_complete(*a, **k):
@@ -1024,10 +972,8 @@ class TestBackgroundPolling:
         assert detail["error"] == "TABLE_NOT_FOUND"
 
     def test_timestamp_type_mismatch_gets_the_friendly_hint(self, client, fake_athena):
-        """#1439 Part B: a raw TYPE_MISMATCH between a timestamp column and
-        a string literal is rewritten into an actionable hint before it
-        reaches the operator, with the misleading line 1:NNN offset (which
-        points into the generated query, not their input) stripped."""
+        """#1439 Part B: raw TYPE_MISMATCH is rewritten into an actionable
+        hint, with the misleading line 1:NNN offset stripped."""
         real_start = fake_athena.start_query_execution
 
         def start_and_fail(*a, **k):
@@ -1049,9 +995,8 @@ class TestBackgroundPolling:
         assert "TIMESTAMP '2026-09-05 13:55:00'" in detail["error"]
 
     def test_deadline_exceeded_aborts_and_calls_stop_query_execution(self, client, fake_athena):
-        # Never reaches a terminal state; force the deadline to have
-        # already elapsed so the poll loop's `while` body never executes,
-        # going straight to the give-up path.
+        # Force the deadline already elapsed so the poll loop's `while`
+        # body never executes, going straight to the give-up path.
         with patch.object(ui_main, "ATHENA_POLL_DEADLINE_SECONDS", -1):
             resp = _create_search(client)
         uuid = resp.json()["uuid"]
@@ -1069,10 +1014,8 @@ class TestBackgroundPolling:
 
 class TestResultsRetrieval:
     def _complete_search(self, client, fake_athena, fake_s3, rows):
-        """Registers `rows` (9-field tuples, s3_key last -- same shape
-        _SEARCH_SELECT_COLUMNS produces) as what get_query_results will hand
-        back for the search's own query execution. No fake_s3 interaction at
-        all -- the paged view never reads S3."""
+        """Registers `rows` (9-field tuples, s3_key last) for
+        get_query_results to hand back; the paged view never reads S3."""
         real_start = fake_athena.start_query_execution
 
         def start_and_register(*a, **k):
@@ -1085,18 +1028,15 @@ class TestResultsRetrieval:
         return resp.json()["uuid"]
 
     def test_not_complete_returns_400(self, client):
-        # Deliberately not using _synchronous_thread() -- the real
-        # background thread hasn't run yet by the time the next line
-        # executes, so the record is still exactly as POST left it: RUNNING.
+        # No _synchronous_thread(): record stays RUNNING, as POST left it.
         resp = client.post("/api/archive/search", json={"name": "x", "where_clause": "1=1"})
         uuid = resp.json()["uuid"]
         results_resp = client.get(f"/api/archive/search/{uuid}/results")
         assert results_resp.status_code == 400
 
     def test_get_query_results_failure_returns_502_not_500(self, client, fake_athena, fake_s3):
-        """A permissions mismatch or other AWS-side failure fetching the
-        cached page window must surface as a clean 502, not an unhandled
-        500."""
+        """An AWS-side failure fetching the cached page must surface as a
+        clean 502, not an unhandled 500."""
         uuid = self._complete_search(client, fake_athena, fake_s3, rows=[])
         fake_athena.raise_on_get_query_results = Exception("AccessDeniedException: not authorized")
         resp = client.get(f"/api/archive/search/{uuid}/results")
@@ -1237,8 +1177,7 @@ class TestResultsSorting:
 
         page1 = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc&page=1").json()
         page2 = client.get(f"/api/archive/search/{uuid}/results?sort_by=icao_hex&sort_dir=desc&page=2").json()
-        # Descending across the WHOLE 150-row set: page 1 holds the top 100
-        # hex values, page 2 the bottom 50 -- not a within-page reorder.
+        # Descending across the whole 150-row set, not a within-page reorder.
         assert page1["rows"][0]["icao_hex"] == f"A{149:05X}"
         assert page1["rows"][-1]["icao_hex"] == f"A{50:05X}"
         assert page2["rows"][0]["icao_hex"] == f"A{49:05X}"
@@ -1267,9 +1206,7 @@ class TestResultsSorting:
 
 
 # ---------------------------------------------------------------------------
-# The 500/501 boundary -- the core memory-bound fix. Off-by-one is the easy
-# thing to get wrong here, so both edges (exactly the cap, one past it) get
-# their own test rather than relying on a single "big" number.
+# The 500/501 boundary -- off-by-one risk, so both edges get their own test.
 # ---------------------------------------------------------------------------
 
 def _row(i: int) -> tuple:
@@ -1311,10 +1248,8 @@ class TestResultCap:
     def test_only_501_rows_ever_requested_from_athena_regardless_of_true_match_count(
         self, client, fake_athena, fake_s3
     ):
-        """The fake models a search that "really" matched far more than 500
-        rows (Athena would never hand all of those back in one call in
-        production either) -- get_query_results must still only ever be
-        asked for _RESULT_ROW_CAP + 1."""
+        """Even with far more real matches, get_query_results must only
+        ever be asked for _RESULT_ROW_CAP + 1."""
         rows = [_row(i) for i in range(5000)]
         uuid = self._complete_search(client, fake_athena, fake_s3, rows)
 
@@ -1343,8 +1278,7 @@ class TestResultCap:
         assert "page" in beyond.json()["detail"].lower()
 
     def test_unaffected_small_result_is_byte_identical_in_shape(self, client, fake_athena, fake_s3):
-        """A 12-row match -- today's common case -- behaves exactly as
-        before, plus the new (always-False-here) `truncated` field."""
+        """A small match behaves as before, plus the new `truncated` field."""
         rows = [_row(i) for i in range(12)]
         uuid = self._complete_search(client, fake_athena, fake_s3, rows)
 
@@ -1358,10 +1292,8 @@ class TestResultCap:
     def test_encrypt_s3_key_called_at_most_page_size_times_never_per_matching_row(
         self, client, fake_athena, fake_s3
     ):
-        """Simulates far more real matches (5000) than could ever be cached
-        (500) -- a single results request must mint at most page_size
-        tokens (the whole cached window, when page_size is the 500 max),
-        never one per matching row."""
+        """A results request must mint at most page_size tokens (the cached
+        window), never one per matching row."""
         rows = [_row(i) for i in range(5000)]
         uuid = self._complete_search(client, fake_athena, fake_s3, rows)
 
@@ -1381,8 +1313,7 @@ class TestDeleteSearch:
         assert client.delete("/api/archive/search/nope").status_code == 404
 
     def test_delete_running_search_stops_query_and_removes_record(self, client, fake_athena):
-        # Deliberately not using _synchronous_thread() -- see
-        # test_not_complete_returns_400 for why this keeps the record RUNNING.
+        # No _synchronous_thread(): record stays RUNNING.
         resp = client.post("/api/archive/search", json={"name": "x", "where_clause": "1=1"})
         uuid = resp.json()["uuid"]
 
@@ -1414,10 +1345,8 @@ class TestDeleteSearch:
     def test_delete_removes_download_query_result_and_metadata_sidecars(
         self, client, fake_athena, fake_s3
     ):
-        """A search that's had "Download CSV" clicked at least once has a
-        second, separate Athena query execution (download_query_execution_id)
-        with its own result file -- delete must clean that up too, not just
-        the paged-view query's result."""
+        """A "Download CSV" click creates a second Athena query execution
+        with its own result file -- delete must clean that up too."""
         uuid = TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows=[])
         download_resp = client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
         assert download_resp.status_code == 307
@@ -1436,17 +1365,15 @@ class TestDeleteSearch:
     def test_delete_without_download_never_queried_only_cleans_main_result(
         self, client, fake_athena, fake_s3
     ):
-        """No "Download CSV" click ever happened -- download_query_execution_id
-        is unset, so delete must not attempt to clean up a download result
-        that never existed."""
+        """No "Download CSV" click -- delete must not try to clean up a
+        download result that never existed."""
         uuid = TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows=[])
         client.delete(f"/api/archive/search/{uuid}")
         assert len(fake_s3.deleted) == 2  # main result + its .metadata only
 
     def test_failed_s3_cleanup_still_deletes_redis_record(self, client, fake_athena, fake_s3):
-        """A failed S3/Athena cleanup is best-effort -- it must not block
-        removing the Redis record, for either the main result or the
-        download result."""
+        """A failed S3/Athena cleanup is best-effort -- must not block
+        removing the Redis record."""
         uuid = TestResultsRetrieval()._complete_search(client, fake_athena, fake_s3, rows=[])
         client.get(f"/api/archive/search/{uuid}/download", follow_redirects=False)
         fake_athena.raise_on_get_query_execution = RuntimeError("boom")
@@ -1457,10 +1384,9 @@ class TestDeleteSearch:
         assert client.get(f"/api/archive/search/{uuid}").status_code == 404
 
     def test_thread_resurrection_guard_xx_prevents_late_write_after_delete(self, client, fake_redis):
-        """A background poll write landing after DELETE already removed
-        the key must be a silent no-op, not a resurrection -- exercised
-        directly against _update_search_record since the real race is
-        timing-dependent and not reliably reproducible via HTTP alone."""
+        """A background poll write landing after DELETE must be a silent
+        no-op, not a resurrection. Exercised directly since the real race
+        is timing-dependent."""
         resp = _create_search(client)
         uuid = resp.json()["uuid"]
         client.delete(f"/api/archive/search/{uuid}")
@@ -1472,8 +1398,8 @@ class TestDeleteSearch:
 
 
 # ---------------------------------------------------------------------------
-# Download -- always S3-direct via a presigned URL, for every result size,
-# backed by a second, sanitized query that never selects s3_key.
+# Download: S3-direct via a presigned URL, backed by a second, sanitized
+# query that never selects s3_key.
 # ---------------------------------------------------------------------------
 
 class TestDownload:
@@ -1501,8 +1427,7 @@ class TestDownload:
         search_query = fake_athena.started_queries[0]["QueryString"]
         download_query = fake_athena.started_queries[1]["QueryString"]
 
-        # Same partition predicate + where_clause as the original search --
-        # everything from WHERE onward is byte-identical between the two.
+        # Everything from WHERE onward is byte-identical between the two.
         assert search_query.split(" WHERE ", 1)[1] == download_query.split(" WHERE ", 1)[1]
 
         select_clause = download_query.split(" FROM ", 1)[0]
@@ -1511,9 +1436,7 @@ class TestDownload:
             "icao_hex, registration, type_designator, military, operator_designator, ident, "
             "first_message, last_message"
         )
-        # Today's nine columns, in today's order, uuid first -- and s3_key
-        # is never a standalone selected column (only an argument to
-        # regexp_extract, which must reference it to derive uuid at all).
+        # s3_key is never a standalone selected column, only regexp_extract's arg.
         assert select_clause.count("s3_key") == 1
 
     def test_download_returns_a_307_redirect_to_a_presigned_s3_url(self, client, fake_athena, fake_s3):
@@ -1524,8 +1447,7 @@ class TestDownload:
         assert len(fake_s3.presigned_calls) == 1
         call = fake_s3.presigned_calls[0]
         assert call["ExpiresIn"] == ui_main._DOWNLOAD_PRESIGN_TTL_SECONDS
-        # The friendly download filename must never leak the real S3 key
-        # layout either -- it's derived from the search's own name + uuid.
+        # The download filename must not leak the real S3 key layout.
         content_disposition = call["Params"]["ResponseContentDisposition"]
         assert "flights/" not in content_disposition
         assert "test-bucket" not in content_disposition
@@ -1545,11 +1467,9 @@ class TestDownload:
     def test_downloaded_object_contains_no_s3_path_and_a_bare_uuid_first_column(
         self, client, fake_athena, fake_s3
     ):
-        """Models what Athena would actually write for the download query
-        (uuid first, no s3_key/bucket/date-folder path anywhere) and
-        confirms the presigned redirect points at exactly that object --
-        the backend never transforms the object in transit, so what's
-        written is what a browser following the redirect would receive."""
+        """The presigned redirect must point at exactly what Athena wrote
+        (uuid first, no s3_key/path) -- the backend never transforms it
+        in transit."""
         uuid = self._complete_search(client, fake_athena, fake_s3)
 
         real_start = fake_athena.start_query_execution
@@ -1609,10 +1529,8 @@ class TestDownload:
         assert resp.status_code == 502
 
     def test_legacy_record_missing_date_fields_still_downloads(self, client, fake_athena, fake_s3, fake_redis):
-        """A search record written before start_date/end_date existed (see
-        ArchiveSearchDetail's Optional fields) must still be downloadable --
-        falls back to the full archive range, same as create_archive_search's
-        own default for an omitted explicit bound."""
+        """A record written before start_date/end_date existed must still
+        be downloadable, falling back to the full archive range."""
         fake_redis.store["archive_search:legacy-uuid"] = json.dumps({
             "name": "legacy", "where_clause": "icao_hex = 'A8AE7F'", "status": "COMPLETE",
             "submitted_at": "2026-01-01T00:00:00+00:00", "query_execution_id": "exec-old",
@@ -1644,10 +1562,8 @@ class TestFlightFetch:
         assert resp.status_code == 400
 
     def test_missing_flight_object_returns_502_not_500(self, client, fake_s3):
-        """A valid token whose flight object is gone (404/NoSuchKey) or
-        unreachable (e.g. a permissions mismatch, 403) must surface as a
-        clean 502 -- the same AWS-error contract as every other archive
-        endpoint -- not an unhandled 500."""
+        """A missing/unreachable flight object must surface as a clean
+        502, same as every other archive endpoint, not a 500."""
         s3_key = "flights/2026/07/31/uuid.json.gz"
         token = ui_main._encrypt_s3_key(s3_key)  # never written to fake_s3.objects
 
@@ -1680,10 +1596,8 @@ def _put_flight_record(fake_s3, s3_key: str, record: dict) -> str:
     return ui_main._encrypt_s3_key(s3_key)
 
 
-# A real archived flight's `aircraft` field is merge_aircraft.lua's
-# unflattened output: type/category/manufacturer/powerplant/etc. live one
-# level deeper, under aircraft.aircraft, alongside the flat
-# registration/registrant/icao_hex at the top.
+# merge_aircraft.lua's unflattened output: type/category/powerplant/etc.
+# live under aircraft.aircraft, alongside flat registration/icao_hex.
 _NESTED_AIRCRAFT = {
     "icao_hex": "A471E0",
     "registration": "N386DA",
@@ -1751,9 +1665,8 @@ class TestFlightView:
             assert body[field] is None
 
     def test_registrant_is_read_from_flight_not_aircraft(self, client, fake_s3):
-        """registrant is a sibling of aircraft/operator on CompletedFlight
-        (an entity, the aircraft's legal owner -- not a property of the
-        airframe), not nested inside aircraft."""
+        """registrant is a sibling of aircraft/operator on CompletedFlight,
+        not nested inside aircraft."""
         s3_key = "flights/2026/07/31/uuid3.json.gz"
         registrant = {"names": ["Delta Air Lines Inc"], "city": "Atlanta", "country": "US"}
         token = _put_flight_record(fake_s3, s3_key, {
@@ -1769,9 +1682,8 @@ class TestFlightView:
         assert resp.json()["registrant"] == registrant
 
     def test_registrant_nested_inside_aircraft_is_not_leaked(self, client, fake_s3):
-        """A stale/legacy-shaped record with registrant still nested inside
-        aircraft (the pre-#1416 shape) must not surface it -- get_archive_flight_view
-        reads registrant off the flight record itself, not the aircraft dict."""
+        """A stale record with registrant still nested inside aircraft
+        (pre-#1416 shape) must not surface it."""
         s3_key = "flights/2026/07/31/uuid4.json.gz"
         token = _put_flight_record(fake_s3, s3_key, {
             "aircraft": {"icao_hex": "A8AE7F", "registrant": {"names": ["Stale Nested Corp"]}},
@@ -1815,8 +1727,7 @@ class TestFlightView:
 
     def test_flight_path_carries_coord_times_and_speeds(self, client, fake_s3):
         """#1441: get_archive_flight_view must pass velocities into
-        build_flight_path, not just positions -- coordSpeeds only appears
-        when velocities is explicitly passed."""
+        build_flight_path, or coordSpeeds never appears."""
         s3_key = "flights/2026/07/31/uuid7.json.gz"
         token = _put_flight_record(fake_s3, s3_key, {
             "aircraft": {"icao_hex": "A8AE7F"},
@@ -1936,11 +1847,8 @@ class TestStartupReconciliation:
             "name": "old search", "where_clause": "1=1", "status": "RUNNING",
             "submitted_at": "2026-01-01T00:00:00+00:00", "query_execution_id": "exec-old",
         })
-        # Mirrors what create_archive_search itself keeps in sync -- the
-        # reconciliation sweep now enumerates archive_search:index rather
-        # than scanning the whole keyspace, so a record injected directly
-        # into .store without also being indexed here would (correctly)
-        # never be found by it.
+        # The reconciliation sweep enumerates archive_search:index rather
+        # than scanning the keyspace, so this must be indexed too.
         fake_redis.sadd("archive_search:index", "stuck-uuid")
 
         class FakeSession:
@@ -1999,8 +1907,7 @@ class TestUuidFromS3Key:
     _UUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
     def test_extracts_well_formed_uuid_from_current_simplified_key_shape(self):
-        """Current key layout: flights/{Y}/{M}/{D}/{uuid}.json.gz -- no
-        icao_hex/ident prefix."""
+        """Current key layout: flights/{Y}/{M}/{D}/{uuid}.json.gz."""
         key = "flights/2026/07/31/0198abcd-1234-7abc-8def-1234567890ab.json.gz"
         extracted = ui_main._uuid_from_s3_key(key)
         assert extracted
@@ -2008,9 +1915,8 @@ class TestUuidFromS3Key:
 
     def test_extracts_well_formed_uuid_from_legacy_key_shape(self):
         """Legacy key layout: flights/{Y}/{M}/{D}/{icao_hex}_{ident}_{uuid}.json.gz
-        -- extraction must anchor on the uuid immediately before ".json.gz",
-        not just strip the suffix off the whole filename (which would wrongly
-        include the icao_hex/ident prefix)."""
+        -- must anchor on the uuid before ".json.gz", not strip the suffix
+        off the whole filename."""
         key = "flights/2026/07/31/A8AE7F_DAL123_0198abcd-1234-7abc-8def-1234567890ab.json.gz"
         extracted = ui_main._uuid_from_s3_key(key)
         assert extracted

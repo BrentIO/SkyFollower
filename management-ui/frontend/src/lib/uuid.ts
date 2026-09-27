@@ -1,14 +1,6 @@
-// Generates a RFC 4122 version 4 UUID string.
-//
-// Deliberately built on `crypto.getRandomValues()` rather than
-// `crypto.randomUUID()`: the latter is only exposed in a secure context
-// (HTTPS or `http://localhost`), so it is `undefined` on a plain-HTTP LAN
-// deployment served from an IP address and every call throws. The former
-// has no secure-context requirement and is available on every origin.
-//
-// These IDs are purely ephemeral client-side bookkeeping (e.g. Terra Draw's
-// per-feature `id`); they are never persisted or sent to the backend as an
-// area's real `identifier`.
+// Generates an RFC 4122 v4 UUID via crypto.getRandomValues() rather than
+// crypto.randomUUID(), which is undefined outside a secure context (e.g. a
+// plain-HTTP LAN deployment served from an IP address).
 
 const HEX: string[] = Array.from({ length: 256 }, (_, i) =>
   i.toString(16).padStart(2, "0"),

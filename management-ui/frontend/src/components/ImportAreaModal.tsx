@@ -7,14 +7,9 @@ interface ImportAreaModalProps {
   onCancel: () => void;
 }
 
-// Counterpart to AreasView.tsx's own Export/"Export all" actions -- imports
-// one or more areas from a GeoJSON FeatureCollection (drag-drop,
-// click/tap-to-browse, or direct paste into the textbox). Structural
-// validation (parseAndValidate) is a whole-file hard gate shared with the
-// batch importer. Per-feature identifier/name resolution -- the
-// single-feature fallback to AreaNameModal, and the multi-feature
-// auto-suffix -- lives in AreasView.tsx (the parent); this component's only
-// job is getting a validated feature array out to its onImport callback.
+// Counterpart to AreasView's Export actions. parseAndValidate is the
+// structural hard gate; per-feature identifier/name resolution lives in
+// AreasView.tsx -- this component only surfaces a validated feature array.
 export function ImportAreaModal({ open, onImport, onCancel }: ImportAreaModalProps) {
   const [text, setText] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
@@ -43,9 +38,8 @@ export function ImportAreaModal({ open, onImport, onCancel }: ImportAreaModalPro
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== "string") return;
-      // Pretty-print only applies to file-derived population -- a direct
-      // edit/paste into the textbox is re-validated as-is, not reformatted
-      // out from under the user while they're typing.
+      // Pretty-print only applies to file uploads; pasted/typed text is
+      // re-validated as-is, not reformatted out from under the user.
       try {
         setText(JSON.stringify(JSON.parse(reader.result), null, 2));
       } catch {

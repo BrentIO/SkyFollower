@@ -4,38 +4,27 @@ import { geometryDisplayNoun, type AreaGeometry } from "../api/areas";
 interface AreaNameModalProps {
   open: boolean;
   existingIdentifiers: string[];
-  // Pre-fills Name (and, via the usual auto-fill, Identifier) when the
-  // modal opens -- used by the "Duplicate" action to suggest "<original
-  // name> copy" instead of starting blank like a freshly drawn shape.
+  // Pre-fills Name/Identifier; used by "Duplicate" to suggest "<name> copy"
+  // instead of starting blank like a freshly drawn shape.
   initialName?: string;
-  // Drives the modal's title ("Name this area"/"line"/"point") -- the
-  // pending shape's actual geometry type, known by both call sites
-  // (a fresh draw, or Duplicate) before the modal ever opens.
+  // Drives the modal's title ("Name this area"/"line"/"point").
   geometryType: AreaGeometry["type"];
   onConfirm: (identifier: string, name: string) => void;
   onCancel: () => void;
 }
 
-// non-empty, no whitespace -- matches the backend's _IDENTIFIER_PATTERN.
-// Exported so ImportAreaModal's parent (AreasView.tsx) can apply the exact
-// same rule when deciding whether an imported feature's properties.identifier
-// is usable as-is, without duplicating the regex.
+// Non-empty, no whitespace -- matches the backend's _IDENTIFIER_PATTERN.
+// Exported so AreasView.tsx can apply the same rule to imported identifiers.
 export const IDENTIFIER_PATTERN = /^\S+$/;
 
-// Replaces spaces with underscores, then drops anything else non-whitespace
-// rules wouldn't already allow -- same auto-fill-from-Name convenience
-// RuleForm.tsx's sanitizeIdentifier gives rule identifiers. Exported for
-// the same reason as IDENTIFIER_PATTERN: the bulk-import auto-resolver in
-// lib/areaImport.ts derives identifiers from names the same way this modal
-// does, so it shares the exact function rather than reimplementing it.
+// Exported so lib/areaImport.ts's bulk-import resolver derives identifiers
+// from names the same way, without reimplementing the rule.
 export function sanitizeIdentifier(raw: string): string {
   return raw.replace(/\s/g, "_");
 }
 
-// Shown once a new polygon is drawn on the map (see AreasView.tsx's
-// draw.create handler) -- collects the two fields Area requires beyond
-// geometry: `identifier` (routing key, no spaces, immutable after creation)
-// and `name` (free-text display label, editable later in the side panel).
+// Collects the two fields Area requires beyond geometry: `identifier`
+// (routing key, no spaces, immutable) and `name` (editable display label).
 export function AreaNameModal({
   open,
   existingIdentifiers,
@@ -48,9 +37,7 @@ export function AreaNameModal({
   const [identifier, setIdentifier] = useState("");
   const [identifierManuallyEdited, setIdentifierManuallyEdited] = useState(false);
 
-  // Seeds Name/Identifier fresh each time the modal opens (open toggles
-  // false between uses, since it's tied to a single pending-feature id) --
-  // blank for a freshly drawn shape, "<name> copy" for a duplicate.
+  // Seeds Name/Identifier fresh each time the modal opens.
   useEffect(() => {
     if (open) {
       setName(initialName ?? "");

@@ -1,11 +1,8 @@
 import { apiClient } from "./client";
 
-// Mirrors management-ui/backend/main.py's Condition/Rule Pydantic models
-// (see also CLAUDE.md's Conditions table). `value` is a string for every
-// type except `matched_rules` (a list of rule identifiers) and
-// `receiver_source` (a list of 1-2 of "1090"/"978"/"EXTERNAL") -- matching
-// SkyFollower-legacy's convention (altitude "10000", military "true",
-// heading "340,020" for min,max wrap-around).
+// Mirrors management-ui/backend/main.py's Condition/Rule Pydantic models (see
+// CLAUDE.md's Conditions table). `value` is a string for every type except
+// `matched_rules` and `receiver_source`, which are string lists.
 export const CONDITION_TYPES = [
   "altitude",
   "heading",
@@ -32,9 +29,8 @@ export const OPERATORS = ["equals", "minimum", "maximum", "in_list", "not_in_lis
 
 export type Operator = (typeof OPERATORS)[number];
 
-// Display labels for the operator dropdown -- `in_list`/`not_in_list` only
-// ever apply to `matched_rules` (see OPERATORS_BY_TYPE below), where
-// "includes"/"excludes" reads far better than the raw wire values.
+// `in_list`/`not_in_list` only ever apply to `matched_rules`, where
+// "includes"/"excludes" reads better than the raw wire values.
 export const OPERATOR_LABELS: Record<Operator, string> = {
   equals: "equals",
   minimum: "minimum",
@@ -43,12 +39,9 @@ export const OPERATOR_LABELS: Record<Operator, string> = {
   not_in_list: "excludes",
 };
 
-// Which operators are valid for each condition type -- mirrors CLAUDE.md's
-// Conditions table (aircraft_powerplant_count allows `equals` too, unlike
-// the other numeric range fields -- message-processor/rules_engine.py's
-// _validate_aircraft_powerplant_count imposes no operator restriction of
-// its own). Server-side `400` is still authoritative; this only drives
-// which choices the operator dropdown offers.
+// Mirrors CLAUDE.md's Conditions table; drives the operator dropdown only --
+// the backend's 400 is still authoritative. aircraft_powerplant_count allows
+// `equals` too, unlike the other numeric range fields.
 export const OPERATORS_BY_TYPE: Record<ConditionType, readonly Operator[]> = {
   altitude: ["minimum", "maximum"],
   velocity: ["minimum", "maximum"],
@@ -74,11 +67,8 @@ export const WAKE_TURBULENCE_CATEGORIES = ["light", "medium", "heavy"] as const;
 export type WakeTurbulenceCategory = (typeof WAKE_TURBULENCE_CATEGORIES)[number];
 
 export interface Condition {
-  // "" only ever appears transiently client-side, for a newly-added
-  // condition row that hasn't had a type chosen yet (see RuleForm.tsx's
-  // newCondition()) -- validateRule() rejects it before a save can reach
-  // the API, so a Condition actually sent over the wire always has a real
-  // ConditionType.
+  // "" is a transient client-side state for a newly-added row with no type
+  // chosen yet; validateRule() rejects it before a save reaches the API.
   type: ConditionType | "";
   operator: Operator;
   value: string | string[];
@@ -91,8 +81,7 @@ export interface Rule {
   enabled: boolean;
   force_archive: boolean;
   conditions: Condition[];
-  // Response-only: computed fresh by the backend on every GET, never sent
-  // on create/update. Absent on a brand-new unsaved rule.
+  // Response-only, computed fresh on every GET; never sent on create/update.
   triggered_lifetime?: number;
   triggered_last_30_days?: number;
 }

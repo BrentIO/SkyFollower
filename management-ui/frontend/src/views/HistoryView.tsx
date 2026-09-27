@@ -20,9 +20,7 @@ import { ApiError } from "../api/client";
 import { useToast } from "../hooks/useToast";
 import { nextSortState, type ResultsSortState } from "../lib/resultsSort";
 
-// A couple of seconds' interval, per the design -- frequent enough that
-// RUNNING -> COMPLETE/FAILED/ABORTED feels live, not so frequent it hammers
-// the backend (which itself only polls Athena on the same kind of cadence).
+// Frequent enough that RUNNING -> COMPLETE/FAILED/ABORTED feels live, not so frequent it hammers the backend.
 const POLL_INTERVAL_MS = 3000;
 
 type BadgeColor = "yellow" | "green" | "red" | "slate";
@@ -55,26 +53,17 @@ function StatusBadge({ status }: { status: ArchiveSearchSummary["status"] }) {
   }
 }
 
-// Athena returns "YYYY-MM-DD HH:MM:SS.sss" (UTC, no offset) -- swapping in
-// "T"/"Z" makes it a real ISO string every browser's Date parser accepts,
-// so the table can show it in the reader's own locale like everything
-// else in this app rather than Athena's raw wire format.
+// Athena returns "YYYY-MM-DD HH:MM:SS.sss" (UTC, no offset); swapping in "T"/"Z" makes it an ISO string every browser's Date parser accepts.
 function formatAthenaTimestamp(raw: string): string {
   const parsed = new Date(raw.replace(" ", "T") + "Z");
   return Number.isNaN(parsed.getTime()) ? raw : parsed.toLocaleString();
 }
 
-// Default results-table page size.
 const DEFAULT_PAGE_SIZE = 100;
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
 
-// Every column header in the results table that's sortable, in display
-// order -- mirrors main.py's _SORTABLE_COLUMNS. `military` is deliberately
-// not listed here -- it no longer has its own column (the badge now lives
-// inline in Operator), and it was never a commonly-used sort relative to
-// registration/ident/operator, so no replacement sort affordance is
-// offered. It remains a valid ArchiveSearchSortColumn/backend sort option
-// even though no UI control reaches it.
+// Sortable columns, in display order; mirrors the backend's list. `military` is deliberately omitted -- it no longer has its own
+// column (badge now inline in Operator) and remains a valid sort option with no UI control reaching it.
 const SORTABLE_COLUMNS: { column: ArchiveSearchSortColumn; label: string }[] = [
   { column: "registration", label: "Registration" },
   { column: "icao_hex", label: "ICAO Hex" },
@@ -85,10 +74,8 @@ const SORTABLE_COLUMNS: { column: ArchiveSearchSortColumn; label: string }[] = [
   { column: "last_message", label: "Last Message" },
 ];
 
-// Sort state folded into the cache key alongside uuid/page/page-size --
-// the same page number under a different sort order is different data.
-// "none" stands in for the unsorted (server-default) order so it never
-// collides with a real column name.
+// Sort state is folded into the cache key -- the same page under a different sort is different data. "none" stands in for
+// unsorted so it never collides with a real column name.
 function resultsCacheKey(uuid: string, page: number, pageSize: number, sort: ResultsSortState | null): string {
   return `${uuid}:${page}:${pageSize}:${sort ? `${sort.column}:${sort.dir}` : "none"}`;
 }
@@ -105,10 +92,8 @@ interface SearchResultsPanelProps {
   onSortChange: (column: ArchiveSearchSortColumn) => void;
   onViewFlight: (token: string) => void;
   onDownloadFlight: (token: string) => void;
-  // Carries where_clause plus the RESOLVED start_date/end_date actually
-  // queried -- fetched lazily per search (see HistoryView's detail-fetch
-  // effect), regardless of status, since the resolved range may have come
-  // from derivation rather than anything the operator typed.
+  // where_clause plus the RESOLVED start_date/end_date actually queried; fetched lazily regardless of status since the
+  // range may be derived, not operator-typed.
   detail: ArchiveSearchDetail | null;
   detailLoading: boolean;
   onResubmit: () => void;
@@ -116,8 +101,7 @@ interface SearchResultsPanelProps {
   onDownloadCsv: () => void;
 }
 
-// "2022-01-01 to 2026-09-04 (UTC)" -- absent entirely for a legacy record
-// with no persisted range (both fields null).
+// Renders e.g. "2022-01-01 to 2026-09-04 (UTC)"; absent for a legacy record with no persisted range.
 function RequestedRangeNote({ detail, loading }: { detail: ArchiveSearchDetail | null; loading: boolean }) {
   if (loading || detail === null) return null;
   if (!detail.requested_start_date && !detail.requested_end_date) return null;
@@ -129,8 +113,7 @@ function RequestedRangeNote({ detail, loading }: { detail: ArchiveSearchDetail |
   );
 }
 
-// One clickable, sortable column header -- shows an up/down chevron only
-// for the currently active column so an inactive header stays uncluttered.
+// Shows an up/down chevron only for the currently active column, so inactive headers stay uncluttered.
 function SortableColumnHeader({
   label,
   column,
@@ -158,11 +141,8 @@ function SortableColumnHeader({
   );
 }
 
-// The submitted WHERE clause, labeled and in a <pre> block -- shown for
-// FAILED/ABORTED searches (inside FailedSearchDetail) and, per this view's
-// design, above a COMPLETE search's results table too, so the text behind
-// any search's results looks the same wherever it's shown. Fetched lazily
-// per search (see HistoryView's detail-fetch effect), regardless of status.
+// Shown for FAILED/ABORTED and above a COMPLETE search's results table, so the submitted WHERE clause looks the same everywhere.
+// Fetched lazily regardless of status.
 function WhereClauseBlock({
   detail,
   detailLoading,
@@ -198,10 +178,7 @@ function WhereClauseBlock({
   );
 }
 
-// Shown for a FAILED or ABORTED search: the reason, the WHERE clause and
-// resolved date range that were submitted (fetched lazily -- see
-// HistoryView's detail-fetch effect), and a way to try again without
-// retyping either from scratch.
+// Shown for a FAILED/ABORTED search: reason, submitted WHERE clause/resolved range, and a way to resubmit without retyping.
 function FailedSearchDetail({
   reason,
   detail,
@@ -234,8 +211,7 @@ function FailedSearchDetail({
   );
 }
 
-// Shared between the desktop right panel and the mobile accordion -- same
-// content either way, only the surrounding layout differs.
+// Shared between the desktop right panel and the mobile accordion; only the surrounding layout differs.
 function SearchResultsPanel({
   search,
   results,
@@ -297,9 +273,7 @@ function SearchResultsPanel({
     );
   } else {
     const totalPages = Math.max(1, Math.ceil(results.total_rows / pageSize));
-    // total_rows is exact when not truncated, and the cache cap when it is
-    // (the true count beyond the cap is never computed -- see the truncation
-    // note below).
+    // total_rows is exact when not truncated, and the cache cap when it is -- the true count beyond the cap is never computed.
     const resultCountLabel = results.truncated
       ? `${results.total_rows.toLocaleString()}+ results`
       : `${results.total_rows.toLocaleString()} result${results.total_rows === 1 ? "" : "s"}`;
@@ -407,9 +381,7 @@ function SearchResultsPanel({
               </select>
             </label>
 
-            {/* Prev/Next as large, equal-width touch targets on mobile with
-                the page label between them; desktop reverts to the original
-                compact inline sizing. */}
+            {/* Prev/Next as large touch targets on mobile; desktop reverts to compact inline sizing. */}
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -439,10 +411,7 @@ function SearchResultsPanel({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Shared across every status (including the empty-results state) so
-          whichever search is selected is always named at the top of the
-          panel -- the status badge intentionally does not appear here; it
-          belongs only on the saved-search list's own name/badge row. */}
+      {/* Shared across every status so the selected search is always named here; the status badge stays only on the list row. */}
       <div className="w-full min-w-0 shrink-0 border-b border-slate-200 px-4 py-3 dark:border-slate-700">
         <h2 className="truncate text-base font-semibold text-slate-700 dark:text-slate-200" title={search.name}>
           {search.name}
@@ -468,25 +437,18 @@ export function HistoryView() {
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ArchiveSearchSummary | null>(null);
   const [deletingSearch, setDeletingSearch] = useState(false);
-  // Per-search where_clause + resolved start_date/end_date, fetched lazily
-  // (see the detail-fetch effect below) regardless of status -- needed for
-  // FAILED/ABORTED's "Edit & Resubmit" and to show the resolved range next
-  // to any search's results, since that range may have come from
-  // derivation rather than anything the operator typed.
+  // Per-search where_clause + resolved date range, fetched lazily regardless of status -- needed for "Edit & Resubmit" and to
+  // show the resolved range, which may be derived rather than operator-typed.
   const [searchDetailCache, setSearchDetailCache] = useState<Record<string, ArchiveSearchDetail>>({});
   const [detailLoading, setDetailLoading] = useState(false);
-  // Seeds the New Search modal when resubmitting a failed/aborted search or
-  // duplicating any search; null for a blank "+ New Search" open. `title`
-  // is set explicitly by whichever handler populates the seed rather than
-  // inferred from its presence -- both flows populate a non-null seed, so
-  // inferring from presence alone can't tell them apart.
+  // Seeds the New Search modal for resubmit/duplicate; null for a blank open. `title` is set explicitly since both flows
+  // populate a non-null seed, so presence alone can't distinguish them.
   const [searchModalSeed, setSearchModalSeed] = useState<
     { title: string; name: string; whereClause: string; startDate: string; endDate: string } | null
   >(null);
 
   const selectedSearch = searches.find((s) => s.uuid === selectedUuid) ?? null;
 
-  // Initial load.
   useEffect(() => {
     let cancelled = false;
     listArchiveSearches()
@@ -514,8 +476,7 @@ export function HistoryView() {
           if (!cancelled) setSearches(updated);
         })
         .catch(() => {
-          // Transient poll failure -- this effect re-runs on the next
-          // render regardless, so the next tick just retries.
+          // Transient poll failure -- this effect re-runs regardless, so the next tick retries.
         });
     }, POLL_INTERVAL_MS);
     return () => {
@@ -524,9 +485,8 @@ export function HistoryView() {
     };
   }, [searches]);
 
-  // Fetch results for the selected search once it's COMPLETE, or when the
-  // page, page size, or sort changes -- cached per-uuid/page/page-size/sort
-  // so switching back to an already-viewed combination doesn't refetch.
+  // Fetches results once COMPLETE, or when page/page-size/sort changes; cached per-uuid/page/page-size/sort so a
+  // revisited combination doesn't refetch.
   useEffect(() => {
     if (!selectedSearch || selectedSearch.status !== "COMPLETE") return;
     const cacheKey = resultsCacheKey(selectedSearch.uuid, resultsPage, resultsPageSize, resultsSort);
@@ -554,11 +514,8 @@ export function HistoryView() {
     };
   }, [selectedSearch?.uuid, selectedSearch?.status, resultsPage, resultsPageSize, resultsSort]);
 
-  // Fetch the submitted WHERE clause and resolved date range for whichever
-  // search is selected, regardless of status -- FAILED/ABORTED needs it for
-  // "Edit & Resubmit", and every status shows the resolved range next to
-  // its results, since that range may have come from derivation rather
-  // than anything the operator typed. Cached per-uuid like results above.
+  // Fetches the WHERE clause/resolved range for the selected search regardless of status; FAILED/ABORTED needs it for "Edit & Resubmit".
+  // Cached per-uuid like results above.
   useEffect(() => {
     if (!selectedSearch) return;
     if (searchDetailCache[selectedSearch.uuid]) return;
@@ -586,16 +543,13 @@ export function HistoryView() {
     setResultsPage(1);
   }
 
-  // Changing the page size invalidates the current page number -- e.g. page
-  // 3 at 25/page may no longer exist at 200/page -- so always snap back to
-  // page 1 rather than risk landing out of range.
+  // Changing page size can invalidate the current page number (e.g. page 3 at 25/page doesn't exist at 200/page), so snap back to page 1.
   function handlePageSizeChange(pageSize: number) {
     setResultsPageSize(pageSize);
     setResultsPage(1);
   }
 
-  // A new sort order re-ranks the entire result set, so whatever page
-  // number was showing may no longer make sense -- snap back to page 1.
+  // A new sort order re-ranks the whole result set, so snap back to page 1.
   function handleSortChange(column: ArchiveSearchSortColumn) {
     setResultsSort((current) => nextSortState(current, column));
     setResultsPage(1);
@@ -621,9 +575,7 @@ export function HistoryView() {
   function handleResubmit(search: ArchiveSearchSummary) {
     const detail = searchDetailCache[search.uuid];
     if (detail === undefined) return;
-    // Carries the persisted, already-RESOLVED dates forward verbatim (not
-    // re-derived) -- see main.py's create_archive_search docstring on why
-    // dropping these here would silently change what the resubmit matches.
+    // Carries the persisted, already-RESOLVED dates forward verbatim; re-deriving them here would silently change what the resubmit matches.
     setSearchModalSeed({
       title: "Resubmit Search",
       name: search.name,
@@ -634,11 +586,7 @@ export function HistoryView() {
     setNewSearchModalOpen(true);
   }
 
-  // Pre-fills the New Search dialog from an existing search's WHERE clause
-  // and resolved date range, same as handleResubmit, except the Name field
-  // is left blank and this always creates a brand new, independent search
-  // rather than editing in place -- available for every status (COMPLETE
-  // included), not just FAILED/ABORTED.
+  // Same as handleResubmit, but leaves Name blank and creates a brand new independent search; available for every status, not just FAILED/ABORTED.
   function handleDuplicate(detail: ArchiveSearchDetail) {
     setSearchModalSeed({
       title: "New Search",
@@ -650,13 +598,8 @@ export function HistoryView() {
     setNewSearchModalOpen(true);
   }
 
-  // A real browser navigation (new tab), not a fetch() -- the endpoint 307s
-  // to a presigned S3 URL, and only a real navigation follows that without
-  // the S3 bucket needing its own CORS policy (see archiveSearchDownloadUrl).
-  // One code path for every result size: the backend re-runs the search via
-  // a second, sanitized query and serves the CSV straight from S3, so this
-  // never reads the result set into the browser at all, unlike the paged
-  // table view's capped, in-memory cache.
+  // A real browser navigation, not fetch(): the endpoint 307s to a presigned S3 URL, which only a navigation follows without the
+  // bucket needing its own CORS policy. Same code path regardless of result size -- the backend serves the CSV straight from S3.
   function handleDownloadCsv(search: ArchiveSearchSummary) {
     window.open(archiveSearchDownloadUrl(search.uuid), "_blank");
   }

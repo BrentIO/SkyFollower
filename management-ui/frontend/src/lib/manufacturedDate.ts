@@ -1,18 +1,6 @@
-// Formats an aircraft's manufactured_date (ISO 8601 UTC datetime, e.g.
-// "2019-01-01T00:00:00Z") for display on /lookup and /history.
-//
-// Most contributing registries only publish a 4-digit year, and the
-// runner that ingests them synthesizes "{year}-01-01T00:00:00Z" -- so a
-// January 1st value almost always means "year precision only" rather than
-// an aircraft that genuinely rolled out of the factory on New Year's Day.
-// Any time-of-day on January 1st counts as year-only (hours/minutes/
-// seconds are ignored); this is a deliberate widening of "midnight exactly"
-// to "any time that day", since the synthesized value's clock component
-// carries no information either way.
-//
-// Computed in UTC (not local time) so the Jan-1 classification doesn't
-// shift for viewers in a negative UTC offset, where a bare `Date.getMonth()`
-// could roll a UTC Jan-1 timestamp back into "December 31" locally.
+// Most registries only publish a year; ingestion synthesizes "{year}-01-01T00:00:00Z",
+// so any Jan-1 timestamp is treated as year-only precision. Computed in UTC so this
+// classification doesn't shift for viewers in a negative UTC offset.
 export function formatManufacturedDate(iso: string): string | undefined {
   if (!iso) return undefined;
 

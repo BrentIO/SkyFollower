@@ -1,10 +1,6 @@
 import { apiClient } from "./client";
 
 // Mirrors management-ui/backend/main.py's Area/AreaGeometry Pydantic models.
-// `identifier` is the routing key (no spaces, used by /api/areas/{identifier}
-// and matched against by a rule's `area` condition -- Polygon areas only,
-// see PolygonGeometry below); `name` is a separate, optional free-text
-// display label that can contain spaces.
 export interface PolygonGeometry {
   type: "Polygon";
   coordinates: number[][][];
@@ -26,17 +22,11 @@ export interface Area {
   identifier: string;
   name: string;
   geometry: AreaGeometry;
-  // Prevents drag/vertex editing on the map while true; does not restrict
-  // name edits or deletion. Toggling this saves immediately rather than
-  // going through the dirty/Save flow -- see AreasView.tsx's toggleLock.
+  // Prevents drag/vertex editing on the map only; doesn't restrict name edits
+  // or deletion. Toggling this saves immediately, bypassing the dirty/Save flow.
   locked: boolean;
-  // simplestyle-spec (https://github.com/mapbox/simplestyle-spec) style
-  // properties, matching management-ui/backend/main.py's Area field
-  // aliases exactly (hyphenated key names, not the backend's underscored
-  // Python attribute names). All optional -- an area with none of them
-  // set renders with AreasView.tsx's default color scheme. fill/
-  // fill-opacity apply to Polygon; stroke/stroke-width/stroke-opacity to
-  // Polygon and LineString; marker-* to Point.
+  // simplestyle-spec keys (hyphenated, matching the backend's field aliases).
+  // fill/fill-opacity: Polygon. stroke*: Polygon and LineString. marker-*: Point.
   fill?: string;
   "fill-opacity"?: number;
   stroke?: string;
@@ -47,9 +37,7 @@ export interface Area {
   "marker-symbol"?: string;
 }
 
-// Display noun for a geometry type -- shared by the naming modal's title
-// and AreasView.tsx's success toasts, so "Area"/"Line"/"Point" language
-// stays consistent with whichever shape a user actually drew.
+// Shared by the naming modal and success toasts for consistent language.
 export function geometryDisplayNoun(type: AreaGeometry["type"]): "Area" | "Line" | "Point" {
   switch (type) {
     case "Polygon":

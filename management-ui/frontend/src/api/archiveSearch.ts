@@ -9,22 +9,18 @@ export interface ArchiveSearchSummary {
   status: ArchiveSearchStatus;
   submitted_at: string;
   expires_at: string;
-  // Only ever set for FAILED (Athena's own reason) or ABORTED (this
-  // backend's own deadline/restart message).
+  // Set only for FAILED (Athena's reason) or ABORTED (backend deadline/restart).
   error: string | null;
 }
 
 export interface ArchiveSearchDetail extends ArchiveSearchSummary {
   where_clause: string;
-  // The RESOLVED range actually queried (explicit input intersected with
-  // whatever the WHERE clause's own predicates could prove) -- UTC
-  // calendar dates, YYYY-MM-DD. Null for a record written before this
-  // field existed.
+  // The resolved range actually queried, UTC YYYY-MM-DD. Null if unset or
+  // written before this field existed.
   start_date: string | null;
   end_date: string | null;
-  // What the operator actually typed, before the epoch/tomorrow
-  // substitution above -- null means the field was left blank. Also null
-  // for a record written before this field existed.
+  // What the operator typed, before backend substitution; null if blank or
+  // written before this field existed.
   requested_start_date: string | null;
   requested_end_date: string | null;
 }
@@ -39,17 +35,13 @@ export interface ArchiveSearchResultRow {
   ident: string;
   first_message: string;
   last_message: string;
-  // Opaque, encrypted -- never the real S3 key. Only valid for the
-  // lifetime of the backend process that minted it (see
-  // downloadArchiveFlight below).
+  // Opaque, encrypted, never the real S3 key; valid only for the lifetime of
+  // the backend process that minted it.
   token: string;
 }
 
-// Mirrors main.py's FlightView response model. Every field beyond
-// icao_hex/first_message/last_message/total_messages/matched_rules is
-// optional and simply absent from the JSON when the underlying flight
-// record has nothing to show for it -- render code should treat a missing
-// field as "omit this", not "show a placeholder".
+// Mirrors main.py's FlightView response model. A missing optional field means
+// "omit this", not "show a placeholder".
 export interface FlightView {
   ident?: string;
   registration?: string;
@@ -89,11 +81,8 @@ export interface FlightView {
   flight_path?: {
     type: "Feature";
     geometry: { type: "LineString"; coordinates: (number[])[] };
-    // coordTimes: Unix epoch seconds per coordinate, parallel to
-    // geometry.coordinates. coordSpeeds: knots, nearest-matched/
-    // interpolated from the flight's velocities -- absent on very old
-    // archives predating #1441, present (possibly all-null entries) on
-    // every flight archived since.
+    // coordTimes: epoch seconds per coordinate. coordSpeeds: knots,
+    // nearest-matched/interpolated; absent on archives older than this field.
     properties: { coordTimes?: (number | null)[]; coordSpeeds?: (number | null)[] };
   };
 }
@@ -109,17 +98,14 @@ export interface FlightViewAirport {
 
 export interface ArchiveSearchResultsPage {
   rows: ArchiveSearchResultRow[];
-  // Exact whenever `truncated` is false; when true, this is the backend's
-  // cache cap (see `truncated`), not the real (unread) match count.
+  // Exact when `truncated` is false; otherwise the backend's cache cap, not
+  // the real match count.
   total_rows: number;
-  // True when more than the cached window actually matched -- the exact
-  // count beyond that is never computed. Use Download for the full set.
+  // True when more matched than the cached window; use Download for the full set.
   truncated: boolean;
 }
 
-// Every column the results table lets a user sort by -- mirrors main.py's
-// _SORTABLE_COLUMNS (everything ArchiveSearchResultRow exposes except the
-// server-derived uuid/token).
+// Mirrors main.py's _SORTABLE_COLUMNS.
 export type ArchiveSearchSortColumn =
   | "icao_hex"
   | "registration"
@@ -132,9 +118,8 @@ export type ArchiveSearchSortColumn =
 
 export type ArchiveSearchSortDir = "asc" | "desc";
 
-// startDate/endDate are UTC calendar dates (YYYY-MM-DD), or undefined/""
-// for "all time" on that side -- the backend resolves an omitted bound to
-// the full archive range (see ArchiveSearchDetail's start_date/end_date).
+// startDate/endDate are UTC YYYY-MM-DD, or undefined/"" for "all time" --
+// the backend resolves an omitted bound to the full archive range.
 export function createArchiveSearch(
   name: string,
   whereClause: string,
@@ -179,20 +164,15 @@ export function deleteArchiveSearch(uuid: string): Promise<void> {
   return apiClient.delete(`/api/archive/search/${encodeURIComponent(uuid)}`);
 }
 
-// A plain URL, not a fetch() helper -- the endpoint 307s to a presigned S3
-// URL, and following that via a real browser navigation (an <a href>/
-// window.open, not fetch()) avoids the S3 bucket needing its own CORS
-// policy just for this: fetch() would need to read a cross-origin
-// response's body, a plain navigation doesn't. Works for every result
-// size, no threshold -- the backend never reads the bytes either way.
+// A plain URL, not a fetch() helper: the endpoint 307s to a presigned S3 URL,
+// and a real browser navigation follows it without needing the bucket to have
+// its own CORS policy (fetch() would need to read the cross-origin body).
 export function archiveSearchDownloadUrl(uuid: string): string {
   return `/api/archive/search/${encodeURIComponent(uuid)}/download`;
 }
 
-// Downloads via fetch + Blob rather than a plain navigation/window.open --
-// an expired/invalid token 400s (see main.py's get_archive_flight), and
-// only a real fetch() lets the caller catch that and surface it as a toast
-// instead of the browser just showing a blank/JSON error page.
+// Uses fetch + Blob rather than plain navigation so an expired/invalid token's
+// 400 can be caught and surfaced as a toast, not a blank browser error page.
 export async function downloadArchiveFlight(token: string): Promise<void> {
   const { blob, filename } = await apiClient.download(`/api/archive/flights/${encodeURIComponent(token)}`);
   const url = URL.createObjectURL(blob);

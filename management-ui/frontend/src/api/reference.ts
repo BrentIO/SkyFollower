@@ -1,23 +1,15 @@
 import { apiClient } from "./client";
 
-// These four endpoints return JSONResponse(content=...) directly in
-// management-ui/backend/main.py, which bypasses FastAPI's response_model
-// filtering -- the actual payload is whatever's really in Redis (e.g. an
-// aircraft doc's full registrant/powerplant/category detail, or an
-// airport's city/region/phonic/iata_code), a strict superset of
-// shared/models.py's AircraftRecord/OperatorRecord/AirportRecord. Typed
-// here as an open record with only the field each endpoint's own Pydantic
-// model guarantees is non-optional -- LookupView renders whatever keys are
-// actually present rather than assuming a fixed shape.
+// These endpoints return the raw Redis document (a superset of
+// shared/models.py's record types), so each is typed here as an open record
+// with only the field its Pydantic model guarantees non-optional.
 
 export type AircraftRecord = Record<string, unknown> & { icao_hex: string };
 export type OperatorRecord = Record<string, unknown> & { airline_designator: string };
 export type AirportRecord = Record<string, unknown> & { icao_code: string; name?: string };
 
-// origin/destination/stops are absent when the ident's route itself is
-// unknown but its operator prefix still resolves (e.g. a part-135
-// operator with no scheduled-service route data) -- see the backend's
-// RouteLookup docstring.
+// origin/destination/stops are absent when the route itself is unknown but
+// its operator prefix still resolves.
 export interface RouteLookup {
   ident: string;
   origin?: AirportRecord;

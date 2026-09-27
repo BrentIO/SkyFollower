@@ -25,11 +25,8 @@ import {
   type ImportedRule,
 } from "../lib/ruleImport";
 
-// The /api/areas response carries full Area objects; `geometry.type` is
-// read here only to filter the rule editor's `area`-condition dropdown to
-// Polygon areas -- per the backend Area model, a LineString/Point area is
-// never usable as an `area` condition value (rules_engine.py skips it), so
-// offering one would silently produce a rule that never matches.
+// `geometry.type` is read only to filter the `area`-condition dropdown to Polygon areas -- a LineString/Point area is never
+// usable as an `area` condition (rules_engine.py skips it), so offering one would silently produce a rule that never matches.
 interface AreaOption {
   identifier: string;
   name: string;
@@ -38,19 +35,15 @@ interface AreaOption {
 
 const clone = (rule: Rule): Rule => JSON.parse(JSON.stringify(rule));
 
-// Canonical condition order, applied at every point a rule is (re)seeded
-// into the editor or sent to the backend -- so draft and original are
-// always sorted identically (no spurious `dirty` from order alone) and
-// the persisted rule is diff-friendly. Never called mid-edit; see
-// lib/ruleConditions.ts.
+// Canonical condition order, applied whenever a rule is (re)seeded into the editor or sent to the backend, so draft/original
+// stay sorted identically (no spurious `dirty` from order alone). Never called mid-edit; see lib/ruleConditions.ts.
 const withSortedConditions = (rule: Rule): Rule => ({
   ...rule,
   conditions: sortConditions(rule.conditions),
 });
 
-// Mirrors message-processor/rules_engine.py's _eval_date/_compare_ordered:
-// a date-only value compares at UTC day granularity, a datetime value at
-// UTC minute granularity (seconds/microseconds zeroed on both sides).
+// Mirrors the backend's date comparison: a date-only value compares at UTC day granularity, a datetime value at UTC minute
+// granularity (seconds/microseconds zeroed on both sides).
 function isDateConditionActiveNow(condition: Condition): boolean {
   const raw = condition.value as string;
   const target = new Date(raw);
@@ -79,9 +72,7 @@ function isDateConditionActiveNow(condition: Condition): boolean {
   }
 }
 
-// null = rule has no date condition at all (no pill); false = at least one
-// date condition isn't satisfied right now (conditions AND together, so
-// the rule can't currently match) -- "Inactive" pill.
+// null = no date condition (no pill); false = at least one date condition unsatisfied right now (conditions AND together) -- "Inactive" pill.
 function isRuleDateActive(rule: Rule): boolean | null {
   const dateConditions = rule.conditions.filter((c) => c.type === "date");
   if (dateConditions.length === 0) return null;
@@ -100,8 +91,7 @@ function StatusPill({ label, tone }: { label: string; tone: "danger" | "neutral"
   );
 }
 
-// Renders the identifier in monospace so it reads unambiguously as "the
-// literal value", distinct from the free-text display Name beside it.
+// Monospace identifier reads as "the literal value", distinct from the free-text display Name beside it.
 function DeleteRuleMessage({ rule }: { rule: Rule }) {
   const idCode = (
     <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[0.85em] dark:bg-slate-800">
@@ -132,10 +122,7 @@ export function RulesView() {
   const [deleteTarget, setDeleteTarget] = useState<Rule | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
-  // Set together, right before ImportConflictModal opens: the raw imported
-  // batch (needed to actually run the import once the operator confirms
-  // their skip/rename choices) and the colliding identifiers it contains.
-  // Both null/empty = the modal is closed.
+  // Set together right before ImportConflictModal opens: the raw batch plus its colliding identifiers. Both null/empty = modal closed.
   const [pendingImportRules, setPendingImportRules] = useState<ImportedRule[] | null>(null);
   const [conflictIdentifiers, setConflictIdentifiers] = useState<string[]>([]);
 
@@ -254,20 +241,14 @@ export function RulesView() {
   }
 
   function exportAllRules() {
-    // triggered_lifetime/triggered_last_30_days are read-time-computed
-    // display stats the backend adds to GET /api/rules responses -- never
-    // part of what's stored in config:rules -- so they're stripped before
-    // export rather than round-tripped through a saved file.
+    // triggered_lifetime/triggered_last_30_days are read-time display stats the backend adds, never part of stored config; stripped before export.
     const exportable = rules.map(
       ({ triggered_lifetime: _triggeredLifetime, triggered_last_30_days: _triggeredLast30Days, ...rule }) => rule,
     );
     downloadTextFile("rules.json", JSON.stringify(exportable, null, 2), "application/json");
   }
 
-  // Entry point from ImportRuleModal. An imported identifier already used
-  // by an existing rule stops here and shows ImportConflictModal instead of
-  // importing immediately; an import with no collisions runs straight
-  // through exactly as before that modal existed.
+  // Entry point from ImportRuleModal. A colliding identifier shows ImportConflictModal; no collisions runs straight through.
   function handleImportRules(imported: ImportedRule[]) {
     setImportModalOpen(false);
     const colliding = collidingIdentifiers(imported, rules.map((r) => r.identifier));
@@ -327,9 +308,7 @@ export function RulesView() {
     );
   }
 
-  // Recomputes every conflict row's rename preview via the real batch
-  // resolver, over the whole pending import, so it can never diverge from
-  // what importRulesBatch would actually produce for the same choices.
+  // Recomputes the rename preview via the real batch resolver, so it can never diverge from what importRulesBatch would actually produce.
   function computeRuleConflictPreview(choices: Map<string, ConflictChoice>): Map<string, string> {
     if (!pendingImportRules) return new Map();
     const skipIdentifiers = new Set(
@@ -368,10 +347,7 @@ export function RulesView() {
     return <p className="text-slate-400">Loading rules...</p>;
   }
 
-  // Shared by every RuleForm instance below (mobile inline cards and the
-  // desktop panel alike) -- excludes the rule currently being edited from
-  // its own duplicate-identifier check, same as before this view grew a
-  // mobile accordion.
+  // Shared by every RuleForm instance below; excludes the rule currently being edited from its own duplicate-identifier check.
   const otherRulesForDraft = rules.filter((r) => r.identifier !== original?.identifier || isNew);
 
   return (
@@ -408,12 +384,7 @@ export function RulesView() {
         </div>
 
         <ul className="flex flex-col gap-2 overflow-y-auto md:gap-1">
-          {/* Mobile-only "new rule" card -- there's no existing list item to
-              expand inline under, so a new rule gets its own leading card
-              instead, using the same selected-card treatment as the real
-              rows below. Desktop renders the new-rule form in the panel to
-              the right instead (see the hidden md:block panel further
-              down), so this card never shows there. */}
+          {/* Mobile-only "new rule" card: no existing list item to expand under, so it gets its own leading card. Desktop uses the panel to the right instead. */}
           {isNew && draft && (
             <li className="rounded-md border-l-4 border-sky-600 bg-slate-100 dark:border-sky-400 dark:bg-slate-800 md:hidden">
               <div className="p-4">
@@ -468,11 +439,7 @@ export function RulesView() {
                   ) : null}
                 </button>
 
-                {/* Mobile accordion: the full editor renders inline under
-                    the selected row instead of in a separate below-the-fold
-                    area, since there's no persistent side-by-side space
-                    below md:. Desktop shows the same content in the panel
-                    to the right instead (hidden here via md:hidden). */}
+                {/* Mobile accordion: editor renders inline under the selected row; desktop shows the same content in the panel to the right. */}
                 {isSelected && draft && (
                   <div className="border-t border-slate-200 p-4 dark:border-slate-700 md:hidden">
                     <RuleForm

@@ -4,34 +4,23 @@ export type ConflictChoice = "skip" | "rename";
 
 interface ImportConflictModalProps {
   open: boolean;
-  // Singular noun for the thing being imported -- "rule" or "area" --
-  // used only for display copy.
+  // Singular noun for the thing being imported -- used only for display copy.
   noun: "rule" | "area";
-  // Every colliding identifier, in file order, deduplicated. Ignored while
-  // `open` is false.
+  // Every colliding identifier, in file order, deduplicated.
   identifiers: string[];
-  // Computes the live rename preview for the current choice set, using the
-  // real resolver (resolveImportIdentifiers / resolveImportIdentities) over
-  // the whole import batch -- never a hardcoded guess. Only identifiers
-  // whose current choice is "rename" need an entry in the result; a "skip"
-  // row shows no preview.
+  // Computes the live rename preview using the real resolver
+  // (resolveImportIdentifiers / resolveImportIdentities), never a guess.
+  // A "skip" row has no entry/preview.
   computePreview: (choices: Map<string, ConflictChoice>) => Map<string, string>;
   onConfirm: (choices: Map<string, ConflictChoice>) => void;
   onCancel: () => void;
 }
 
-// Shown before a rule/area import batch runs, whenever one or more imported
-// identifiers already exist. One row per colliding identifier, each with
-// its own Skip/Rename toggle -- not one global choice for every conflict.
-// Defaults every row to Skip: confirming with nothing touched leaves every
-// existing rule/area with a colliding identifier completely untouched, and
-// excludes only the colliding imported entries -- everything else in the
-// file still imports normally. Rename keeps both, auto-suffixing the
-// imported one via the same resolver the real import uses (ruleImport's
-// resolveImportIdentifiers / areaImport's resolveImportIdentities), so the
-// live preview shown here can never diverge from what actually gets
-// created. Shared, noun-parameterized component for both RulesView and
-// AreasView's batch import flows -- same shape/style as ConfirmModal.
+// Shown before a rule/area import batch runs when imported identifiers
+// collide with existing ones. Each row defaults to Skip (leaves the
+// existing entry untouched, drops the imported duplicate); Rename keeps
+// both, auto-suffixing the import via the same resolver the real import
+// uses. Shared between RulesView and AreasView's batch import flows.
 export function ImportConflictModal({
   open,
   noun,

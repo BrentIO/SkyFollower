@@ -4,11 +4,8 @@ import { sortConditions } from "./ruleConditions";
 // The identifier charset the backend enforces on POST /api/rules.
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-// A rule pulled from an imported JSON array. Only `identifier` is checked
-// structurally here -- the backend's own POST /api/rules 400 is the
-// authority on everything deeper (condition types, operators, values), and
-// a second client copy of that validation would just be two things to keep
-// in sync. Everything else passes through untouched.
+// Only `identifier` is checked structurally; deeper validation (condition
+// types/operators/values) is left to the backend's own POST /api/rules 400.
 export interface ImportedRule {
   identifier: string;
   [key: string]: unknown;
@@ -54,12 +51,8 @@ export function parseAndValidate(text: string): RuleParseResult {
   return { error: null, rules };
 }
 
-// Auto-suffix collision strategy, mirroring areaImport's
-// resolveFeatureIdentity: a missing / pattern-invalid / already-taken
-// identifier gets an incrementing `_2` / `_3`. `taken` accumulates across
-// the batch (existing rules plus everything resolved earlier), so two
-// colliding entries in one file don't collide with each other either.
-// Rules have no name to resolve, only the identifier.
+// Missing/invalid/already-taken identifiers get an incrementing `_2` suffix;
+// `taken` accumulates across the batch so in-file collisions resolve too.
 export function resolveRuleIdentifier(
   rule: ImportedRule,
   index: number,
@@ -77,15 +70,11 @@ export function resolveRuleIdentifier(
   return identifier;
 }
 
-// Per-identifier operator choice for an import conflict: keep only the
-// existing rule (skip the imported duplicate entirely) or keep both (auto
-// suffix the imported one). Drives ImportConflictModal.
+// Per-identifier conflict choice: skip the duplicate, or keep both via rename.
 export type ImportConflictChoice = "skip" | "rename";
 
-// The distinct imported identifiers that already exist among
-// `existingIdentifiers`, in file order, deduplicated. Feeds
-// ImportConflictModal's row list -- an import with an empty result here
-// proceeds straight through with no modal.
+// Distinct imported identifiers colliding with `existingIdentifiers`, in file
+// order. An empty result skips ImportConflictModal entirely.
 export function collidingIdentifiers(rules: ImportedRule[], existingIdentifiers: string[]): string[] {
   const existing = new Set(existingIdentifiers);
   const seen = new Set<string>();
@@ -105,15 +94,9 @@ export interface ResolvedRuleImportEntry {
   identifier: string;
 }
 
-// Resolves every non-skipped rule's final identifier for the batch, honoring
-// per-identifier skip choices for entries that collide with an existing
-// rule. A rule whose trimmed identifier is in `skipIdentifiers` is left out
-// of the result entirely -- resolveRuleIdentifier never sees it, and it
-// never occupies a slot in `taken` -- exactly as if it were absent from the
-// file. Every other rule resolves via resolveRuleIdentifier exactly as
-// before skip/rename existed. Shared by importRulesBatch (the real import)
-// and ImportConflictModal's live rename preview (identical inputs, identical
-// output), so the preview can never diverge from what actually gets created.
+// A rule whose identifier is in `skipIdentifiers` is left out entirely, as if
+// absent from the file. Shared by importRulesBatch and ImportConflictModal's
+// live preview so the preview can never diverge from the real import.
 export function resolveImportIdentifiers(
   rules: ImportedRule[],
   existingRuleIdentifiers: string[],
@@ -140,10 +123,8 @@ function stringArrayValue(condition: Record<string, unknown>): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
-// Every `area` condition value in the rule not present in the current
-// areas list. Empty = all references resolve. Mirrors the backend's own
-// save-time existence check exactly: identifier presence, any geometry
-// type (Polygon-only is a separate usability concern, not existence).
+// Mirrors the backend's save-time existence check (identifier presence only,
+// any geometry type). Empty result means all area references resolve.
 export function missingAreaReferences(
   rule: ImportedRule,
   existingAreaIdentifiers: Set<string>,
@@ -154,9 +135,8 @@ export function missingAreaReferences(
   return [...new Set(values.filter((v) => !existingAreaIdentifiers.has(v)))];
 }
 
-// matched_rules condition values in the rule, remapped through the
-// batch's original->resolved identifier map so a self-consistent file
-// still links up even when an identifier was auto-suffixed on import.
+// Remapped through the batch's original->resolved map so a self-consistent
+// file still links up even after an auto-suffixed identifier.
 function remappedMatchedRuleRefs(
   rule: ImportedRule,
   remap: Map<string, string>,
@@ -186,11 +166,8 @@ function buildPayload(
   const sortable =
     conditions.length > 0 &&
     conditions.every((c) => typeof c.type === "string" && typeof c.operator === "string");
-  // triggered_lifetime/triggered_last_30_days are read-time-computed display
-  // stats the backend adds to GET /api/rules responses -- never part of what's
-  // stored. An imported file (e.g. a prior export, or hand-edited) may carry
-  // them, but they must never be sent back on create; excluded explicitly
-  // rather than relying on the backend to silently drop unknown fields.
+  // These are read-time-computed display stats the backend adds to GET responses;
+  // an imported file may carry them, but they must never be sent back on create.
   const { triggered_lifetime: _triggeredLifetime, triggered_last_30_days: _triggeredLast30Days, ...rest } = rule;
   return {
     ...rest,
@@ -200,39 +177,18 @@ function buildPayload(
 }
 
 export interface RuleImportResult {
-  // Reached the backend and it accepted the rule.
   created: string[];
-  // Decided up front, before any backend write: referential integrity
-  // within the batch can't be satisfied (missing area / missing rule ref).
+  // Rejected in-memory before any backend write: referential integrity within
+  // the batch can't be satisfied (missing area / missing rule ref).
   rejected: { identifier: string; reason: string }[];
-  // Passed phase-1 validation but the backend still refused it on create --
-  // a genuine backend-only rejection client validation can't anticipate.
-  // Expected to be rare.
+  // Passed validation but the backend still refused it on create. Expected rare.
   failed: { identifier: string; reason: string }[];
 }
 
-// Validate-then-commit batch import.
-//
-// Phase 1 (in-memory, zero backend writes) decides the entire outcome:
-//   - Resolve every non-skipped rule's identifier for the whole batch (via
-//     resolveImportIdentifiers), so the original->resolved remap is
-//     complete before anything else looks at references. An identifier in
-//     `skipIdentifiers` (the operator's per-conflict "Skip" choice from
-//     ImportConflictModal) is excluded here -- resolveRuleIdentifier never
-//     sees it, and it is never counted against created/failed/rejected.
-//   - Area references: an `area` condition value must already exist in
-//     `existingAreaIdentifiers` (areas are never part of a rules import).
-//     A rule referencing a missing area is rejected with a reason.
-//   - matched_rules references: each remapped reference must resolve to an
-//     existing rule identifier or the resolved identifier of another
-//     still-valid rule in this same batch. Computed as a transitive
-//     closure -- rejecting a rule can leave a rule that referenced it
-//     newly dangling -- iterating until stable. This is what lets a
-//     legitimate cyclic pair (A->B, B->A) import: both are in the batch's
-//     valid set, so neither dangles.
-//
-// Phase 2 creates only the survivors. Nothing is ever created and then
-// deleted. A create that still fails is a backend-only rejection -> `failed`.
+// Phase 1 (in-memory, no backend writes) resolves identifiers, rejects rules with
+// missing area or matched_rules references (as a transitive closure, so a
+// legitimate cyclic pair A->B/B->A can still both import), then phase 2 creates
+// only the survivors -- nothing is ever created and then deleted.
 export async function importRulesBatch(
   rules: ImportedRule[],
   existingRuleIdentifiers: string[],
@@ -243,8 +199,6 @@ export async function importRulesBatch(
   const areaSet = new Set(existingAreaIdentifiers);
   const remap = new Map<string, string>();
 
-  // Phase 1a: resolve every non-skipped rule's identifier (so the remap is
-  // complete before any reference or payload is evaluated).
   const entries = resolveImportIdentifiers(rules, existingRuleIdentifiers, skipIdentifiers);
   const identifiers = entries.map((e) => e.identifier);
   for (const { rule, identifier } of entries) {
@@ -252,11 +206,9 @@ export async function importRulesBatch(
     if (original) remap.set(original, identifier);
   }
 
-  // index (into `entries`) -> rejection reason. Absent = still a candidate
-  // for creation.
+  // index (into `entries`) -> rejection reason; absent means still a candidate.
   const rejectionReason = new Map<number, string>();
 
-  // Phase 1b: area references.
   for (let i = 0; i < entries.length; i++) {
     const missing = missingAreaReferences(entries[i].rule, areaSet);
     if (missing.length > 0) {
@@ -264,9 +216,9 @@ export async function importRulesBatch(
     }
   }
 
-  // Phase 1c: matched_rules transitive closure. A reference resolves if it
-  // points at an existing rule or a still-valid batch rule; rejecting a
-  // rule shrinks the valid set, so loop until a full pass changes nothing.
+  // Rejecting a rule can strand another that referenced it, so loop until a
+  // pass changes nothing (a fixed point) -- this also lets a valid cyclic
+  // pair (A->B, B->A) import together.
   let changed = true;
   while (changed) {
     changed = false;
@@ -285,7 +237,6 @@ export async function importRulesBatch(
     }
   }
 
-  // Phase 1 outcome, fully determined before any backend write.
   const rejected: RuleImportResult["rejected"] = [];
   const toCreate: { payload: Record<string, unknown>; identifier: string }[] = [];
   for (let i = 0; i < entries.length; i++) {
@@ -300,7 +251,6 @@ export async function importRulesBatch(
     }
   }
 
-  // Phase 2: commit the survivors.
   const created: string[] = [];
   const failed: RuleImportResult["failed"] = [];
   for (const { payload, identifier } of toCreate) {

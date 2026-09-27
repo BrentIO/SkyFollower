@@ -1,15 +1,8 @@
-"""
-Tests for management-ui/backend/main.py.
-
-Redis is faked with a tiny in-memory dict (FakeRedis below) rather than a
-MagicMock, since the per-item CRUD endpoints are read-modify-write against
-the full stored array/collection -- a static MagicMock return value can't
-reflect a POST/PUT/DELETE's effect on a subsequent GET within the same test.
-
-main.py is loaded directly by file path rather than via a normal package
-import -- the hyphen in "management-ui" isn't a valid Python identifier, so
-it can't be imported as management_ui.backend.main the way "shared" or "ui"
-(no hyphen) could be.
+"""Tests for main.py. Redis is faked with an in-memory dict (FakeRedis)
+rather than a MagicMock, since the CRUD endpoints are read-modify-write
+and a static mock return value can't reflect POST/PUT/DELETE across a
+later GET. main.py is loaded by file path since "management-ui" isn't a
+valid package identifier.
 """
 
 from __future__ import annotations
@@ -41,9 +34,8 @@ def _deep_merge(base: dict, update: dict) -> None:
             base[k] = v
 
 
-# Redis key prefix each RediSearch index covers -- lets the fake's search()
-# just scan FakeRedis.store for matching JSON docs instead of needing a
-# separate, parallel index data structure kept in sync by hand.
+# Redis key prefix each RediSearch index covers, so the fake's search()
+# can scan FakeRedis.store directly instead of a parallel index structure.
 _FAKE_INDEX_PREFIXES = {
     "idx:aircraft:mictronics": "aircraft:mictronics:",
     "idx:aircraft:registry": "aircraft:registry:",
@@ -62,21 +54,18 @@ class _FakeSearchResult:
 
 
 class _FakeFt:
-    """Minimal stand-in for redis.Redis.ft(index) -- supports the
-    single-tag exact-match `@field:{value}` queries main.py's _search_one()
-    actually issues (resolved by scanning FakeRedis.store), plus info()/
-    create_index() so main.py's startup _ensure_search_index() (see
-    lifespan()) has something to call against."""
+    """Stand-in for redis.Redis.ft(index): supports the single-tag exact-
+    match `@field:{value}` queries _search_one() issues (via scanning
+    FakeRedis.store), plus info()/create_index() for lifespan()'s
+    _ensure_search_index()."""
 
     def __init__(self, redis: "FakeRedis", index: str):
         self._redis = redis
         self._index = index
 
     def info(self):
-        # Real redis-py raises (a generic Exception, not a typed one) when
-        # FT.INFO targets an index that doesn't exist -- main.py's
-        # _ensure_search_index() relies on that to decide whether to
-        # create it.
+        # Real redis-py raises a generic Exception when FT.INFO targets a
+        # missing index; _ensure_search_index() relies on that.
         if self._index not in self._redis.indices:
             raise Exception(f"Unknown index name: {self._index}")
         return {}
@@ -102,11 +91,9 @@ class _FakeFt:
 
 
 class _FakeJson:
-    """Minimal stand-in for redis.Redis.json() -- operator:/airport: keys are
-    real RedisJSON documents (a plain GET raises WRONGTYPE against them,
-    verified against a live Redis Stack instance), so main.py reads them via
-    .json().get() instead. Real redis-py returns the decoded dict directly,
-    which this matches by json.loads()-ing whatever FakeRedis.store holds."""
+    """Stand-in for redis.Redis.json(): operator:/airport: keys are real
+    RedisJSON documents (a plain GET raises WRONGTYPE), so main.py reads
+    them via .json().get() instead."""
 
     def __init__(self, redis: "FakeRedis"):
         self._redis = redis
@@ -117,26 +104,19 @@ class _FakeJson:
 
 
 class FakeRedis:
-    """
-    Minimal in-memory stand-in for redis.Redis's get/set/script_load/evalsha/
-    ft().search. evalsha is special-cased per script body (there are only
-    ever two: merge_aircraft.lua and route_airports.lua, distinguished by a
-    substring unique to each) rather than a real Lua interpreter --
-    replicating just enough of each script's documented behavior for the
-    reference-data lookup endpoints' own tests.
-    """
+    """In-memory stand-in for redis.Redis's get/set/script_load/evalsha/
+    ft().search. evalsha is special-cased per script body (only ever
+    merge_aircraft.lua or route_airports.lua) rather than a real Lua
+    interpreter."""
 
     def __init__(self):
         self.store: dict[str, str] = {}
         self.get_error: Exception | None = None
         self.set_error: Exception | None = None
         self._scripts: dict[str, str] = {}
-        # Search-index bookkeeping for _FakeFt.info()/create_index() -- see
-        # TestSearchIndexBootstrap below. Starts empty so every test's
-        # lifespan() run exercises the real create-if-missing path;
-        # search_errors lets a test force a specific index's _FakeFt.search()
-        # to raise, to simulate that index missing despite lifespan()'s
-        # proactive creation (main.py's _search_one() safety net).
+        # Empty by default so lifespan() exercises create-if-missing;
+        # search_errors lets a test force a specific index's search() to
+        # raise, simulating a missing index despite lifespan()'s creation.
         self.indices: set[str] = set()
         self.create_index_calls: list[str] = []
         self.search_errors: dict[str, Exception] = {}
@@ -164,18 +144,15 @@ class FakeRedis:
             self.store.pop(key, None)
 
     def sadd(self, key, *members):
-        """No archive_search:* records ever exist in these rules/areas
-        tests -- this only needs to satisfy create_archive_search-style
-        callers, none of which this file's tests actually exercise."""
+        """No archive_search:* records exist in these tests -- just
+        satisfies create_archive_search-style callers."""
 
     def srem(self, key, *members):
         pass
 
     def smembers(self, key):
-        """Always empty here -- this only needs to satisfy lifespan()'s
-        unconditional startup reconciliation sweep (see
-        _reconcile_stuck_archive_searches), which no test in this file
-        depends on finding anything."""
+        """Always empty -- just satisfies lifespan()'s startup
+        reconciliation sweep."""
         return set()
 
     def json(self):
@@ -215,11 +192,8 @@ class FakeRedis:
             _deep_merge(result, doc)
         if sources:
             result["data_sources"] = sources
-        # Mirrors merge_aircraft.lua's own flattening: type/category/
-        # manufacturer/model/seats/powerplant/serial_number/manufactured_date
-        # are written nested under an `aircraft` sub-object by the
-        # mictronics/country-registry runners; promote them to the top level,
-        # never overwriting a key already present there.
+        # Mirrors merge_aircraft.lua's flattening: promote fields nested
+        # under `aircraft` to the top level, without overwriting existing keys.
         nested = result.pop("aircraft", None)
         if isinstance(nested, dict):
             for key, value in nested.items():
@@ -243,9 +217,8 @@ class FakeRedis:
 
 
 class _FakePipeline:
-    """Minimal MULTI/EXEC stand-in: buffers SETs, applies them all on
-    execute() (or none if set_error is armed), matching the atomicity
-    _redis_set_config_pair / _reconcile_backup_with_redis rely on."""
+    """MULTI/EXEC stand-in: buffers SETs, applies all-or-none on execute(),
+    matching the atomicity _redis_set_config_pair relies on."""
 
     def __init__(self, redis: "FakeRedis"):
         self._redis = redis
@@ -304,10 +277,8 @@ def _area(identifier="LI", **overrides) -> dict:
 
 
 def _configure_env(tmp_path, monkeypatch, data_dir=None) -> None:
-    """Environment setup shared by the `client` fixture and the
-    TestConfigBackup tests below, which need to control DATA_DIR's content
-    *before* the TestClient context manager triggers lifespan()'s restore
-    check -- too early for the `client` fixture's own fixed setup order."""
+    """Shared by `client` and TestConfigBackup, which need DATA_DIR's
+    content set before TestClient triggers lifespan()'s restore check."""
     for name, value in {
         "REDIS_HOST": "localhost",
         "REDIS_PORT": "6379",
@@ -357,9 +328,8 @@ class TestCreateRule:
         assert resp.status_code == 201
         assert resp.json()["identifier"] == "r1"
 
-        # Stored/hashed body now comes from Rule.model_dump(), which fills
-        # in defaults (e.g. force_archive) the raw _rule() dict omits --
-        # compare against the same round-trip rather than the literal input.
+        # Stored/hashed body comes from Rule.model_dump(), which fills in
+        # defaults the raw _rule() dict omits.
         expected_rules = [ui_main.Rule(**_rule("r1")).model_dump()]
         body = json.dumps(expected_rules)
         expected_version = ui_main.hashlib.sha256(body.encode()).hexdigest()
@@ -558,10 +528,8 @@ class TestCreateArea:
         assert resp.status_code == 422
 
     def test_self_intersecting_polygon_returns_400(self, client):
-        # A bowtie ring: valid per Pydantic (floats in the right shape) but
-        # rejected by shapely's is_valid check in RulesEngine._load_areas --
-        # exercises _save_areas_array's "did it actually survive" safety
-        # net, which only applies to Polygon areas.
+        # A bowtie ring: valid per Pydantic but rejected by shapely's
+        # is_valid check in RulesEngine._load_areas.
         resp = client.post("/api/areas", json=_area("LI", geometry={
             "type": "Polygon",
             "coordinates": [[[0, 0], [1, 1], [1, 0], [0, 1], [0, 0]]],
@@ -615,10 +583,8 @@ class TestAreaLocked:
 
 
 class TestAreaStyle:
-    """simplestyle-spec style properties -- persisted via config:areas'
-    GeoJSON FeatureCollection (_area_to_feature/_feature_to_area), a
-    separate boundary from Area's own alias-based (de)serialization that
-    both need to agree on the same hyphenated key names."""
+    """simplestyle-spec style properties, persisted via config:areas'
+    GeoJSON FeatureCollection (_area_to_feature/_feature_to_area)."""
 
     def test_style_fields_round_trip_through_get(self, client):
         area = _area("LI", **{
@@ -756,11 +722,8 @@ class TestAreaConditionCrossValidation:
 
 
 class TestConditionOperatorEnforcement:
-    """
-    Condition is now a type-discriminated union (see main.py) -- every
-    per-type model's `operator` Literal should be enforced by FastAPI/
-    Pydantic at ingress, before RulesEngine ever sees the request.
-    """
+    """Condition is a type-discriminated union: each type's `operator`
+    Literal must be enforced by Pydantic at ingress, before RulesEngine."""
 
     # One operator invalid for that type, per CLAUDE.md's Conditions table.
     _INVALID_COMBINATIONS = [
@@ -819,12 +782,8 @@ class TestConditionOperatorEnforcement:
 
 
 class TestReceiverSourceCondition:
-    """
-    receiver_source's list-shaped value has constraints beyond a plain
-    operator check (1-2 elements, no duplicates, only 1090/978/EXTERNAL) --
-    covered separately from TestConditionOperatorEnforcement's single
-    valid/invalid-operator table.
-    """
+    """receiver_source's list value has constraints beyond a plain
+    operator check: 1-2 elements, no duplicates, only 1090/978/EXTERNAL."""
 
     def test_empty_list_returns_422(self, client):
         cond = {"type": "receiver_source", "operator": "equals", "value": []}
@@ -853,13 +812,9 @@ class TestReceiverSourceCondition:
 
 
 class TestConfigBackup:
-    """
-    config:rules/config:areas are the only two Redis keys representing
-    user-authored state with no automatic regeneration path (see CLAUDE.md's
-    Redis Key Schema) -- these cover the file-backup-on-write and restore-
-    on-missing-key behavior that backs them up to DATA_DIR independently of
-    Redis's own AOF.
-    """
+    """config:rules/config:areas have no automatic regeneration path;
+    these cover file-backup-on-write and restore-on-missing-key to
+    DATA_DIR, independent of Redis's own AOF."""
 
     def test_rule_save_writes_backup_file(self, client, tmp_path):
         client.post("/api/rules", json=_rule("r1"))
@@ -919,9 +874,8 @@ class TestConfigBackup:
     def test_does_not_restore_when_redis_key_already_present(self, tmp_path, monkeypatch):
         data_dir = tmp_path / "data"
         data_dir.mkdir()
-        # Backup file deliberately names a different rule than what's
-        # already in Redis -- if restore ran anyway despite the key already
-        # existing, that rule would show up in the response below.
+        # Backup names a different rule than Redis, so an incorrect restore
+        # would show up in the response below.
         stale_rules = [ui_main.Rule(**_rule("stale-from-backup")).model_dump()]
         (data_dir / "rules-backup.json").write_text(json.dumps(stale_rules))
         _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
@@ -940,9 +894,8 @@ class TestConfigBackup:
                 assert [r["identifier"] for r in resp.json()] == ["already-in-redis"]
 
     def test_seeds_rules_backup_file_from_redis_when_file_missing(self, tmp_path, monkeypatch):
-        # data_dir deliberately not created -- an existing deployment
-        # upgrading to this feature has real data in Redis but has never
-        # written a backup file (only a save does that).
+        # data_dir not created -- an upgrading deployment has Redis data
+        # but never wrote a backup file.
         data_dir = tmp_path / "data"
         _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
 
@@ -1001,10 +954,9 @@ class TestConfigBackup:
         assert json.loads((data_dir / "rules-backup.json").read_text()) == stale_backup
 
     def test_sets_missing_rules_version_key_from_existing_body(self, tmp_path, monkeypatch):
-        """config:rules present but config:rules:version absent (a deployment
-        from before the version key, a partial restore, a manual seed):
-        reconcile computes and sets it, or message processors never reload
-        those rules -- see issue in message-processor/rules_engine.py."""
+        """config:rules present but config:rules:version absent (pre-version
+        deployment, partial restore): reconcile must compute and set it, or
+        message processors never reload those rules."""
         data_dir = tmp_path / "data"
         _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
 
@@ -1049,10 +1001,9 @@ class TestConfigBackup:
         )
 
     def test_existing_matching_version_key_left_alone(self, tmp_path, monkeypatch):
-        """When config:rules:version already exists it is never recomputed
-        or overwritten -- even if it doesn't match sha256(body). (An
-        actually-skewed key is healed processor-side on the next save; the
-        reconcile pass only fills a *missing* key.)"""
+        """An existing config:rules:version is never recomputed or
+        overwritten, even if it doesn't match sha256(body) -- reconcile
+        only fills a *missing* key."""
         data_dir = tmp_path / "data"
         _configure_env(tmp_path, monkeypatch, data_dir=data_dir)
 
@@ -1102,13 +1053,8 @@ class TestConfigBackup:
 
 
 class TestConditionValueConstraints:
-    """
-    Numeric bounds and charset patterns on Condition.value, moved from
-    UI-only client-side checks (RuleForm.tsx's validateCondition) into the
-    same per-type models that already discriminate each condition's
-    operator, so the backend is the actual source of truth per
-    management-ui/README.md's own framing.
-    """
+    """Numeric bounds and charset patterns on Condition.value, moved from
+    UI-only checks into the backend as the source of truth."""
 
     _VALID = [
         {"type": "altitude", "operator": "minimum", "value": "0"},
@@ -1231,10 +1177,9 @@ class TestAircraftLookup:
         assert body["data_sources"] == ["mictronics", "us-faa-registry"]
 
     def test_hex_survives_type_category_seats_manufacturer_model_registrant(self, client, fake_redis):
-        """Registry-only fields not on Mictronics -- including the top-level
-        (not aircraft-nested) registrant sub-object, matching real runner
-        output shape (e.g. au-casa-registry's _build_record) -- must survive
-        merge_aircraft.lua's merge and its own nested-aircraft flattening."""
+        """Registry-only fields, including the top-level (not aircraft-
+        nested) registrant sub-object, must survive merge_aircraft.lua's
+        merge and its nested-aircraft flattening."""
         fake_redis.store["aircraft:mictronics:A8AE7F"] = json.dumps({
             "icao_hex": "A8AE7F", "registration": "N659DL", "military": False, "source": "mictronics",
         })
@@ -1459,9 +1404,8 @@ class TestRouteLookup:
         assert body["operator"]["name"] == "American Airlines"
 
     def test_no_hyphen_registration_shape_never_triggers_operator_fallback(self, client, fake_redis):
-        # "N" is a valid short-prefix operator-shape start, but N659DL is a
-        # bare no-hyphen registration, not a flight ident -- must 404 exactly
-        # like today, never fall back to an operator lookup.
+        # N659DL is a bare registration, not a flight ident -- must not
+        # fall back to an operator lookup.
         fake_redis.store["operator:N"] = json.dumps({"airline_designator": "N", "name": "Not A Real Operator"})
         resp = client.get("/api/routes/N659DL")
         assert resp.status_code == 404
@@ -1473,17 +1417,12 @@ class TestRouteLookup:
 
 
 class TestSearchIndexBootstrap:
-    """Covers #934: management-ui must proactively create all three
-    RediSearch indices (empty, if unpopulated) at startup instead of
-    relying on their owning data runner having run at least once, and
-    _search_one() must turn a "no such index" Redis error into a friendly,
-    actionable message rather than a raw 500 for any case that slips past
-    that proactive creation."""
+    """#934: management-ui must proactively create all three RediSearch
+    indices at startup, and _search_one() must turn a "no such index"
+    error into a friendly message rather than a raw 500."""
 
     def test_lifespan_creates_all_three_indices_when_missing(self, client, fake_redis):
-        # `client` fixture already drove lifespan() via TestClient's context
-        # manager -- fake_redis.indices starts empty, so all three must have
-        # been created by the time the app finished starting up.
+        # fake_redis.indices starts empty, so lifespan() must create all three.
         assert fake_redis.indices == {
             ui_main.AIRCRAFT_MICTRONICS_SEARCH_INDEX,
             ui_main.AIRCRAFT_REGISTRY_SEARCH_INDEX,
@@ -1512,9 +1451,8 @@ class TestSearchIndexBootstrap:
         assert "does not exist yet" in detail
 
     def test_search_one_friendly_error_for_registry_index(self, client, fake_redis):
-        # Mictronics index search succeeds (no match, no error) -- the
-        # registry index is only queried as the fallback, so its error must
-        # still be caught and turned friendly rather than propagating raw.
+        # Registry index is only queried as the fallback; its error must
+        # still be caught and turned friendly.
         fake_redis.search_errors[ui_main.AIRCRAFT_REGISTRY_SEARCH_INDEX] = ui_main.redis_lib.ResponseError(
             f"No such index {ui_main.AIRCRAFT_REGISTRY_SEARCH_INDEX}"
         )
@@ -1535,9 +1473,7 @@ class TestSearchIndexBootstrap:
         assert "does not exist yet" in detail
 
     def test_search_one_still_returns_500_for_a_genuine_redis_error(self, client, fake_redis):
-        # Non-index-missing RedisErrors must keep the existing raw-message
-        # 500 behavior -- only the specific "no such index" text gets the
-        # friendlier treatment.
+        # Only the specific "no such index" text gets friendlier treatment.
         fake_redis.search_errors[ui_main.AIRCRAFT_MICTRONICS_SEARCH_INDEX] = ui_main.redis_lib.RedisError(
             "connection refused"
         )

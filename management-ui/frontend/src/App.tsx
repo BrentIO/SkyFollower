@@ -6,8 +6,7 @@ import { HistoryView } from "./views/HistoryView";
 import { LookupView } from "./views/LookupView";
 import { RulesView } from "./views/RulesView";
 
-// BrowserRouter -- nginx.conf's try_files falls back to /index.html for any
-// unmatched path, so a deep-link reload (e.g. /rules) resolves correctly.
+// BrowserRouter relies on nginx.conf's try_files fallback to /index.html for deep links.
 export default function App() {
   return (
     <ToastProvider>
