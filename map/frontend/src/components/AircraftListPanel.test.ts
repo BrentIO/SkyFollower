@@ -240,11 +240,34 @@ describe("panel mechanics -- push-layout flex sibling, edge tab, opacity (#1769)
 
   it("transitions width (not transform) between the tab-only and tab+panel widths", () => {
     expect(panelSource).toContain("const TAB_WIDTH_PX = 24;");
-    expect(panelSource).toContain("width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX");
+    expect(panelSource).toContain("width: open ? TAB_WIDTH_PX + renderWidth : TAB_WIDTH_PX");
   });
 
   it("suppresses the open/close width transition while actively resize-dragging (#1784)", () => {
     expect(panelSource).toContain('resizing ? "" : "transition-[width] duration-200"');
+  });
+});
+
+describe("viewport-aware render width on a phone-width viewport (#2049)", () => {
+  it("tracks window.innerWidth via a resize listener", () => {
+    expect(panelSource).toContain("window.innerWidth");
+    expect(panelSource).toContain('window.addEventListener("resize"');
+    expect(panelSource).toContain('window.removeEventListener("resize"');
+  });
+
+  it("renderWidth clamps the persisted width to what the viewport actually has left", () => {
+    const index = panelSource.indexOf("const renderWidth =");
+    expect(index).toBeGreaterThan(-1);
+    const callSite = panelSource.slice(index, index + 200);
+    expect(callSite).toContain("Math.min(width, viewportWidth - TAB_WIDTH_PX)");
+    expect(callSite).toContain("MIN_USABLE_PANEL_WIDTH_PX");
+  });
+
+  it("both inline-style widths use renderWidth, not the raw persisted width", () => {
+    expect(panelSource).toContain("width: open ? TAB_WIDTH_PX + renderWidth : TAB_WIDTH_PX");
+    expect(panelSource).toContain("style={{ width: renderWidth }}");
+    // The raw `width` state still drives drag/persistence, just not rendering.
+    expect(panelSource).not.toContain("style={{ width }}");
   });
 
   it("keeps the tab vertically centered within the drawer's own full height, not top-aligned", () => {
