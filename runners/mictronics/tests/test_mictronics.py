@@ -764,11 +764,8 @@ class TestWriteToRedis:
         conn.close()
 
     def test_description_code_survives_a_missing_manufacturer_model(self):
-        """#1771: a type_designator whose types row has description_code but
-        no manufacturer_model must still get its description_code written --
-        the LEFT JOIN genuinely matched a row (real ICAO Doc 8643 data
-        exists), it's just that only one of the two columns is populated for
-        this particular designator."""
+        """A matched types row with description_code but no manufacturer_model
+        must still get description_code written. Regression guard, see #1771."""
         conn = self._make_db()
         conn.execute(
             "INSERT INTO aircraft (icao_hex, registration, type_designator, military, interesting) "

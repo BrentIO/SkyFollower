@@ -10,19 +10,14 @@ aircraft:registry:{icao_hex} with 14-day TTL, publishes MQTT completion
 stats, then exits.
 
 Coverage is partial by design, not a scraping bug: CARC's own page text
-says this only covers "Transport Category aircraft ... registered ...
-and operating for compensation or hire" -- general aviation and private
-aircraft are excluded.
+limits this register to "Transport Category aircraft ... registered ...
+and operating for compensation or hire" -- general aviation is excluded.
 
-The register is a single HTML <table>, not one table per operator as it
-visually appears: 1-cell rows are operator-section headers (e.g. "Royal
-Jordanian Airlines"), each followed by a 7-cell column-header row
-("Manufacturer", "Model", ...) and then that operator's data rows. A
-stray 1-cell row reading "Jordanian Registered Aircraft" (a page-title
-artifact, not an operator name) appears once, immediately after the
-first operator's section header -- it's skipped rather than treated as
-a new operator, so it doesn't overwrite the real current-operator
-context.
+The register renders as one HTML <table>: 1-cell rows are operator-section
+headers, each followed by its own column-header row and then that
+operator's data rows. A stray 1-cell "Jordanian Registered Aircraft"
+title row after the first section header is skipped rather than treated
+as a new operator.
 
 Table columns (0-based):
   0: Manufacturer  → aircraft.manufacturer
@@ -34,11 +29,8 @@ Table columns (0-based):
   5: Reg. No.      → not stored; internal CARC registry number
   6: Reg. Date     → not stored; inconsistent formats across sections
 
-The operator-section heading itself (not a table column) → registrant.names
--- this register has no owner column at all, only the section an aircraft's
-row falls under, so that name fills the registrant-identity role directly,
-the same approach sg-caas-registry/tt-caa-registry take for their own
-operator-only sources.
+The operator-section heading (not a table column) fills registrant.names,
+since this register has no separate owner column.
 
 Data source: https://www.carc.gov.jo/en/node/684
 """
