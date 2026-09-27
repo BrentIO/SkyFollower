@@ -10,10 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Module import
-# ---------------------------------------------------------------------------
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _RUNNER_DIR = os.path.dirname(_HERE)
 _REPO_ROOT = os.path.abspath(os.path.join(_RUNNER_DIR, "..", ".."))
@@ -46,10 +42,6 @@ write_to_redis = _mod.write_to_redis
 _INDEX_URL = _mod._INDEX_URL
 _SUFFIX_RE = _mod._SUFFIX_RE
 publish_completion_stats = _mod.publish_completion_stats
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _make_row(
@@ -107,10 +99,6 @@ _INDEX_HTML_FULL_URL = b"""
 """
 
 
-# ---------------------------------------------------------------------------
-# _clean
-# ---------------------------------------------------------------------------
-
 
 class TestClean:
     def test_strips_whitespace(self):
@@ -128,10 +116,6 @@ class TestClean:
     def test_empty_returns_empty(self):
         assert _clean("") == ""
 
-
-# ---------------------------------------------------------------------------
-# _suffix_re
-# ---------------------------------------------------------------------------
 
 
 class TestSuffixRe:
@@ -157,10 +141,6 @@ class TestSuffixRe:
         assert not _SUFFIX_RE.match("abc")
 
 
-# ---------------------------------------------------------------------------
-# _escape_tag
-# ---------------------------------------------------------------------------
-
 
 class TestEscapeTag:
     def test_plain_unchanged(self):
@@ -169,10 +149,6 @@ class TestEscapeTag:
     def test_hyphen_escaped(self):
         assert _escape_tag("9A-ABC") == r"9A\-ABC"
 
-
-# ---------------------------------------------------------------------------
-# _discover_pdf_url
-# ---------------------------------------------------------------------------
 
 
 class TestDiscoverPdfUrl:
@@ -204,10 +180,6 @@ class TestDiscoverPdfUrl:
         with pytest.raises(RuntimeError, match="No /file/ link found"):
             _discover_pdf_url(session)
 
-
-# ---------------------------------------------------------------------------
-# download_and_parse
-# ---------------------------------------------------------------------------
 
 
 class TestDownloadAndParse:
@@ -323,10 +295,6 @@ class TestDownloadAndParse:
         mock_logger.info.assert_any_call("Parsed %d 9A- records.", 1)
 
 
-# ---------------------------------------------------------------------------
-# _build_record
-# ---------------------------------------------------------------------------
-
 
 class TestBuildRecord:
     def test_basic_fields(self):
@@ -381,10 +349,6 @@ class TestBuildRecord:
         assert record["source"] == "hr-ccaa-registry"
 
 
-# ---------------------------------------------------------------------------
-# _build_registration_map
-# ---------------------------------------------------------------------------
-
 
 class TestBuildRegistrationMap:
     def _make_redis(self, docs):
@@ -427,10 +391,6 @@ class TestBuildRegistrationMap:
         _build_registration_map(regs, r)
         assert r.ft.return_value.search.call_count == 2
 
-
-# ---------------------------------------------------------------------------
-# write_to_redis
-# ---------------------------------------------------------------------------
 
 
 class TestWriteToRedis:
@@ -492,10 +452,6 @@ class TestWriteToRedis:
         set_call = pipe.json.return_value.set.call_args
         assert "manufacturer" not in set_call[0][2]["aircraft"]
 
-
-# ---------------------------------------------------------------------------
-# publish_completion_stats
-# ---------------------------------------------------------------------------
 
 
 class TestPublishCompletionStats:
