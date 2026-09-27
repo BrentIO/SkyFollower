@@ -11,31 +11,25 @@ Data source: https://github.com/vradarserver/standing-data
   - code-blocks/schema-01/*.csv     -> lookup:icao-code-blocks (RedisJSON array)
   - countries/schema-01/*.csv       -> lookup:icao-countries (RedisJSON object)
 
-Scope was routes-only until #1848: aircraft, airline, and airport data from
-this same repository are still redundant with Mictronics/country-registry
-runners, Mictronics' operators.json, and the ourairports runner respectively,
-so those remain unimported. code-blocks/countries were a distinct oversight
-from that original scoping, not a deliberate exclusion -- they're the
-ICAO 24-bit (Mode S) address allocation table used to resolve an aircraft's
-country of registration for the ~140+ countries no runner scrapes a CAA for
-(see shared/lua/merge_aircraft.lua, which is where the actual per-hex
-resolution happens; this runner only stages the lookup tables it reads).
+Aircraft, airline, and airport data from this same repository is redundant
+with the Mictronics/country-registry runners, Mictronics' operators.json,
+and the ourairports runner respectively, so it remains unimported.
+code-blocks/countries are the ICAO 24-bit (Mode S) address allocation
+table, used by shared/lua/merge_aircraft.lua to resolve country of
+registration for the ~140+ countries no runner scrapes a CAA for; this
+runner only stages the lookup tables it reads.
 
 route:{ident} stores the source's AirportCodes column unmodified (e.g.
 "KMIA-KJFK-KMIA" for a same-day out-and-back using one callsign) -- no
 splitting, no filtering by leg count.
 
 code-blocks.csv's Bitmask/SignificantBitmask columns are hex strings
-converted to integers at import time; its Start/Finish/Count/IsMilitary
-columns are not carried into Redis at all -- unused by the bitmask-match
-lookup (Start always equals Bitmask in the source data; Finish/Count are
-derivable from the mask; IsMilitary is a documented non-goal, see #1848).
-Its CountryISO2 "ZZ" rows -- two entries that together cover the entire
-24-bit address space at the lowest possible SignificantBitmask -- are the
-source's synthetic "unknown/unassigned" catch-all, not a real country;
-importing them would mean merge_aircraft.lua's linear scan always finds a
-match, hiding the genuine no-match case behind a fake country, so they are
-dropped here rather than in the Lua script.
+converted to integers at import time; Start/Finish/Count/IsMilitary are
+not carried into Redis (unused by the bitmask-match lookup). Its
+CountryISO2 "ZZ" rows are the source's synthetic unknown/unassigned
+catch-all, not a real country, and are dropped here rather than in the
+Lua script so merge_aircraft.lua's linear scan can't mask a genuine
+no-match behind a fake country.
 """
 
 from __future__ import annotations
@@ -71,13 +65,9 @@ logger = logging.getLogger("vrs-standing-data")
 
 DOWNLOAD_URL = "https://codeload.github.com/vradarserver/standing-data/tar.gz/refs/heads/main"
 
-# The upstream repo's "Standing data changes" commit lands daily around
-# 03:49-03:51 UTC (verified against 30 days of commit history when this
-# runner was built), unlike the weekly cadence of the registration sources
-# this runner used to also cover. Route keys therefore use ROUTE_TTL_SECONDS
-# (shared/timing.py) -- deliberately shorter than the ENRICHMENT_TTL_SECONDS
-# every other (weekly) runner uses -- so route data can't silently go stale
-# for over a week if a run or two is missed.
+# Upstream commits land daily, unlike the weekly registration sources most
+# other runners cover, so routes use the shorter ROUTE_TTL_SECONDS rather
+# than ENRICHMENT_TTL_SECONDS to avoid staying stale for over a week.
 
 MQTT_ROOT = "SkyFollower/runner/vrs-standing-data"
 
@@ -106,10 +96,8 @@ def download_tarball(url: str) -> bytes:
 
 def extract_files(tarball: bytes, path_prefix: str, suffix: str = ".csv") -> dict[str, bytes]:
     """Return {path: bytes} for every file in `tarball` under `path_prefix`
-    ending in `suffix`, with the GitHub tarball's single top-level
-    "standing-data-{ref}/" directory stripped from each path. Called once per
-    prefix (routes/code-blocks/countries) against the same downloaded bytes,
-    so a single download serves all three imports."""
+    ending in `suffix`, with the tarball's top-level "standing-data-{ref}/"
+    directory stripped from each path."""
     files: dict[str, bytes] = {}
     with tarfile.open(fileobj=io.BytesIO(tarball), mode="r:gz") as tf:
         for member in tf.getmembers():
@@ -457,9 +445,8 @@ def main() -> None:
         countries_written = write_countries_to_redis(conn, r, ENRICHMENT_TTL_SECONDS)
         conn.close()
 
-        # Reported as one combined total -- the existing "Records Imported"
-        # HA sensor/MQTT stat predates code-blocks/countries and is a plain
-        # totalizer, not scoped to routes specifically.
+        # Reported as one combined total; the sensor is a plain totalizer,
+        # not scoped to routes specifically.
         records_imported = routes_written + code_blocks_written + countries_written
         status = "success"
         logger.info(

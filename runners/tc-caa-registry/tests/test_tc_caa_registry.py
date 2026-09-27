@@ -231,15 +231,9 @@ class TestPublishCompletionStats:
         publish_completion_stats({}, 100, "success")
 
     def test_blank_host_skips_without_crashing(self):
-        """Regression test: shared/config.py's mqtt_config() always returns a
-        populated dict with host="" (never None/{}) when MQTT_HOST is unset
-        -- the documented way to disable MQTT entirely. A guard that only
-        checks `if not mc` doesn't catch this, since the dict itself is
-        truthy; it then calls build_mqtt_client() (which correctly returns
-        None for a blank host) and crashes assigning .on_connect on None.
-        That crash gets silently swallowed by main()'s outer try/except, so
-        the runner "succeeds" but MQTT stats never publish and a bogus
-        warning gets logged every run. Must not raise."""
+        """mqtt_config() returns {"host": ""} rather than None/{} when MQTT is
+        unset, so a bare `if not mc` check misses it and crashes on
+        None.on_connect. Must not raise."""
         cfg = {"mqtt": {"host": "", "port": 1883, "username": "", "password": ""}}
         publish_completion_stats(cfg, 100, "success")
 

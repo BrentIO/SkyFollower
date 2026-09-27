@@ -3,30 +3,15 @@
 SkyFollower Seychelles SCAA Data Runner
 
 Fetches the SCAA aircraft civil register page and parses every embedded
-HTML table with BeautifulSoup (single request, no discovery step, no file
-to download), looks up ICAO hex via the Redis simple search index
-(Mictronics), writes enrichment data to aircraft:registry:{icao_hex} with
-14-day TTL, publishes MQTT completion stats, then exits.
+HTML table with BeautifulSoup, looks up ICAO hex via the Redis simple
+search index (Mictronics), writes enrichment data to
+aircraft:registry:{icao_hex} with 14-day TTL, publishes MQTT completion
+stats, then exits.
 
-Coverage is deliberately small, not a scraping bug: SCAA's own page states
-"aircraft with a principle place of business outside Seychelles and/or
-those not operating within or to Seychelles are not registered on the
-Seychelles Civil Register" -- 19 aircraft at check time is the expected
-full result.
-
-The register is rendered as three separate <table> elements, one per
-operator grouping, each with its own repeated header row -- every table
-on the page is parsed, not just the first.
-
-This runner's outbound requests use a real browser-style User-Agent
-rather than the "Mozilla/5.0 (compatible; P5Software SkyFollower)" string
-every other runner in this repo shares -- confirmed via direct testing
-that SCAA's WAF blocks that exact legacy "Mozilla/5.0 (compatible; ...)"
-bot-signature format specifically (not the words "SkyFollower" or
-"P5Software" themselves; a substitute bot name in the same format was
-blocked identically). A plain browser UA passes cleanly. This is scoped
-to this runner only -- every other runner in the repo currently works
-fine with the shared UA.
+Coverage is deliberately small, not a scraping bug: SCAA only registers
+aircraft based in Seychelles (~19 aircraft). The register renders as three
+separate <table> elements, one per operator grouping; all are parsed, not
+just the first.
 
 Table columns (0-based):
   0: Aircraft Registration → registration lookup key (S7-prefix)
@@ -374,10 +359,8 @@ def main() -> None:
     ttl = ENRICHMENT_TTL_SECONDS
 
     session = requests.Session()
-    # SCAA's WAF blocks every other runner's shared "Mozilla/5.0 (compatible;
-    # P5Software SkyFollower)" User-Agent -- confirmed the trigger is the
-    # legacy "Mozilla/5.0 (compatible; ...)" bot-signature format itself,
-    # not the specific words. A plain browser-style UA passes cleanly.
+    # SCAA's WAF blocks the shared legacy "Mozilla/5.0 (compatible; ...)" UA
+    # every other runner uses; a real browser-style UA is required here.
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"

@@ -229,12 +229,9 @@ class TestBuildRecord:
 # ---------------------------------------------------------------------------
 
 class _FakeRedisJson:
-    """Minimal fake reproducing real JSON.SET NX semantics: writes only
-    when the key is absent, returns None (no-op) when NX blocks the write,
-    matching what shared.redis_json.set_json() returns from the real
-    redis-py client. Also tracks EXPIRE calls (key -> most recent TTL
-    seconds), so tests can assert the TTL-refresh behavior independently
-    of whether the content write itself happened."""
+    """Fake reproducing JSON.SET NX semantics: writes only if the key is
+    absent, else returns None. Tracks EXPIRE calls per key so tests can
+    check TTL refresh independently of whether the write happened."""
 
     def __init__(self, existing: dict[str, dict] | None = None):
         self._store: dict[str, dict] = dict(existing or {})
