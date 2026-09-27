@@ -108,11 +108,11 @@ export function AircraftDetailPanel({
   const hasBadges = data.military || data.specialLivery != null;
 
   return (
-    // max-w-[calc(100vw-76px)]: 76px = left-4 (16) + ControlsPanel's icon
-    // column footprint (right-4 + one button, 52) + an 8px gap -- keeps
-    // the panel clear of the icon column on narrow viewports (#2047).
+    // max-w-[calc(100vw-100px)]: 100 = left-4(16) + AircraftListPanel's
+    // always-present tab (24 -- this panel's container is narrower than
+    // 100vw by that much) + icon column footprint (52) + 8px gap.
     <div
-      className="absolute top-4 left-4 max-h-[80vh] w-80 max-w-[calc(100vw-76px)] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
+      className="absolute top-4 left-4 max-h-[80vh] w-80 max-w-[calc(100vw-100px)] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
       style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       <div className="flex items-start justify-between gap-3 p-3">
