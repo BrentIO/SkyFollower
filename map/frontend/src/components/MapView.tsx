@@ -450,11 +450,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     for (const icaoHex of needed) {
       historySeededRef.current.add(icaoHex);
     }
-    // Batched into one request instead of one fetchFlightHistory per
-    // aircraft -- with 100+ tracked aircraft, N individual requests
-    // dominated page-load latency (HTTP/1.1's ~6-in-flight cap queues the
-    // rest). See issue #2052.
-    seedTrailForMany(needed);
+    seedTrailForMany(needed); // one request for all, not one per aircraft (#2052)
   }, [historyAll, aircraft, seedTrailForMany]);
 
   // One throttle instance for this component's whole lifetime so "move"

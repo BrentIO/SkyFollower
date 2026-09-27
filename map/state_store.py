@@ -262,22 +262,10 @@ class FlightStateStore:
         return [json.loads(p) for p in raw]
 
     def get_flights_batch(self, icao_hex_list: list[str]) -> list[dict]:
-        """Batched counterpart to get_flight()+get_trail() combined -- same
-        per-aircraft shape (merged current-state plus a `trail` array) as
-        GET /api/flights/{icao_hex}, but for many hexes in two pipelined
-        round trips total, not 2N individual ones.
-
-        A hex that isn't currently tracked is silently omitted from the
-        result, mirroring the singular endpoint's 404-means-null handling
-        at batch granularity -- there's no per-item error.
-
-        Same pipelining shape as list_flights(): every requested hex's
-        HGETALL is issued as one pipeline (a single round trip), then --
-        only for the hexes that actually came back non-empty -- every
-        trail's LRANGE is issued as a second pipeline (a second round
-        trip). Trail-fetching is skipped entirely for hexes that turned
-        out untracked, so an "All" seed over a mostly-stale hex list still
-        costs at most two round trips, never one per hex."""
+        """Batched get_flight()+get_trail(): one pipelined HGETALL round
+        for every hex, then one pipelined LRANGE round for only the ones
+        that came back tracked -- two round trips total, not 2N. Untracked
+        hexes are silently omitted."""
         if not icao_hex_list:
             return []
 

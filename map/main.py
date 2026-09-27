@@ -445,19 +445,10 @@ class FlightsBatchRequest(BaseModel):
 
 @app.post("/api/flights/batch", tags=["flights"])
 def get_flights_batch(payload: FlightsBatchRequest) -> list[dict]:
-    """Batched counterpart to GET /api/flights/{icao_hex}: given a JSON
-    list of icao_hex values, returns one object per hex that's still
-    tracked, each the same merged current-state-plus-`trail` shape as the
-    singular endpoint. A hex that isn't currently tracked is silently
-    omitted from the response list -- no per-item error, mirroring the
-    singular endpoint's 404-means-null handling at batch granularity.
-
-    Exists so a caller seeding many aircraft's trails at once (the map
-    frontend's "Trails: All") doesn't have to fire one HTTP request per
-    aircraft -- see state_store.py's get_flights_batch for the two-
-    pipelined-round-trips implementation this delegates to, instead of
-    the 2N individual Redis round trips N separate requests to the
-    singular endpoint would cost."""
+    """Batched counterpart to GET /api/flights/{icao_hex} -- same
+    per-aircraft shape, but for many hexes in two pipelined Redis round
+    trips instead of one HTTP request per aircraft. Untracked hexes are
+    silently omitted."""
     return _store.get_flights_batch(payload.icao_hex)
 
 

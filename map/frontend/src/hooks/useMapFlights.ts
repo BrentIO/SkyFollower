@@ -24,14 +24,8 @@ export interface UseMapFlightsResult {
    * fetch error is swallowed, leaving the client-accumulated trail in place.
    */
   seedTrailFor: (icaoHex: string) => void;
-  /**
-   * Batched counterpart to seedTrailFor: fetches every listed aircraft's
-   * server-accumulated trail in one request (POST /api/flights/batch) and
-   * reseeds each one's client trail from it, instead of firing one request
-   * per aircraft. Used by "Trails: All" -- see issue #2052. An empty list
-   * is a no-op (no request fired). Safe to call repeatedly; a fetch error
-   * is swallowed, leaving the client-accumulated trails in place.
-   */
+  /** Batched seedTrailFor: one request for a whole list instead of one per
+   * aircraft (used by "Trails: All"). Empty list is a no-op. */
   seedTrailForMany: (icaoHexList: string[]) => void;
   /**
    * Applies a `remove` that was deferred because `protectedIcaoHex`

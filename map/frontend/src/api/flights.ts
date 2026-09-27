@@ -32,13 +32,9 @@ export async function fetchFlightHistory(
   return (await response.json()) as MapFlightHistory;
 }
 
-// POST /api/flights/batch -- the batched counterpart to fetchFlightHistory
-// above (map/main.py's get_flights_batch). Given a list of icao_hex values,
-// returns one MapFlightHistory per hex that's still tracked in a single HTTP
-// request/two Redis round trips, instead of one fetchFlightHistory request
-// per hex -- see issue #2052. A hex that's no longer tracked is just absent
-// from the returned array; there's no per-item 404 to handle here, unlike
-// the singular fetchFlightHistory.
+// POST /api/flights/batch -- batched fetchFlightHistory (map/main.py's
+// get_flights_batch). One request for many hexes; an untracked hex is
+// just absent from the response, no per-item 404.
 export async function fetchFlightHistoryBatch(
   restFlightsUrl: string,
   icaoHexList: string[],
