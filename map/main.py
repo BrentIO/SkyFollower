@@ -93,6 +93,11 @@ _UDP_RECV_BUFFER_BYTES = 1024 * 1024
 # rather than failing app startup when it's absent.
 _FRONTEND_DIST_DIR = os.path.join(_HERE, "frontend", "dist")
 
+# The only files under dist/assets/ that aren't content-hashed by Vite --
+# must match vite.config.ts's MAPLIBRE_WORKER_FILES exactly (see that
+# file's comment for why they're copied verbatim under stable names).
+_UNHASHED_ASSET_NAMES = frozenset(("maplibre-gl-worker.mjs", "maplibre-gl-shared.mjs"))
+
 
 class _SPAStaticFiles(StaticFiles):
     """Serves the built frontend with real single-page-app fallback: any
@@ -108,6 +113,18 @@ class _SPAStaticFiles(StaticFiles):
             if exc.status_code == 404 and scope["method"] in ("GET", "HEAD"):
                 return await super().get_response("index.html", scope)
             raise
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        """Adds Cache-Control on top of Starlette's ETag/Last-Modified
+        conditional-GET support -- content-hashed assets can be cached
+        forever, everything else must always revalidate (see issue #2054)."""
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        full_path = pathlib.PurePath(full_path)
+        is_hashed_asset = full_path.parent.name == "assets" and full_path.name not in _UNHASHED_ASSET_NAMES
+        response.headers["cache-control"] = (
+            "public, max-age=31536000, immutable" if is_hashed_asset else "no-cache"
+        )
+        return response
 
 
 # Module-level state, built in lifespan() -- globals rather than app.state
