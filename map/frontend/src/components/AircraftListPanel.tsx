@@ -132,6 +132,10 @@ const TAB_WIDTH_PX = 24;
 // clamp, which is independent of the live viewport.
 const MIN_MAP_AREA_WIDTH_PX = 320;
 
+// Absolute render-width floor on a viewport too narrow to fit even
+// MIN_PANEL_WIDTH_PX (#2049) -- just enough to stay usable, not a target.
+const MIN_USABLE_PANEL_WIDTH_PX = 200;
+
 const ROW_BAND_EVEN = "bg-white dark:bg-slate-900";
 const ROW_BAND_ODD = "bg-slate-50 dark:bg-slate-800/60";
 // Overrides normal banding entirely (not blended) for a row squawking
@@ -234,6 +238,23 @@ export function AircraftListPanel({
     }
   }
 
+  // Tracks live viewport width so renderWidth (below) can react to it --
+  // React doesn't re-render on a bare window resize otherwise.
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Viewport-clamped render width (vs. persisted `width`) -- lets the
+  // table scroll horizontally on a phone instead of the panel running
+  // off-screen. `width`/persistence stay untouched (#2049).
+  const renderWidth = Math.max(
+    MIN_USABLE_PANEL_WIDTH_PX,
+    Math.min(width, viewportWidth - TAB_WIDTH_PX),
+  );
+
   // Coalesces this panel's own row rebuild the same way MapView.tsx
   // coalesces its MapLibre source rebuild, so a WebSocket batch touching
   // hundreds of aircraft doesn't re-sort/re-render on every single event.
@@ -283,7 +304,7 @@ export function AircraftListPanel({
       // Reuses MAX_LABEL_Z_INDEX rather than a second magic constant,
       // matching AircraftDetailPanel's own MAX_LABEL_Z_INDEX + 1, in case a
       // future DOM overlay needs the same "always above the map" guarantee.
-      style={{ width: open ? TAB_WIDTH_PX + width : TAB_WIDTH_PX, zIndex: MAX_LABEL_Z_INDEX + 1 }}
+      style={{ width: open ? TAB_WIDTH_PX + renderWidth : TAB_WIDTH_PX, zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       {/* Tab stays vertically centered within the drawer's full height, not
           top-aligned, so it never collides with ControlsPanel's top-right
@@ -310,7 +331,7 @@ export function AircraftListPanel({
 
       <div
         className="relative flex h-full flex-none flex-col overflow-hidden rounded-l-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
-        style={{ width }}
+        style={{ width: renderWidth }}
       >
         {/* Drag-to-resize handle -- absolutely positioned, straddling the
             panel's left edge. Only rendered while open. Pointer Events
