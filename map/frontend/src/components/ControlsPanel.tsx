@@ -137,7 +137,11 @@ export function ControlsPanel({
       // this same wrapper rather than setting its own zIndex.
       style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
-      <div className="pointer-events-auto flex flex-col gap-2">
+      {/* `relative` here (not per-button) is load-bearing: it anchors
+          SettingsPanel to this column's fixed top edge rather than to
+          wherever its trigger button sits, so the space below it never
+          depends on button order (#2031). */}
+      <div className="pointer-events-auto relative flex flex-col gap-2">
         <IconButton
           label={fullscreen ? "Exit Fullscreen" : "Fullscreen"}
           icon={fullscreenIcon(fullscreen)}
@@ -189,32 +193,30 @@ export function ControlsPanel({
             SettingsPanel.tsx). The icon reads "active" while the panel is
             open, matching a disclosure button rather than an on/off
             feature -- Settings itself has no on/off state of its own. */}
-        <div className="relative">
-          <IconButton
-            label="Settings"
-            icon={SETTINGS_ICON}
-            active={settingsExpanded}
-            onClick={() => setSettingsExpanded((prev) => !prev)}
-            size="md"
+        <IconButton
+          label="Settings"
+          icon={SETTINGS_ICON}
+          active={settingsExpanded}
+          onClick={() => setSettingsExpanded((prev) => !prev)}
+          size="md"
+        />
+        {settingsExpanded && (
+          <SettingsPanel
+            onClose={() => setSettingsExpanded(false)}
+            mapLabelsOn={mapLabelsOn}
+            onToggleMapLabels={onToggleMapLabels}
+            displayScale={displayScale}
+            onDisplayScaleChange={onDisplayScaleChange}
+            rangeOutlineVisible={rangeOutlineVisible}
+            onToggleRangeOutline={onToggleRangeOutline}
+            rangeOutlineDisabled={rangeOutlineDisabled}
+            rangeRingsVisible={rangeRingsVisible}
+            onToggleRangeRings={onToggleRangeRings}
+            rangeRingsDisabled={rangeRingsDisabled}
+            radarOpacity={radarOpacity}
+            onRadarOpacityChange={onRadarOpacityChange}
           />
-          {settingsExpanded && (
-            <SettingsPanel
-              onClose={() => setSettingsExpanded(false)}
-              mapLabelsOn={mapLabelsOn}
-              onToggleMapLabels={onToggleMapLabels}
-              displayScale={displayScale}
-              onDisplayScaleChange={onDisplayScaleChange}
-              rangeOutlineVisible={rangeOutlineVisible}
-              onToggleRangeOutline={onToggleRangeOutline}
-              rangeOutlineDisabled={rangeOutlineDisabled}
-              rangeRingsVisible={rangeRingsVisible}
-              onToggleRangeRings={onToggleRangeRings}
-              rangeRingsDisabled={rangeRingsDisabled}
-              radarOpacity={radarOpacity}
-              onRadarOpacityChange={onRadarOpacityChange}
-            />
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
