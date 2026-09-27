@@ -62,6 +62,14 @@ BRANCH=""
 
 ALL_ROLES="core management-ui archive message-processor receiver map"
 
+# Last-resort default for a RabbitMQ/Redis/MQTT host prompt when nothing
+# else is already configured (see shared_conn_default's fallback arg
+# below) -- every docker-compose.*.yaml declares extra_hosts for this, so
+# it resolves to whatever host the prompting container itself runs on.
+# Correct for the common case of everything on one host; an operator on a
+# genuinely separate host still sees it prefilled and types over it.
+SHARED_CONN_HOST_FALLBACK="host.docker.internal"
+
 # Fixed dependency order the selected roles are sorted into before the
 # install loop runs: core stashes shared secrets the others read, and
 # archive must deploy the CloudFormation stack before management-ui reads
@@ -784,17 +792,22 @@ collect_receiver_env() {
   done
 
   echo
-  RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(shared_conn_default "$env_file" RABBITMQ_HOST SHARED_CONN_RABBITMQ_HOST)")"
+  RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(shared_conn_default "$env_file" RABBITMQ_HOST SHARED_CONN_RABBITMQ_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(shared_conn_default "$env_file" RABBITMQ_PORT SHARED_CONN_RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(shared_conn_default "$env_file" RABBITMQ_USERNAME SHARED_CONN_RABBITMQ_USERNAME skyfollower)")"
   RABBITMQ_PASSWORD="$(prompt_password_value RABBITMQ_PASSWORD "RabbitMQ password" "$(shared_conn_default "$env_file" RABBITMQ_PASSWORD SHARED_CONN_RABBITMQ_PASSWORD)")"
-  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST)")"
+  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(shared_conn_default "$env_file" MQTT_PASSWORD SHARED_CONN_MQTT_PASSWORD)" 0)"
   # Optional -- blank disables identity claim/heartbeat, period-counter
   # sensors, and core-health registration; RECEIVER_NAME then stays purely
   # cosmetic (a generated UUID identity is used instead).
+  # No SHARED_CONN_HOST_FALLBACK default here (unlike RABBITMQ_HOST/
+  # MQTT_HOST above) -- blank is a deliberate opt-out this operator may
+  # actually want, not just an unset required value; defaulting it to a
+  # real host would silently re-enable the feature for anyone who accepts
+  # the default by pressing Enter.
   REDIS_HOST="$(prompt_string REDIS_HOST "Redis host (leave blank to disable identity claim + message counters)" "$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST)" 0)"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(shared_conn_default "$env_file" REDIS_PORT SHARED_CONN_REDIS_PORT 6379)" 1 65535)"
   REDIS_PASSWORD="$(prompt_password_value REDIS_PASSWORD "Redis password" "$(shared_conn_default "$env_file" REDIS_PASSWORD SHARED_CONN_REDIS_PASSWORD)" 0)"
@@ -960,7 +973,7 @@ collect_core_env() {
   fi
   # Stashed the same way as CORE_RABBITMQ_PASSWORD above.
   CORE_REDIS_PASSWORD="$REDIS_PASSWORD"
-  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value "$env_file" MQTT_HOST)")"
+  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(existing_env_value_or "$env_file" MQTT_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(existing_env_value_or "$env_file" MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(existing_env_value "$env_file" MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(existing_env_value "$env_file" MQTT_PASSWORD)" 0)"
@@ -1022,16 +1035,7 @@ ENV_EOF
 collect_management_ui_env() {
   local role_dir="$1" env_file="${1}/.env"
   echo "-- ${role_dir} (management-ui) --"
-  # If core is also selected in this run, default to the host loopback
-  # address (Redis' port is published to the host) rather than the "redis"
-  # service name, which only resolves inside core's own Compose network.
-  # Only applies below the per-role .env and cross-role cache defaults.
-  local redis_default
-  redis_default="$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST)"
-  if [ -z "$redis_default" ] && [ -n "${CORE_SELECTED_IN_THIS_RUN:-}" ]; then
-    redis_default="localhost"
-  fi
-  REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$redis_default")"
+  REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(shared_conn_default "$env_file" REDIS_PORT SHARED_CONN_REDIS_PORT 6379)" 1 65535)"
   REDIS_PASSWORD="$(resolve_core_shared_password CORE_REDIS_PASSWORD REDIS_PASSWORD "Redis password" "$env_file" SHARED_CONN_REDIS_PASSWORD)"
   # Reads the archive stack's outputs so bucket/region/credentials
@@ -1338,14 +1342,14 @@ collect_message_processor_env() {
 
   LATITUDE="$(prompt_number_range LATITUDE "Receiver reference latitude (decimal degrees)" "$(existing_env_value "$env_file" LATITUDE)" -90 90)"
   LONGITUDE="$(prompt_number_range LONGITUDE "Receiver reference longitude (decimal degrees)" "$(existing_env_value "$env_file" LONGITUDE)" -180 180)"
-  RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(shared_conn_default "$env_file" RABBITMQ_HOST SHARED_CONN_RABBITMQ_HOST)")"
+  RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(shared_conn_default "$env_file" RABBITMQ_HOST SHARED_CONN_RABBITMQ_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(shared_conn_default "$env_file" RABBITMQ_PORT SHARED_CONN_RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(shared_conn_default "$env_file" RABBITMQ_USERNAME SHARED_CONN_RABBITMQ_USERNAME skyfollower)")"
   RABBITMQ_PASSWORD="$(resolve_core_shared_password CORE_RABBITMQ_PASSWORD RABBITMQ_PASSWORD "RabbitMQ password" "$env_file" SHARED_CONN_RABBITMQ_PASSWORD)"
-  REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST)")"
+  REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(shared_conn_default "$env_file" REDIS_PORT SHARED_CONN_REDIS_PORT 6379)" 1 65535)"
   REDIS_PASSWORD="$(resolve_core_shared_password CORE_REDIS_PASSWORD REDIS_PASSWORD "Redis password" "$env_file" SHARED_CONN_REDIS_PASSWORD)"
-  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST)")"
+  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(shared_conn_default "$env_file" MQTT_PASSWORD SHARED_CONN_MQTT_PASSWORD)" 0)"
@@ -1426,14 +1430,14 @@ collect_archive_env() {
   ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY="$(prompt_password_value ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY "archive-processor AWS secret access key" "${AWS_PROV_ARCHIVE_PROCESSOR_SECRET:-$(existing_env_value "$env_file" ARCHIVE_PROCESSOR_AWS_SECRET_ACCESS_KEY)}")"
   ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID="$(prompt_string ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID "archive-compaction AWS access key ID" "${AWS_PROV_ARCHIVE_COMPACTION_KEY_ID:-$(existing_env_value "$env_file" ARCHIVE_COMPACTION_AWS_ACCESS_KEY_ID)}")"
   ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY="$(prompt_password_value ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY "archive-compaction AWS secret access key" "${AWS_PROV_ARCHIVE_COMPACTION_SECRET:-$(existing_env_value "$env_file" ARCHIVE_COMPACTION_AWS_SECRET_ACCESS_KEY)}")"
-  RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(shared_conn_default "$env_file" RABBITMQ_HOST SHARED_CONN_RABBITMQ_HOST)")"
+  RABBITMQ_HOST="$(prompt_string RABBITMQ_HOST "RabbitMQ host" "$(shared_conn_default "$env_file" RABBITMQ_HOST SHARED_CONN_RABBITMQ_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   RABBITMQ_PORT="$(prompt_int_range RABBITMQ_PORT "RabbitMQ port" "$(shared_conn_default "$env_file" RABBITMQ_PORT SHARED_CONN_RABBITMQ_PORT 5672)" 1 65535)"
   RABBITMQ_USERNAME="$(prompt_string RABBITMQ_USERNAME "RabbitMQ username" "$(shared_conn_default "$env_file" RABBITMQ_USERNAME SHARED_CONN_RABBITMQ_USERNAME skyfollower)")"
   RABBITMQ_PASSWORD="$(resolve_core_shared_password CORE_RABBITMQ_PASSWORD RABBITMQ_PASSWORD "RabbitMQ password" "$env_file" SHARED_CONN_RABBITMQ_PASSWORD)"
-  REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST)")"
+  REDIS_HOST="$(prompt_string REDIS_HOST "Redis host" "$(shared_conn_default "$env_file" REDIS_HOST SHARED_CONN_REDIS_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   REDIS_PORT="$(prompt_int_range REDIS_PORT "Redis port" "$(shared_conn_default "$env_file" REDIS_PORT SHARED_CONN_REDIS_PORT 6379)" 1 65535)"
   REDIS_PASSWORD="$(resolve_core_shared_password CORE_REDIS_PASSWORD REDIS_PASSWORD "Redis password" "$env_file" SHARED_CONN_REDIS_PASSWORD)"
-  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST)")"
+  MQTT_HOST="$(prompt_string MQTT_HOST "MQTT broker host" "$(shared_conn_default "$env_file" MQTT_HOST SHARED_CONN_MQTT_HOST "$SHARED_CONN_HOST_FALLBACK")")"
   MQTT_PORT="$(prompt_int_range MQTT_PORT "MQTT port" "$(shared_conn_default "$env_file" MQTT_PORT SHARED_CONN_MQTT_PORT 1883)" 1 65535)"
   MQTT_USERNAME="$(prompt_string MQTT_USERNAME "MQTT username" "$(shared_conn_default "$env_file" MQTT_USERNAME SHARED_CONN_MQTT_USERNAME)" 0)"
   MQTT_PASSWORD="$(prompt_password_value MQTT_PASSWORD "MQTT password" "$(shared_conn_default "$env_file" MQTT_PASSWORD SHARED_CONN_MQTT_PASSWORD)" 0)"
@@ -2188,7 +2192,6 @@ main() {
         usage
         ;;
     esac
-    [ "$r" = "core" ] && CORE_SELECTED_IN_THIS_RUN=1
   done
 
   # Sort into ROLE_DEPENDENCY_ORDER: collect_core_env() must run before any
