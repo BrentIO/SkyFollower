@@ -1,12 +1,9 @@
 import { RANGE_RING_LABEL_LAYER_ID, TRACE_POINTS_LABEL_LAYER_ID } from "./mapLayerIds";
 
 // Discovers the basemap's own text-bearing layers generically, rather than
-// hardcoding the current style's layer IDs (place names, road
-// names/shields, water names, airport labels, etc.) -- those belong to a
-// remote, third-party style (see lib/maplibreSetup.ts's MAP_STYLE) and
-// could be renamed or restructured on a future style swap. Pure and
-// MapLibre-agnostic so it's covered by plain unit tests, same pattern as
-// trailSeeding.ts/infoBoxOffset.ts/selection.ts.
+// hardcoding the current style's layer IDs -- those belong to a remote,
+// third-party style (see lib/maplibreSetup.ts's MAP_STYLE) and could be
+// renamed or restructured on a future style swap.
 
 // The minimal shape of MapLibre's own LayerSpecification this function
 // reads -- lets tests pass plain objects instead of a full

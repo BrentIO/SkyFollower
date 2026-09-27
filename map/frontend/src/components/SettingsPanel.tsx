@@ -1,25 +1,17 @@
 import { DIVIDER, SECTION_BAR } from "./AircraftDetailPanel";
 
-// #2012: consolidates the rarely-touched controls that used to be their own
-// standalone icon-column buttons/popovers in ControlsPanel.tsx -- Map
-// Labels, Display Scale (relabeled "Text & Icon Size" here), Range Outline,
-// and a brand-new Range Rings toggle -- plus Radar's opacity slider (its
-// on/off/Play-Pause controls stay in ControlsPanel's own Radar popover for
-// now; see the separate radar-button issue this panel's docstring points
-// at). Opened from one new "Settings" IconButton in ControlsPanel's column,
-// mirroring that column's existing popover-behind-a-button pattern (Radar,
-// Display Scale before this change) but sized/styled like
+// Consolidates the rarely-touched controls that used to be their own
+// standalone icon-column buttons/popovers in ControlsPanel.tsx: Map
+// Labels, Text & Icon Size, the two Range toggles, and Radar's opacity
+// slider (its on/off/Play-Pause controls stay in ControlsPanel's own Radar
+// popover). Opened from a "Settings" IconButton, sized/styled like
 // AircraftDetailPanel instead of a small popover -- headed sections with
-// dividers, reusing that component's own SECTION_BAR/DIVIDER constants
-// rather than a second, driftable copy of the same classes.
+// dividers, reusing that component's SECTION_BAR/DIVIDER constants.
 export interface SettingsPanelProps {
   onClose: () => void;
-  /** Basemap's own text labels -- see ControlsPanel's own prop doc for the
-   * full history; unchanged behavior, just a switch instead of a button. */
+  /** Basemap's own text labels. */
   mapLabelsOn: boolean;
   onToggleMapLabels: () => void;
-  /** #2000, relabeled "Text & Icon Size" for clarity -- same 0.5-1.5 range
-   * and behavior as the popover it replaces. */
   displayScale: number;
   onDisplayScaleChange: (value: number) => void;
   /** Daily reception range outline overlay -- same disabled-when-no-center
@@ -27,17 +19,14 @@ export interface SettingsPanelProps {
   rangeOutlineVisible: boolean;
   onToggleRangeOutline: () => void;
   rangeOutlineDisabled: boolean;
-  /** New in #2012: the static 100/150/200nmi rings (lib/rangeRings.ts)
-   * previously rendered unconditionally whenever a center was configured,
-   * with no on/off control at all. Same disabled-when-no-center convention
-   * as rangeOutlineDisabled -- no center means nothing to draw rings
-   * around. */
+  /** The static 100/150/200nmi rings (lib/rangeRings.ts). Same
+   * disabled-when-no-center convention as rangeOutlineDisabled. */
   rangeRingsVisible: boolean;
   onToggleRangeRings: () => void;
   rangeRingsDisabled: boolean;
-  /** 0-1, applied live via raster-opacity -- see lib/controlsPersistence.ts
-   * for why 0.5 is the default. The on/off switch and Play/Pause button
-   * stay in ControlsPanel's own Radar popover; only the slider moved. */
+  /** 0-1, applied live via raster-opacity. The on/off switch and Play/Pause
+   * button stay in ControlsPanel's own Radar popover; only the slider
+   * moved. */
   radarOpacity: number;
   onRadarOpacityChange: (value: number) => void;
 }
@@ -60,14 +49,11 @@ export function SettingsPanel({
   onRadarOpacityChange,
 }: SettingsPanelProps) {
   return (
-    // Positioned relative to the Settings button beside it (right-full/mr-2,
-    // same idiom as ControlsPanel's existing Radar/Display Scale popovers)
-    // rather than a fixed top-4/left-4 like AircraftDetailPanel -- the two
-    // panels can plausibly be open at once (this one from the icon column,
-    // that one from selecting an aircraft), so anchoring here instead of
-    // reusing AircraftDetailPanel's own corner avoids any overlap. No
-    // explicit zIndex needed -- ControlsPanel's outer column wrapper already
-    // pins every popover above InfoBoxLayer's labels (#1953).
+    // Positioned relative to the Settings button beside it, not a fixed
+    // top-4/left-4 like AircraftDetailPanel -- the two panels can plausibly
+    // be open at once, so anchoring here avoids any overlap. No explicit
+    // zIndex needed -- ControlsPanel's outer column wrapper already pins
+    // every popover above InfoBoxLayer's labels.
     <div className="absolute top-0 right-full mr-2 w-72 max-h-[70vh] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100">
       <div className="flex items-center justify-between gap-3 p-3">
         <div className="text-sm font-bold">Settings</div>
@@ -154,11 +140,8 @@ export function SettingsPanel({
   );
 }
 
-// Phone-style toggle switch -- copied verbatim (role="switch"/aria-checked,
-// sliding thumb via translate-x, bg-blue-600 when on) from ControlsPanel's
-// pre-existing Radar on/off switch (#1911), extracted here since this panel
-// needs the same shape three times (Map Labels, Reception Outline, Distance
-// Rings) instead of once.
+// Phone-style toggle switch -- same shape as ControlsPanel's Radar on/off
+// switch, extracted here since this panel needs it three times.
 function ToggleSwitch({
   checked,
   onChange,
@@ -168,8 +151,7 @@ function ToggleSwitch({
   checked: boolean;
   onChange: () => void;
   /** Lowercase feature name, e.g. "map labels" -- interpolated into the
-   * aria-label as "Turn {feature} on/off", matching the Radar switch's own
-   * aria-label convention. */
+   * aria-label as "Turn {feature} on/off". */
   feature: string;
   disabled?: boolean;
 }) {

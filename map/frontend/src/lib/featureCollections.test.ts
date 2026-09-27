@@ -252,13 +252,10 @@ describe("aircraftFeature -- lighter-than-air heading override (#1788)", () => {
   });
 });
 
-// Real invariant this suite relies on (see aircraftState.ts's applyEventToRecord):
-// a position event's trail push always uses that same event's own lat/lon,
-// so trail[last] === {a.lat, a.lon} whenever hasPosition(a). Unlike the
-// withTrail() helper above (which seeds current position from trail[0], the
-// *oldest* point -- fine for its own trail-block tests, wrong for heading
-// tests, which care about current position vs. trail history), this helper
-// anchors current position at trail[last], matching the real app.
+// Unlike withTrail() above (which seeds current position from trail[0],
+// the oldest point), this anchors current position at trail[last],
+// matching the real app: trail[last] === {a.lat, a.lon} whenever
+// hasPosition(a) (see aircraftState.ts's applyEventToRecord).
 function withTrailEndingAtCurrent(icaoHex: string, trail: TrailPoint[], hdg?: number): AircraftMap {
   const current = trail[trail.length - 1];
   const aircraft = applySnapshot([
@@ -540,14 +537,10 @@ describe("buildTrailSourceDiff (#1775, blocked per #1838)", () => {
   });
 
   it("a pure same-color append re-upserts only the last block's current run in place (#1820: run count does not grow) and removes nothing stale", () => {
-    // Deliberately not a suffix-only optimization within a block (see
-    // buildTrailSourceDiff's own doc comment) -- re-adding an unchanged
-    // run is a harmless upsert, and recomputing fresh every touched-hex
-    // tick is what keeps a reseed (tested separately below) correct
-    // without needing extra state to distinguish "appended" from
-    // "replaced". No `alt` on either position event -- both merge
-    // forward the same 1000 value, so this stays one run the whole way
-    // through, not two.
+    // Deliberately not a suffix-only optimization within a block --
+    // re-adding an unchanged run is a harmless upsert, and recomputing
+    // fresh every touched-hex tick keeps a reseed correct without extra
+    // state to distinguish "appended" from "replaced".
     let aircraft = withOnePositionedAircraft("A1B2C3");
     aircraft = applyWsEvent(aircraft, { type: "position", icao_hex: "A1B2C3", lat: 1.1, lon: 2.1 });
     const first = buildTrailSourceDiff(["A1B2C3"], aircraft, new Set(["A1B2C3"]), new Map());

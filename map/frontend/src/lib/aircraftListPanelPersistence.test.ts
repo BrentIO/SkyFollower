@@ -8,11 +8,9 @@ import {
   savePersistedPanelWidth,
 } from "./aircraftListPanelPersistence";
 
-// No jsdom in this project's test setup (vitest's default "node"
-// environment, see lib/config.test.ts's own note) -- localStorage isn't a
-// global here, so this stubs an in-memory implementation good enough to
-// exercise aircraftListPanelPersistence.ts's getItem/setItem calls --
-// same helper as controlsPersistence.test.ts's own.
+// No jsdom in this project's test setup -- localStorage isn't a global
+// here, so this stubs an in-memory implementation good enough to exercise
+// getItem/setItem calls.
 function makeMemoryStorage(): Storage {
   const store = new Map<string, string>();
   return {

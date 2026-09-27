@@ -1,20 +1,14 @@
 import { describe, expect, it } from "vitest";
-// Vite's `?raw` suffix (declared by vite/client, referenced in src/vite-env.d.ts)
-// imports a file's contents as a plain string -- used here instead of node:fs so
-// this stays a normal Vite/vitest module rather than needing @types/node, which
-// this project's tsconfig.app.json (unlike tsconfig.node.json) doesn't pull in.
+// `?raw` imports a file's contents as a plain string (used instead of
+// node:fs since this project's tsconfig.app.json has no @types/node).
 import mapViewSource from "./MapView.tsx?raw";
 import { SDF_RADIUS_PX } from "../lib/aircraftIcon";
 import { AIRCRAFT_LAYER_ID, SELECTABLE_LAYER_IDS, TRAIL_HIT_AREA_LAYER_ID } from "../lib/mapLayerIds";
 
-// MapView.tsx's aircraft symbol layer is built inline inside a `map.on("load", ...)`
-// callback that also constructs a real maplibregl.Map and reads several hooks --
-// there's no jsdom/DOM environment in this project's test setup (see
-// lib/config.test.ts), so mounting the component to inspect the live layer isn't
-// practical. Instead, this reads the actual paint object's source text out of the
-// file and evaluates it as plain JS (MapLibre expressions are just arrays/strings/
-// numbers -- no TSX-specific syntax involved), so the assertions below check the
-// real expression the component will pass to MapLibre, not a hand-copied duplicate.
+// There's no jsdom/DOM environment in this project's test setup, so these
+// tests read the real layer/paint object source text out of MapView.tsx and
+// evaluate it as plain JS (MapLibre expressions are just arrays/strings/
+// numbers) rather than mounting the component or hand-copying expressions.
 function findMatchingBrace(text: string, openIndex: number): number {
   let depth = 0;
   for (let i = openIndex; i < text.length; i++) {
@@ -65,10 +59,7 @@ function trailLayerPaint(): Record<string, unknown> {
 }
 
 // Minimal evaluator for the small subset of MapLibre style-expression forms
-// used by the paint properties below (case/boolean/get/coalesce/*/min over
-// plain numbers and a feature-properties object) -- enough to check the
-// *values* the real expression produces across icon_scale's actual range,
-// not just its shape. Deliberately not the full style-spec grammar.
+// used by the paint properties below -- not the full style-spec grammar.
 type Expr = unknown;
 function evaluateExpr(expr: Expr, properties: Record<string, unknown>): unknown {
   if (!Array.isArray(expr)) return expr;
@@ -159,52 +150,36 @@ describe("aircraft layer paint -- icon-halo-*", () => {
   });
 
   it("documents why #1806 stops scaling icon-halo-width/-blur down for icon_scale < 1 instead of tightening the constants further (three prior rounds -- #1705, #1742/#1758, #1763/#1767 -- all tried that): every real icon_scale < 1 is mathematically guaranteed a negative smoothstep-band lower bound (i.e. some wash), and it cannot be pushed back to >= 0 by any icon-halo-width/-blur value, because both only ever add to the band width -- neither can subtract enough to cancel EDGE_GAMMA/fontScale, the one term in the shader's gamma_halo that has no icon_scale factor to cancel against fontScale's", () => {
-    // Mirrors the shader math verified against map/frontend/node_modules/
-    // maplibre-gl/src/shaders/glsl/symbol_sdf.fragment.glsl: SDF_PX = 8,
-    // EDGE_GAMMA = 0.105 / DPR, halo_edge = (6 - halo_width / fontScale) /
-    // SDF_PX, gamma_halo = (halo_blur * 1.19 / SDF_PX + EDGE_GAMMA) /
-    // fontScale (u_gamma_scale taken as 1, matching prior worked examples
-    // in this file). A background texel gets nonzero halo alpha the moment
-    // `halo_edge - gamma_halo < 0` -- that's the box overflow.
+    // Mirrors symbol_sdf.fragment.glsl's shader math: halo_edge = (6 -
+    // halo_width/fontScale)/SDF_PX, gamma_halo = (halo_blur*1.19/SDF_PX +
+    // EDGE_GAMMA)/fontScale. A background texel gets nonzero halo alpha
+    // once `halo_edge - gamma_halo < 0` -- the box overflow.
     const SDF_PX = 8;
     const DPR = 2;
     const EDGE_GAMMA = 0.105 / DPR;
     const BASE_ICON_SIZE_MULTIPLIER = 0.55;
 
-    // The *best possible* band lower bound achievable purely by tuning
-    // icon-halo-width/-blur at a given icon_scale, using the #1763/#1767
-    // scaling law (width/blur both carry the same min(1, icon_scale)
-    // factor as fontScale, so their own contributions are already
-    // scale-invariant/minimal -- see the two tests above). Even with
-    // halo_blur pushed all the way to 0 (the smallest it can go), the
-    // fixed EDGE_GAMMA term alone still determines the bound:
+    // Best possible band lower bound achievable by tuning icon-halo-width/
+    // -blur at a given icon_scale. Even with halo_blur at 0, EDGE_GAMMA
+    // alone still determines the bound.
     function bestAchievableLowerBound(iconScale: number): number {
       const fontScale = BASE_ICON_SIZE_MULTIPLIER * iconScale;
-      const haloWidth = 3 * Math.min(1, iconScale); // #1763/#1767's own-cancelling width law
+      const haloWidth = 3 * Math.min(1, iconScale);
       const haloEdge = (6 - haloWidth / fontScale) / SDF_PX;
-      const gammaHalo = EDGE_GAMMA / fontScale; // halo_blur = 0: only the irreducible term remains
+      const gammaHalo = EDGE_GAMMA / fontScale;
       return haloEdge - gammaHalo;
     }
 
-    // At the icon_scale = 1 reference point -- the value every prior round
-    // pinned everything else to, and which ships today without further
-    // complaint -- the bound is already negative...
+    // At icon_scale = 1 the bound is already negative, and it's strictly
+    // increasing in icon_scale, so every icon_scale below 1 is strictly
+    // worse -- a real mathematical floor, not a matter of better constants.
     expect(bestAchievableLowerBound(1)).toBeLessThan(0);
-
-    // ...and it's strictly *increasing* in icon_scale (more headroom at
-    // larger icon_scale), so every icon_scale below 1 -- the issue's own
-    // 0.989 (GALX/GLF6) and 0.722 (E55P/C25B) included, down to the
-    // smallest real shape at 0.6 (P28A) -- is strictly worse than that
-    // already-negative reference, no matter how icon-halo-width/-blur are
-    // retuned. This is the real mathematical floor #1806 asks about: it's
-    // not a matter of finding better constants.
     const referenceBound = bestAchievableLowerBound(1);
     for (const icon_scale of [0.6, 0.722, 0.8, 0.989, 0.999]) {
       expect(bestAchievableLowerBound(icon_scale)).toBeLessThan(referenceBound);
     }
-    // Above 1, no such floor applies -- the bound keeps rising and crosses
-    // zero (a mathematically clean ring, not merely "less negative") well
-    // before B77L's real 1.435, consistent with it being reported clean.
+    // Above 1, the bound keeps rising and crosses zero well before B77L's
+    // real 1.435, consistent with it being reported clean.
     expect(bestAchievableLowerBound(1.435)).toBeGreaterThan(0);
     for (const icon_scale of [1.065, 1.435, 1.6]) {
       expect(bestAchievableLowerBound(icon_scale)).toBeGreaterThan(referenceBound);
@@ -219,11 +194,8 @@ describe("aircraft layer paint -- icon-halo-*", () => {
     const oldTextureDistance = oldFixedHaloWidth / iconSize;
     expect(oldTextureDistance).toBeGreaterThan(SDF_RADIUS_PX);
 
-    // #1806: icon-halo-width is now exactly 0 at this icon_scale (no
-    // halo drawn at all -- see AIRCRAFT_OUTLINE_LAYER_ID for the
-    // replacement selection indicator), not a smaller-but-still-nonzero
-    // value, so there's no texture-space distance to overflow the falloff
-    // band with in the first place.
+    // icon-halo-width is now exactly 0 here, not a smaller-but-nonzero
+    // value (see AIRCRAFT_OUTLINE_LAYER_ID for the replacement indicator).
     const newHaloWidth = evaluateExpr(paint["icon-halo-width"], {
       selected: true,
       icon_scale: smallestIconScale,
@@ -289,17 +261,11 @@ function extractLayerPaint(layerIdConstant: string): Record<string, unknown> {
 }
 
 describe("center point layer -- visible, and behind aircraft icons", () => {
-  // This regression was a DOM `Marker` given a negative z-index
-  // (`el.style.zIndex = "-1"`) so it would lose to aircraft icons
-  // drawn on MapLibre's WebGL canvas -- but a DOM element appended into the
-  // canvas's own container paints either entirely in front of that canvas
-  // or entirely behind ALL of it, never behind just some of what it draws.
-  // A negative z-index buried the marker under the canvas's own opaque
-  // paint, hiding it outright regardless of whether an aircraft was nearby.
-  // The center point is now a map layer (source feature), sharing the same
-  // WebGL paint pipeline as the aircraft icons, so it's always painted (no
-  // z-index fight to lose) and layer order -- not z-index -- controls
-  // whether it renders under aircraft icons.
+  // A DOM `Marker` with a negative z-index either painted entirely in
+  // front of MapLibre's WebGL canvas or entirely behind all of it, never
+  // behind just some of what the canvas draws -- hiding it outright. The
+  // center point is now a map layer sharing the same paint pipeline, so
+  // layer order controls whether it renders under aircraft icons.
 
   it("has no DOM Marker construction left for the center point (the regression's actual mechanism)", () => {
     expect(mapViewSource).not.toContain("new maplibregl.Marker(");
@@ -318,11 +284,7 @@ describe("center point layer -- visible, and behind aircraft icons", () => {
 });
 
 // Extracts the body of `function handleRecenter() { ... }` as plain source
-// text -- same rationale as the helpers above: handleRecenter closes over
-// several hooks (mapRef, config, cancelFollow) and calls into a real
-// maplibregl.Map, so there's no jsdom/component-render setup to mount it
-// through. Reading the real source instead of a hand-copied duplicate means
-// this can't drift from what the component actually does.
+// text, same rationale as the helpers above.
 function handleRecenterBody(): string {
   const marker = "function handleRecenter() {";
   const startIndex = mapViewSource.indexOf(marker);
@@ -392,11 +354,9 @@ describe("updateIsCentered / Center button active state (#1847)", () => {
   });
 
   it("is registered on 'moveend' only -- updateIsCentered doesn't add a new per-frame 'move' listener (this project's real perf history, #1830/#1831/#1838)", () => {
-    // #1851 restored the DOM InfoBoxLayer's own "move"-driven screen-position
-    // sync (throttledSyncScreenPositions) -- a real, pre-existing "move"
-    // listener unrelated to centering. This test only asserts that
-    // updateIsCentered itself isn't also wired to "move", not that the file
-    // has no "move" listener at all.
+    // A "move" listener does exist elsewhere (screen-position sync,
+    // unrelated to centering); this only asserts updateIsCentered isn't
+    // also wired to "move".
     expect(mapViewSource).toContain('map.on("moveend", updateIsCentered)');
     expect(mapViewSource).not.toMatch(/map\.on\(\s*"move"\s*,\s*updateIsCentered/);
   });
@@ -435,10 +395,8 @@ describe("trail layer paint -- line-opacity dims a Follow-lost trail", () => {
   });
 });
 
-// Extracts the body of `function handleToggleFullscreen() { ... }` as plain
-// source text -- same rationale as handleRecenterBody above: it calls into
-// real Fullscreen API methods with no jsdom/component-render setup to
-// mount it through.
+// Extracts the body of `function handleToggleFullscreen() { ... }`, same
+// rationale as handleRecenterBody above.
 function handleToggleFullscreenBody(): string {
   const marker = "function handleToggleFullscreen() {";
   const startIndex = mapViewSource.indexOf(marker);
@@ -530,15 +488,11 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
   });
 
   it("uses diffAircraftMaps + updateData() on the data-only (else-if) branch, gated on any actual change", () => {
-    // `changed` is computed once, up front, rather than inside this branch
-    // -- so this branch is `else if (changed.size > 0)`, not a nested `if`
-    // inside a bare `else`. Bounded at the InfoBoxLayer screen-position
-    // recompute (that block's own separate, unconditional-every-tick logic
-    // starts there) rather than at prevAircraftRef's assignment further
-    // down, which sits *after* it.
+    // Bounded at the screen-position recompute (its own unconditional
+    // logic starts there), not at prevAircraftRef's assignment further down.
     const ifIndex = mapViewSource.indexOf("if (visibilityChanged) {");
     const elseIndex = mapViewSource.indexOf("} else if (changed.size > 0) {", ifIndex);
-    const branchEnd = mapViewSource.indexOf("// InfoBoxLayer.tsx screen positions:", elseIndex);
+    const branchEnd = mapViewSource.indexOf("const offset = infoBoxOffsetForZoom(map.getZoom());", elseIndex);
     expect(elseIndex).toBeGreaterThan(-1);
     expect(branchEnd).toBeGreaterThan(elseIndex);
     const elseBranch = mapViewSource.slice(elseIndex, branchEnd);
@@ -568,21 +522,11 @@ describe("aircraft/trail source sync -- incremental updateData() diff path (#177
   });
 });
 
-// #1851: reverts #1808's GPU/MapLibre symbol-layer info box back to the
-// original DOM-based InfoBoxLayer.tsx overlay -- a live CPU trace
-// comparison (see #1851's issue body) found the two roughly a wash now
-// that #1838/#1840 fixed the real dominant cost (trail rendering) #1808's
-// >100% CPU measurement had conflated with the info box's own cost. The
-// GPU symbol layer (INFO_BOX_LAYER_ID/INFO_BOX_SOURCE_ID, lib/infoBoxIcon.ts,
-// lib/infoBoxSource.ts) and the temporary #1837 DOM-vs-GPU toggle
-// (lib/infoBoxImpl.ts, isDomInfoBox) are both removed entirely -- DOM is
-// the only implementation, not a mode. The filter/rendering logic itself
-// (selected/hovered/showAll, altitude sort key, empty-content omission) is
-// covered directly in InfoBoxLayer.tsx's own dependencies (lib/infoBox.ts,
-// lib/labelStackOrder.ts); these tests only check MapView.tsx's own wiring
-// (which can't be exercised without a live map -- see this file's module
-// docstring): screen-position sync and how InfoBoxLayer.tsx's props are
-// built.
+// The GPU symbol-layer info box and its DOM-vs-GPU toggle (isDomInfoBox)
+// are both removed entirely -- DOM is the only implementation, not a mode.
+// These tests only check MapView.tsx's own wiring (screen-position sync and
+// InfoBoxLayer.tsx's props); filter/rendering logic is covered directly in
+// InfoBoxLayer.tsx's own dependencies.
 describe("InfoBoxLayer screen-position sync (#1851)", () => {
   it("imports InfoBoxLayer unconditionally and renders it, gated only on mapLoaded", () => {
     expect(mapViewSource).toContain('import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer"');
@@ -629,9 +573,8 @@ describe("InfoBoxLayer screen-position sync (#1851)", () => {
     expect(call).toContain("hoveredId={hoveredId}");
   });
 
-  // #2000: the same displayScale multiplier driving the aircraft icon's own
-  // icon-size expression, so the icon and its info box always scale
-  // together from one control.
+  // Same displayScale multiplier driving the aircraft icon's own icon-size
+  // expression, so the icon and its info box scale together.
   it("passes displayScale through to InfoBoxLayer", () => {
     const callIndex = mapViewSource.indexOf("<InfoBoxLayer");
     expect(callIndex).toBeGreaterThan(-1);
@@ -672,13 +615,8 @@ describe('map "click" handler -- background click deselects (#1792)', () => {
   });
 });
 
-// Extracts the body of the center-on-select effect (#2011) -- the
-// useEffect immediately following centeredForIcaoHexRef's declaration --
-// as plain source text. Same rationale as handleRecenterBody above: this
-// effect closes over mapRef/handleZoomTo/aircraft state, so there's no
-// jsdom/component-render setup to mount it through; reading the real
-// source instead of a hand-copied duplicate means these tests can't drift
-// from what the component actually does.
+// Extracts the body of the center-on-select effect -- the useEffect
+// immediately following centeredForIcaoHexRef's declaration.
 function centerOnSelectEffectBody(): string {
   const refMarker = "const centeredForIcaoHexRef = useRef<string | null>(null);";
   const refIndex = mapViewSource.indexOf(refMarker);
@@ -781,14 +719,10 @@ function extractLayerFilter(layerIdConstant: string): unknown {
   return new Function(`return (${filterLiteral});`)();
 }
 
-// Extracts the `layout: { ... }` object literal belonging to the layer whose
-// definition contains `id: <layerIdConstant>`, evaluated into a real object
-// -- same extraction convention as extractLayerPaint/extractLayerFilter
-// above. `scope` binds identifiers the layout literal itself references but
-// that aren't defined within the extracted snippet (module-level imports or
-// a called function) -- pass the *real* imported values/functions so the
-// evaluated layout is the actual one MapView.tsx builds, not a stand-in.
-// Layers with no such references (the common case) need no scope at all.
+// Extracts the `layout: { ... }` object literal for the layer whose
+// definition contains `id: <layerIdConstant>`. `scope` binds identifiers
+// the layout literal references but that aren't defined in the extracted
+// snippet (e.g. displayScale); layers with no such references need none.
 function extractLayerLayout(layerIdConstant: string, scope: Record<string, unknown> = {}): Record<string, unknown> {
   const idIndex = mapViewSource.indexOf(`id: ${layerIdConstant}`);
   if (idIndex === -1) throw new Error(`Could not find ${layerIdConstant} layer definition`);
@@ -814,20 +748,12 @@ function extractLayerLayout(layerIdConstant: string, scope: Record<string, unkno
 }
 
 describe("AIRCRAFT_OUTLINE_LAYER_ID -- dilated-silhouette outline for icon_scale < 1 (#1806/#1816/#1912)", () => {
-  // #1806: the icon's own icon-halo-width/-blur cannot render a clean
-  // fitted ring below icon_scale = 1 at any value (see the "documents why
-  // #1806 stops scaling..." test above). #1813's first replacement -- a
-  // fixed circle-radius ring -- fixed the box/wash bug but didn't fit a
-  // non-circular airframe (#1816). This layer is a second, enlarged copy
-  // of the same per-shape SDF icon (AIRCRAFT_LAYER_ID's own icon-image
-  // expression), painted underneath the real icon, so the enlarged
-  // silhouette's edge reads as a fitted outline.
-  //
-  // #1912: broadened from selected-only (a selection ring) to every
-  // icon_scale < 1 aircraft -- a permanent thin black outline for
-  // unselected aircraft, the original larger white ring unchanged for
-  // selected ones, both via data-driven icon-size/icon-color instead of
-  // the layer's filter requiring selection.
+  // A second, enlarged copy of AIRCRAFT_LAYER_ID's own per-shape SDF icon,
+  // painted underneath the real icon so the enlarged silhouette's edge
+  // reads as a fitted outline (a fixed circle-radius ring doesn't fit a
+  // non-circular airframe). Matches every icon_scale < 1 aircraft, not just
+  // a selected one: a thin black outline unselected, the original larger
+  // white ring selected, both data-driven on icon-size/icon-color.
 
   it("filters to icon_scale < 1 alone -- every aircraft in that range, not just a selected one", () => {
     const filter = extractLayerFilter("AIRCRAFT_OUTLINE_LAYER_ID");
@@ -898,13 +824,9 @@ describe("AIRCRAFT_OUTLINE_LAYER_ID -- dilated-silhouette outline for icon_scale
 });
 
 describe("display scale multiplier (#2000)", () => {
-  // A wall/panel-mounted display's true physical pixel density can't be
-  // read from the browser (devicePixelRatio only reflects OS scaling, not
-  // physical PPI -- see the issue's own research), so this is a manual,
-  // persisted operator control (ControlsPanel's Display Scale popover)
-  // rather than an automatic one. 1 is the required no-op default -- an
-  // operator who never touches the control must see byte-identical
-  // rendering to before this feature existed.
+  // Manual, persisted operator control rather than an automatic one, since
+  // devicePixelRatio only reflects OS scaling, not a display's true
+  // physical pixel density. 1 is the required no-op default.
 
   it("initializes from loadPersistedControls().displayScale, the same lazy-initializer convention every other persisted control uses", () => {
     expect(mapViewSource).toContain(
@@ -953,9 +875,8 @@ describe("display scale multiplier (#2000)", () => {
 });
 
 describe("map render loop (idle redraws)", () => {
-  // Default 300ms symbol fade kept MapLibre's render loop permanently
-  // re-armed under live traffic (~57 redraws/sec with the camera still) --
-  // see the Map constructor's own comment.
+  // Default symbol fade kept MapLibre's render loop permanently re-armed
+  // under live traffic (see the Map constructor's own comment).
   it("constructs the map with symbol fading disabled", () => {
     expect(mapViewSource).toContain("fadeDuration: 0,");
   });
@@ -969,11 +890,8 @@ describe("map render loop (idle redraws)", () => {
     expect(mapViewSource).toContain("if (tracePoints !== syncedTracePointsRef.current) {");
   });
 
-  // #1844: AIRCRAFT_SOURCE_ID's untuned default maxzoom (18) meant every
-  // visible tile touched by a moved aircraft got a full worker rebuild +
-  // GPU re-upload each ~500ms sync tick, one render per completed tile --
-  // the source of the traced burst-then-idle frame pattern. Capping it
-  // forces MapLibre to over-zoom a single cached low-zoom tile instead.
+  // Capping maxzoom forces MapLibre to over-zoom a single cached low-zoom
+  // tile instead of a full worker rebuild + GPU re-upload per sync tick.
   it("caps AIRCRAFT_SOURCE_ID's maxzoom well below the app's typical display zoom, to collapse per-tick tile invalidation", () => {
     const addSourceIndex = mapViewSource.indexOf("map.addSource(AIRCRAFT_SOURCE_ID,");
     expect(addSourceIndex).toBeGreaterThan(-1);
@@ -1038,7 +956,7 @@ describe("radar overlay (#1896, #1965)", () => {
 
   it("#1910 (2nd attempt): every freshly-fetched playback layer is added layout-visible (never visibility:none) -- verified live that a hidden raster layer's tiles never load at all", () => {
     const guardIndex = mapViewSource.indexOf('if (step.source.kind !== "fetch") return;');
-    const forEachEnd = mapViewSource.indexOf("// Resolves once every one of the 7 frames", guardIndex);
+    const forEachEnd = mapViewSource.indexOf("// Resolves once every frame reports loaded", guardIndex);
     expect(forEachEnd).toBeGreaterThan(guardIndex);
     const forEachBody = mapViewSource.slice(guardIndex, forEachEnd);
     expect(forEachBody).not.toContain("layout: { visibility:");

@@ -1,20 +1,14 @@
-// Pure helpers for the aircraft detail panel's Follow action
-// (components/MapView.tsx / components/AircraftDetailPanel.tsx). Split out
-// so MapView's recenter-on-every-update effect and the Follow-lost
-// dimming rule are covered by plain unit tests instead of only being
-// exercisable through a real MapLibre map (this project has no jsdom/
-// component-render test setup -- see lib/config.test.ts's own note).
+// Pure helpers for the aircraft detail panel's Follow action. Split out so
+// MapView's recenter-on-every-update effect and the Follow-lost dimming
+// rule are unit-testable without a real MapLibre map.
 
 import type { AircraftMap, AircraftRecord } from "./aircraftState";
 
 // The {lat, lon} to recenter the map on for the currently-followed
-// aircraft, or null when there's nothing to recenter to (nothing is being
-// followed, or the followed aircraft has no known position yet). Follow
-// keeps returning the aircraft's *last known* position even after it goes
-// stale/hidden or a `remove` is deferred (see aircraftState.ts's
-// pendingRemoval) -- those states don't clear lat/lon, so the map simply
-// stops receiving new recenters and stays parked at the last place the
-// aircraft was actually seen, which is the "held in view" behavior Follow
+// aircraft, or null when there's nothing to recenter to. Keeps returning
+// the aircraft's *last known* position even after it goes stale/hidden or
+// a `remove` is deferred, so the map stays parked at the last place the
+// aircraft was actually seen -- the "held in view" behavior Follow
 // specifies on loss.
 export function followTargetPosition(
   aircraft: AircraftMap,
@@ -26,18 +20,13 @@ export function followTargetPosition(
   return { lat: a.lat, lon: a.lon };
 }
 
-// True when `a` is the aircraft currently being Followed, or the aircraft
-// the detail panel currently has open (`protectedId`), but has been lost
-// -- evicted (pendingRemoval, deferred while the panel is open), or gone
-// stale/hidden from a signal gap. This is the deliberate exception to the
-// panel's normal eviction-defer rule: instead of simply disappearing (the
-// plain hidden/pendingRemoval behavior every other aircraft gets), a
-// Followed or merely-selected aircraft and its trail stay visible, dimmed,
-// until the panel closes or the aircraft is deselected -- see
+// True when `a` is the aircraft currently being Followed or the one the
+// detail panel has open (`protectedId`), but has been lost -- evicted
+// (pendingRemoval) or gone stale/hidden. Instead of simply disappearing
+// like every other aircraft, this aircraft and its trail stay visible,
+// dimmed, until the panel closes or it's deselected -- see
 // featureCollections.ts's aircraftFeatureCollection/trailFeatureCollection,
-// which use this to both bypass their normal hidden-filter and force the
-// dimmed visual for this one aircraft. `protectedId` is optional so
-// call sites that only care about Follow (none currently) can omit it.
+// which use this to bypass their normal hidden-filter.
 export function isFollowLost(
   a: Pick<AircraftRecord, "icao_hex" | "hidden" | "pendingRemoval">,
   followId: string | null,

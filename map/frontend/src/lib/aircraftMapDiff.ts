@@ -1,17 +1,14 @@
 // Diffs two AircraftMap snapshots by per-key object *reference*, not deep
-// equality, to find which icao_hexes actually changed between one render
-// and the next -- MapView.tsx's sync effect uses this to push an
-// incremental GeoJSONSource.updateData() diff instead of rebuilding every
-// feature on every tick (see that effect's own comment, and #1775).
+// equality, to find which icao_hexes actually changed -- MapView.tsx's
+// sync effect uses this to push an incremental GeoJSONSource.updateData()
+// diff instead of rebuilding every feature on every tick.
 //
-// This is only correct because aircraftState.ts's applyWsEvent(s) (and
-// applyTrailSeed/releasePendingRemoval) never touch an untouched
-// aircraft's record reference -- every state transition spreads the old
-// state object and replaces only the keys an event actually named, so an
-// aircraft nobody sent an event for this batch keeps the exact same
-// object reference across the transition. aircraftState.test.ts pins that
-// contract explicitly so a future change to the merge logic can't quietly
-// break this file's own correctness.
+// This is only correct because aircraftState.ts's applyWsEvent(s) never
+// touch an untouched aircraft's record reference -- every state transition
+// spreads the old state object and replaces only the keys an event
+// actually named. aircraftState.test.ts pins that contract explicitly so a
+// future change to the merge logic can't quietly break this file's
+// correctness.
 
 import type { AircraftMap } from "./aircraftState";
 

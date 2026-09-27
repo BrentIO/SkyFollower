@@ -1,20 +1,16 @@
 // Pure builders for the MapLibre GeoJSON sources MapView.tsx keeps in
 // sync with the live AircraftMap: the aircraft-icon feature collection and
-// the per-segment trail feature collection. Split out of MapView.tsx (same
-// rationale as aircraftState.ts's own split from useMapFlights.ts) so the
-// hidden-aircraft filtering rules are covered by plain unit tests instead
-// of a full MapLibre component mount.
+// the per-segment trail feature collection. Split out of MapView.tsx so the
+// hidden-aircraft filtering rules are unit-testable without a full MapLibre
+// component mount.
 //
-// Every feature below carries a stable, explicit `id` (icao_hex for
-// aircraft, `${icao_hex}:${segmentIndex}` for trail segments) -- required
-// by MapLibre's GeoJSONSource.updateData() incremental diff API, which
-// MapView.tsx's sync effect uses for a data-only tick (see that effect's
-// own comment for why full setData() is still used on a visibility/toggle
-// tick). The single-feature/segment builders below (aircraftFeature,
-// trailSegmentFeatures) are what that diff path calls per changed
-// aircraft; the *FeatureCollection functions are thin wrappers over them
-// so the full-rebuild and incremental paths can never drift apart on the
-// actual inclusion/dimming rules.
+// Every feature carries a stable, explicit `id` (icao_hex for aircraft,
+// `${icao_hex}:${segmentIndex}` for trail segments), required by
+// GeoJSONSource.updateData()'s incremental diff API. The single-feature/
+// segment builders (aircraftFeature, trailSegmentFeatures) are what that
+// diff path calls per changed aircraft; the *FeatureCollection functions
+// are thin wrappers over them so the full-rebuild and incremental paths
+// can never drift apart on the inclusion/dimming rules.
 
 import type { Feature, FeatureCollection } from "geojson";
 import type { GeoJSONSourceDiff } from "maplibre-gl";
@@ -26,22 +22,16 @@ import { buildTrailRuns } from "./trailSegments";
 
 export const EMPTY_FEATURE_COLLECTION: FeatureCollection = { type: "FeatureCollection", features: [] };
 
-// #1950: message-processor only overwrites an aircraft's reported heading
-// when a velocity message actually carries a GPS track/IAS-heading field --
-// it never decays, so it can go stale (keep pointing the old direction)
-// indefinitely once those messages stop arriving, even as the aircraft's
+// Reported heading can go stale indefinitely once a velocity message with
+// a GPS track/IAS-heading field stops arriving, even as the aircraft's
 // actual track visibly changes. trailHeading() derives a heading from
 // where the aircraft has actually been moving, as a check against that.
 
 // Minimum distance (nm) a trail point must be from the aircraft's current
 // position before it's used to derive a heading -- closely-spaced points
-// are dominated by GPS/ADS-B position jitter rather than real direction of
-// travel, which matters most for a stationary/taxiing aircraft (where any
-// bearing from jitter alone would be noise, not signal). This single
-// distance gate is also what makes "not enough usable trail yet" fall out
-// naturally: a brand-new track or one that hasn't moved far enough simply
-// has no qualifying point, so trailHeading returns null and the caller
-// keeps today's behavior.
+// are dominated by GPS/ADS-B jitter rather than real direction of travel.
+// A brand-new track or one that hasn't moved far enough simply has no
+// qualifying point, so trailHeading returns null.
 const MIN_TRAIL_HEADING_SEPARATION_NM = 0.05;
 
 // Reported heading vs. trail-derived heading must diverge by more than
@@ -72,11 +62,10 @@ export function trailHeading(trail: TrailPoint[], current: { latitude: number; l
 }
 
 // The heading to render an aircraft's icon at: the reported `hdg` (or 0 if
-// absent, today's existing fallback), unless a trail-derived heading is
-// both available and diverges from it by more than
-// TRAIL_HEADING_DIVERGENCE_DEG, in which case the trail heading wins (see
-// this module's #1950 comment above). Recomputed independently on every
-// call -- no hysteresis/deadband, deliberately (see #1950).
+// absent), unless a trail-derived heading is available and diverges from
+// it by more than TRAIL_HEADING_DIVERGENCE_DEG, in which case the trail
+// heading wins. Recomputed independently on every call -- no
+// hysteresis/deadband, deliberately.
 export function resolvedHeading(a: AircraftRecord, current: { latitude: number; longitude: number }): number {
   const reported = a.hdg ?? 0;
   const trail = trailHeading(a.trail, current);
@@ -90,41 +79,25 @@ export function hasPosition(a: AircraftRecord): a is AircraftRecord & { lat: num
   return a.lat != null && a.lon != null;
 }
 
-// Isolate (isolateId), Follow (followId), and the panel-open aircraft
-// (protectedId) all come from the aircraft detail panel and all key off the
-// currently-selected aircraft, but they affect these builders differently:
-// Isolate is a hard filter (only the isolated aircraft's icon/trail are
-// ever drawn); Follow and protectedId instead *widen* what's drawn -- their
-// target stays visible (dimmed, via isFollowLost) even once it would
-// otherwise be filtered out for being hidden. protectedId is what keeps a
-// merely-selected (not Followed) aircraft visible while its panel is open --
-// see isFollowLost's own comment for why it's folded into the same check
-// as followId rather than a separate mechanism.
+// Isolate, Follow, and the panel-open aircraft (protectedId) all key off
+// the currently-selected aircraft but affect these builders differently:
+// Isolate is a hard filter (only the isolated aircraft is ever drawn);
+// Follow and protectedId instead *widen* what's drawn -- their target
+// stays visible (dimmed, via isFollowLost) even once it would otherwise be
+// filtered out for being hidden.
 export interface VisibilityOptions {
   isolateId?: string | null;
   followId?: string | null;
   protectedId?: string | null;
 }
 
-// A hidden aircraft (past MAP_HIDE_SECONDS, not yet evicted) is omitted
-// from both feature collections below -- its record and trail are kept
-// server- and client-side (see aircraftState.ts), but it must not be drawn
-// until a position/metadata event un-hides it again. The exceptions are the
-// actively-Followed aircraft and the aircraft the panel currently has open
-// (see VisibilityOptions.followId/protectedId above).
-
-// Whether `a` should be drawn at all right now, given VisibilityOptions --
-// isolate is a hard filter; a hidden aircraft is excluded unless it's the
-// actively-Followed or currently-panel-open (protectedId) exception.
-// Deliberately *not* checking hasPosition -- callers that need the
-// TypeScript position-narrowing side effect (e.g. aircraftFeature below,
-// which reads `a.lat`/`a.lon`) must still call hasPosition themselves;
-// this only covers the isolate/hidden rules. Used by aircraftFeature;
-// components/MapView.tsx's own info-box item filtering applies the same
-// isolate/hidden(-unless-Follow/protected) rule inline, so "is this
-// aircraft currently drawn on the map" stays in sync between an aircraft's
-// icon and its label -- a label should never outlive, or lag behind, its
-// own icon's visibility.
+// Whether `a` should be drawn at all right now: isolate is a hard filter;
+// a hidden aircraft is excluded unless it's the actively-Followed or
+// currently-panel-open (protectedId) exception. Deliberately *not*
+// checking hasPosition -- callers needing that TypeScript narrowing (e.g.
+// aircraftFeature below) must call hasPosition themselves.
+// components/MapView.tsx's info-box filtering applies this same rule
+// inline, so an aircraft's icon and its label stay in sync.
 export function isAircraftVisible(a: AircraftRecord, options: VisibilityOptions = {}): boolean {
   const { isolateId, followId, protectedId } = options;
   if (isolateId && a.icao_hex !== isolateId) return false;
@@ -132,10 +105,8 @@ export function isAircraftVisible(a: AircraftRecord, options: VisibilityOptions 
 }
 
 // Builds one aircraft's icon feature, or null if it shouldn't be drawn at
-// all right now (no known position, isolated out, or hidden with neither
-// Follow/protectedId exception). The `id` (icao_hex) is what lets
-// GeoJSONSource.updateData() treat a later call with the same id as an
-// upsert of this exact feature -- see this file's module docstring.
+// all right now. The `id` (icao_hex) is what lets GeoJSONSource.updateData()
+// treat a later call with the same id as an upsert of this exact feature.
 export function aircraftFeature(
   a: AircraftRecord,
   selected: Set<string>,
@@ -150,23 +121,18 @@ export function aircraftFeature(
     geometry: { type: "Point", coordinates: [a.lon, a.lat] },
     properties: {
       icao_hex: a.icao_hex,
-      // Lighter-than-air aircraft (balloon, and airship/blimp -- aliased to
-      // the same "BALL" shape, see aircraftIconResolver.ts) don't have a
-      // "nose" heading the way fixed-wing/rotary aircraft do; their reported
-      // ADS-B heading reflects drift direction, not an orientation the icon
-      // should rotate to face. Force north-up for that shape regardless of
-      // the reported value (issue #1788) -- checked first, short-circuiting
-      // resolvedHeading()'s stale-heading correction (#1950) entirely.
+      // Lighter-than-air aircraft (balloon/airship/blimp, aliased to "BALL")
+      // don't have a "nose" heading; their reported ADS-B heading reflects
+      // drift direction, not an orientation to rotate the icon to. Force
+      // north-up for that shape regardless of the reported value.
       heading: a.shape === "BALL" ? 0 : resolvedHeading(a, { latitude: a.lat, longitude: a.lon }),
       color: altitudeColor(a.alt ?? null),
       selected: selected.has(a.icao_hex),
-      // Reuses the existing stale-dims-the-icon paint rule (see
-      // MapView.tsx's icon-opacity) for the Follow-lost/selected-lost
-      // case too, rather than adding a second dimming mechanism.
+      // Reuses the stale-dims-the-icon paint rule for the Follow-lost/
+      // selected-lost case too, rather than a second dimming mechanism.
       stale: a.stale || isFollowLost(a, followId ?? null, protectedId ?? null),
-      // Silhouette + on-map size, resolved once per metadata event in
-      // aircraftState.ts (not per render). MapView registers each shape's
-      // SDF image lazily, keyed by this `shape` value.
+      // Resolved once per metadata event in aircraftState.ts, not per
+      // render. MapView registers each shape's SDF image lazily.
       shape: a.shape,
       icon_scale: a.iconScale,
     },
@@ -187,10 +153,9 @@ export function aircraftFeatureCollection(
 }
 
 // Whether an aircraft's trail should be drawn at all right now: present in
-// the caller's visible-ids set (historyAll -> every tracked aircraft,
-// otherwise just the selected one -- see MapView.tsx), not isolated out,
-// and not hidden (unless it's the Follow-lost/protectedId exception, same
-// widening rule as aircraftFeature above).
+// the caller's visible-ids set, not isolated out, and not hidden (unless
+// it's the Follow-lost/protectedId exception, same widening rule as
+// aircraftFeature above).
 function trailIncluded(a: AircraftRecord, visibleIds: Set<string>, options: VisibilityOptions): boolean {
   if (!visibleIds.has(a.icao_hex)) return false;
   const { isolateId, followId, protectedId } = options;
@@ -199,41 +164,32 @@ function trailIncluded(a: AircraftRecord, visibleIds: Set<string>, options: Visi
   return !a.hidden || followLost;
 }
 
-// --- Trail blocks (#1838) ---------------------------------------------
+// --- Trail blocks -------------------------------------------------------
 //
 // A trail is drawn as fixed-size blocks of TRAIL_BLOCK_SIZE points each,
 // split by *absolute* point index (not array index) -- block `k` covers
 // absolute indices [64k, 64k+64] inclusive, so consecutive blocks share
 // their boundary point and the line stays connected. "Absolute index" is
-// the point's position since the trail was first seeded/reset, which
-// keeps every block's identity (and its feature ids) stable across the
-// cap-triggered front-truncation in aircraftState.ts's pushTrailPoint
-// (MAX_TRAIL_POINTS) -- otherwise every block would be renumbered (and
+// the point's position since the trail was first seeded/reset, which keeps
+// every block's identity stable across aircraftState.ts's cap-triggered
+// front-truncation -- otherwise every block would be renumbered (and
 // re-sent) on every single trim.
 //
-// This replaced sending the whole trail as one run-per-color-change
-// feature set on every changed tick (buildTrailSourceDiff's previous
-// design): MapLibre's GeoJSONSource.updateData() reloads every tile that
-// intersects an upserted feature's bounding box, old or new geometry, so
-// re-upserting a cruising aircraft's single, ever-growing run reloaded
-// nearly every tile its whole trail crossed, every tick (confirmed via a
-// live DevTools trace -- see the issue this implements). Blocking the
-// trail means a steady-state append tick only ever touches the block(s)
-// actually still growing, at most low tens of nm of tile coverage instead
-// of the trail's entire extent.
+// GeoJSONSource.updateData() reloads every tile intersecting an upserted
+// feature's bounding box, so re-upserting a whole ever-growing trail as one
+// run reloaded nearly every tile it crossed, every tick. Blocking the trail
+// means a steady-state append tick only touches the block(s) still growing.
 //
-// Within a block, color runs still come from buildTrailRuns (#1820) on
-// that block's point slice -- grouping into blocks is layered on top of,
-// not instead of, that per-color-run grouping. Feature id:
+// Within a block, color runs still come from buildTrailRuns on that
+// block's point slice -- grouping into blocks is layered on top of, not
+// instead of, that per-color-run grouping. Feature id:
 // `${icao_hex}:${k}:${runInBlock}`.
 export const TRAIL_BLOCK_SIZE = 64;
 
 // Per-aircraft bookkeeping buildTrailSourceDiff needs to diff the next
 // tick's trail against this tick's, and to know exactly which feature ids
-// are currently in TRAIL_SOURCE_ID for that hex (so it can remove exactly
-// the ones that no longer apply). `trailRef` is kept only for its
-// identity (===), not read for content, across ticks -- see
-// buildTrailSourceDiff's append/front-truncation detection.
+// are currently in TRAIL_SOURCE_ID for that hex. `trailRef` is kept only
+// for its identity (===), not its content, across ticks.
 export interface TrailSyncState {
   trailRef: TrailPoint[];
   /** Absolute index of trailRef[0] (points dropped off the front since seed/reset). */
@@ -267,10 +223,8 @@ function trailLastBlockIndex(trailLength: number, base: number): number {
 }
 
 // Parses the block index `k` back out of a `${icao_hex}:${k}:${run}` id --
-// used by buildTrailSourceDiff to tell which of a hex's *previously*
-// synced ids belong to a block being rebuilt or dropped this tick, without
-// needing a second, redundant per-block index alongside the flat `ids`
-// list TrailSyncState keeps.
+// lets buildTrailSourceDiff tell which previously-synced ids belong to a
+// block being rebuilt or dropped, without a redundant per-block index.
 function trailBlockIndexFromId(id: string): number {
   return Number(id.slice(id.indexOf(":") + 1, id.lastIndexOf(":")));
 }
@@ -289,10 +243,8 @@ function trailBlockFeatures(icaoHex: string, trail: TrailPoint[], base: number, 
       properties: {
         icao_hex: icaoHex,
         color: run.color,
-        // See MapView.tsx's trail line-opacity paint rule -- dims the
-        // Follow-lost/selected-lost aircraft's trail the same way its
-        // icon is dimmed above, instead of letting it disappear with the
-        // hidden filter.
+        // Dims the Follow-lost/selected-lost aircraft's trail the same way
+        // its icon is dimmed, instead of letting it disappear.
         dimmed,
       },
     }),
@@ -300,12 +252,9 @@ function trailBlockFeatures(icaoHex: string, trail: TrailPoint[], base: number, 
 }
 
 // Every block feature for one aircraft's *entire* current trail, as if
-// freshly seeded (base 0) -- used by the full-rebuild path
-// (trailFeatureCollection) and by buildTrailSourceDiff whenever it must
-// fully re-send a hex (no prior sync record, a dimmed change, or anything
-// that isn't a recognized pure-append/front-truncation, e.g. a reseed).
-// Both paths call this same function so they can never drift apart on the
-// actual block-splitting/run-grouping rules (this file's module comment).
+// freshly seeded (base 0). Used by both the full-rebuild path
+// (trailFeatureCollection) and buildTrailSourceDiff's full-resend cases, so
+// they can never drift apart on the block-splitting/run-grouping rules.
 export function trailSegmentFeatures(a: AircraftRecord, dimmed: boolean): Feature[] {
   const trail = a.trail;
   if (trail.length < 2) return [];
@@ -339,20 +288,15 @@ export function isEmptySourceDiff(diff: GeoJSONSourceDiff): boolean {
   return !diff.removeAll && !diff.add?.length && !diff.remove?.length && !diff.update?.length;
 }
 
-// --- Incremental (GeoJSONSource.updateData()) diff builders -- #1775 ---
+// --- Incremental (GeoJSONSource.updateData()) diff builders -------------
 //
 // Used only on a data-only sync tick (no visibility-affecting toggle
-// changed this run -- see MapView.tsx's sync effect for that split).
-// `changedIcaoHexes` should come from aircraftMapDiff.ts's
-// diffAircraftMaps() against the *previous* render's AircraftMap, so
-// these builders only ever do work proportional to what actually changed,
-// not the whole fleet.
+// changed this run -- see MapView.tsx's sync effect). `changedIcaoHexes`
+// should come from aircraftMapDiff.ts's diffAircraftMaps(), so these
+// builders only do work proportional to what actually changed.
 
 // AIRCRAFT_SOURCE_ID's diff: each changed hex either still resolves to a
-// visible feature (upsert via `add` -- GeoJSONSource.updateData() treats
-// an `add` with an id already present as a full replace, not a duplicate)
-// or no longer does (no longer tracked, or just became hidden/isolated-out
-// with no Follow/protectedId exception) -- `remove`.
+// visible feature (upsert via `add`) or no longer does (`remove`).
 export function buildAircraftSourceDiff(
   changedIcaoHexes: Iterable<string>,
   aircraft: Record<string, AircraftRecord>,
@@ -370,31 +314,23 @@ export function buildAircraftSourceDiff(
   return { add, remove };
 }
 
-// TRAIL_SOURCE_ID's diff (#1838): per changed hex, re-sends only the
-// trail block(s) that actually changed, instead of the whole trail --
-// see this file's trail-blocks module comment for why. `syncState` is
-// this MapView instance's own bookkeeping (TrailSyncState) of what it
-// last pushed for that hex; the caller (MapView.tsx) owns storing the
-// returned `syncState` back into its ref for next tick.
+// TRAIL_SOURCE_ID's diff: per changed hex, re-sends only the trail
+// block(s) that actually changed, instead of the whole trail. `syncState`
+// is bookkeeping (TrailSyncState) of what was last pushed for that hex;
+// the caller owns storing the returned `syncState` back for next tick.
 //
 // Four cases per changed, still-included hex:
-// - No prior sync record, or `dimmed` changed: full re-send (every
-//   current block), base reset to 0 -- same as a fresh seed.
-// - Pure append (new trail's first/last point is === the previous
-//   trail's first/last point, by reference -- aircraftState.ts's
-//   trail arrays keep point identity across a spread-rebuild): only
-//   the block(s) at or after the previous last point's block can have
-//   changed.
-// - Front truncation at the cap (the new trail's first point is found
-//   later in the previous trail, and the previous trail's last point is
-//   still at the corresponding offset from the new trail's end): `base`
-//   advances by the dropped count; blocks now entirely before the new
-//   `base` are dropped, the block now straddling `base` is rebuilt (its
-//   start was trimmed), and any appended tail is re-sent per the append
-//   case above.
-// - Anything else (a reseed via applyTrailSeed, or any other shape this
-//   doesn't specifically recognize): full re-send, same as the
-//   no-prior-record case.
+// - No prior sync record, or `dimmed` changed: full re-send, base reset
+//   to 0 -- same as a fresh seed.
+// - Pure append (new trail's first/last point is === the previous trail's
+//   first/last point by reference): only the block(s) at or after the
+//   previous last point's block can have changed.
+// - Front truncation at the cap: `base` advances by the dropped count;
+//   blocks entirely before the new `base` are dropped, the block now
+//   straddling `base` is rebuilt, and any appended tail is re-sent per
+//   the append case above.
+// - Anything else (a reseed via applyTrailSeed, or any unrecognized
+//   shape): full re-send, same as the no-prior-record case.
 export function buildTrailSourceDiff(
   changedIcaoHexes: Iterable<string>,
   aircraft: Record<string, AircraftRecord>,
@@ -435,23 +371,17 @@ export function buildTrailSourceDiff(
     }
 
     const P = prev.trailRef;
-    // N[P.length-1] (not N's own last element -- N can be longer than P)
-    // must still equal P's last element for this to be a pure append: the
-    // whole of P is an untouched prefix of N.
+    // Pure append: P[P.length-1] must still equal trail[P.length-1] (P is
+    // an untouched prefix of the new trail), not merely trail's own last.
     const isPureAppend =
       P.length > 0 && trail.length >= P.length && trail[0] === P[0] && trail[P.length - 1] === P[P.length - 1];
 
     let base = prev.base;
-    // Block indices whose content must be rebuilt fresh this tick --
-    // deliberately a Set of individually-named blocks, not a contiguous
-    // [from, to] range: the front-truncation case touches one block near
-    // the trail's (possibly very distant) start *and* the tail's block(s),
-    // which are almost never adjacent on a long trail.
+    // A Set, not a contiguous range: front-truncation touches one block
+    // near the trail's start *and* the tail's block(s), rarely adjacent.
     const rebuildTargets = new Set<number>();
-    // Old ids belonging to a block index below this are dropped outright
-    // (that block no longer has any point left in the trail at all) --
-    // -1 (an impossible block index) means "nothing dropped", i.e. the
-    // pure-append case, where base never moves.
+    // -1 means nothing dropped (the pure-append case, base never moves);
+    // otherwise, ids in a block below this no longer have a point left.
     let dropBefore = -1;
 
     if (isPureAppend) {
@@ -472,10 +402,8 @@ export function buildTrailSourceDiff(
       rebuildTargets.add(trailFirstBlockIndex(oldLastAbsolute)); // the appended tail's first block.
     }
 
-    // The tail can span more than one block in a single tick (a batch of
-    // several points landing before this throttled sync fires) -- extend
-    // from the highest target found so far (always the tail's start, per
-    // the two cases above) through the trail's new last block.
+    // The tail can span more than one block in a single tick -- extend
+    // from the highest target found so far through the new last block.
     const toBlock = trailLastBlockIndex(trail.length, base);
     for (let k = Math.max(...rebuildTargets); k <= toBlock; k++) rebuildTargets.add(k);
 

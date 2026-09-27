@@ -1,9 +1,7 @@
 // Pure view-model builder for the aircraft list flyout (see
-// components/AircraftListPanel.tsx). Same split as lib/aircraftDetail.ts's
-// pairing with AircraftDetailPanel.tsx -- the per-column source/omission
-// rules are the panel's actual spec, so they're covered by plain unit
-// tests rather than only exercisable through a rendered map (this project
-// has no jsdom/component-render test setup -- see lib/config.test.ts).
+// components/AircraftListPanel.tsx). The per-column source/omission rules
+// are the panel's actual spec, so they're covered by plain unit tests
+// rather than only exercisable through a rendered map.
 
 import type { AircraftRecord, AircraftMap } from "./aircraftState";
 import { buildDistanceDisplay, isEmergencySquawk } from "./aircraftDetail";
@@ -26,8 +24,7 @@ export interface AircraftListRow {
   descriptionCode: string | null;
   military: boolean;
   specialLivery: string | null;
-  /** ISO 3166-1 alpha-2 country-of-registration code (AircraftInfo.country_code)
-   * -- drives the flag icon rendered next to Ident (lib/countryFlag.ts).
+  /** Drives the flag icon rendered next to Ident (lib/countryFlag.ts).
    * Null when no country has resolved for this aircraft. */
   countryCode: string | null;
   /** Resolved country display name (AircraftInfo.country) -- used as the
@@ -53,10 +50,10 @@ export interface AircraftListRow {
    * highlight, overriding normal banding entirely. */
   emergency: boolean;
   /** True when flight.receiver_sources includes "978" (UAT) -- drives the
-   * Tags column's blue "U" badge (#1901). */
+   * Tags column's blue "U" badge. */
   isUat: boolean;
   /** True when flight.receiver_sources includes "EXTERNAL" -- drives the
-   * Tags column's blue "E" badge (#1901). */
+   * Tags column's blue "E" badge. */
   isExternal: boolean;
 }
 

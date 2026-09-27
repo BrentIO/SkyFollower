@@ -18,21 +18,17 @@ export interface UseMapFlightsResult {
   aircraft: AircraftMap;
   connected: boolean;
   /**
-   * Fetches the server's accumulated trail for one aircraft
-   * (GET /api/flights/{icao_hex}) and reseeds that aircraft's client trail
-   * from it -- so a selected aircraft's drawn trail reflects the whole
-   * flight, not just what this browser has seen. Safe to call repeatedly;
-   * a 404 (aircraft no longer tracked) or fetch error is swallowed, leaving
-   * the client-accumulated trail in place.
+   * Fetches the server's accumulated trail for one aircraft and reseeds
+   * that aircraft's client trail from it, so a selected aircraft's drawn
+   * trail reflects the whole flight. Safe to call repeatedly; a 404 or
+   * fetch error is swallowed, leaving the client-accumulated trail in place.
    */
   seedTrailFor: (icaoHex: string) => void;
   /**
    * Applies a `remove` that was deferred because `protectedIcaoHex`
-   * matched at the time it arrived (see aircraftState.ts's
-   * ApplyWsEventsOptions/releasePendingRemoval) -- call this once the
-   * aircraft detail panel closes or the selection moves elsewhere, for
-   * whichever icao_hex was protected just before that. A no-op if nothing
-   * was actually deferred for it.
+   * matched at the time it arrived -- call once the aircraft detail panel
+   * closes or the selection moves elsewhere. A no-op if nothing was
+   * actually deferred.
    */
   releaseHold: (icaoHex: string) => void;
 }
@@ -42,16 +38,13 @@ export interface UseMapFlightsResult {
 // whatever arrives), then call GET /api/flights, then apply every
 // buffered WS message on top of that snapshot before the first
 // `aircraft` state is ever published -- closing the gap between "snapshot
-// fetched" and "WS live" that a snapshot-then-connect order would leave
-// open. See map/README.md's WebSocket API section and the issue this
-// implements for why this order matters.
+// fetched" and "WS live" that a snapshot-then-connect order would leave open.
 //
 // `protectedIcaoHex` is the aircraft detail panel's currently-open/selected
-// icao_hex, if any -- threaded into every applyWsEvents call as the
-// eviction-deferral hold (see aircraftState.ts's module docstring). Kept
-// in a ref rather than the effect's dependency array: a selection change
-// must not tear down and reconnect the WebSocket, it just needs the very
-// next processed batch to see the new value.
+// icao_hex, if any, threaded into every applyWsEvents call as the
+// eviction-deferral hold. Kept in a ref rather than the effect's
+// dependency array: a selection change must not tear down and reconnect
+// the WebSocket, it just needs the next processed batch to see it.
 export function useMapFlights(
   wsUrl: string,
   restFlightsUrl: string,

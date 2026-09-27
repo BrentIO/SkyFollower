@@ -1,21 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-// Vite's `?raw` suffix (see MapView.test.ts's own use of this) -- no
-// jsdom/component-render test setup in this project (lib/config.test.ts),
-// so both the displayScale style logic (#2000) and the arrow-glyph
-// rendering change (#2001) are checked against the actual source text
-// rather than a rendered DOM.
+// Vite's `?raw` suffix -- no jsdom/component-render test setup in this
+// project, so the displayScale style logic and arrow-glyph rendering are
+// checked against the actual source text rather than a rendered DOM.
 import infoBoxLayerSource from "./InfoBoxLayer.tsx?raw";
 
-// #2000: displayScale (ControlsPanel's operator-facing "Display Scale"
-// control, threaded through MapView.tsx) scales the whole info box via a
-// CSS transform, sharing one multiplier with the aircraft icon's own
-// icon-size expression (see MapView.test.ts's "display scale multiplier"
-// describe block). Applied here rather than recomputing every font-size/
-// padding value individually -- see the prop doc in InfoBoxLayer.tsx for
-// why, and this file's #1851 history for why an *unconditional* transform
-// (even a no-op scale(1)) isn't used: it would promote every rendered box
-// to its own compositor layer for zero visual benefit at the default.
+// displayScale scales the whole info box via a CSS transform, sharing one
+// multiplier with the aircraft icon's own icon-size expression. Applied
+// only when it differs from 1 -- an unconditional transform (even a no-op
+// scale(1)) would promote every rendered box to its own compositor layer
+// for zero visual benefit at the default.
 
 describe("InfoBoxLayer -- displayScale prop", () => {
   it("accepts and destructures a displayScale prop", () => {

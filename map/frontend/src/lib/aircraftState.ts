@@ -1,16 +1,13 @@
 // Pure reducer logic for the client-side per-aircraft state this frontend
 // holds: the REST snapshot, then every WebSocket position/metadata/stale/
 // remove event layered on top. Split out from hooks/useMapFlights.ts so
-// the merge-never-overwrite and trail-accumulation rules are covered by
-// plain unit tests.
+// the merge-never-overwrite and trail-accumulation rules are unit-testable.
 //
-// The live trail this frontend draws is built up client-side, from
-// `position` events/fields observed after this page loaded (plus one seed
-// point from the initial snapshot's current position, if known). When an
-// aircraft is selected, the client also fetches the server's own
-// accumulated trail (GET /api/flights/{icao_hex}) and reseeds from it via
-// applyTrailSeed(), so the drawn trail covers the whole flight rather than
-// only what this browser has seen -- and survives a page reload.
+// The live trail is built up client-side from `position` events observed
+// after page load. When an aircraft is selected, the client also fetches
+// the server's own accumulated trail and reseeds from it via
+// applyTrailSeed(), so the drawn trail covers the whole flight and survives
+// a page reload.
 
 import type { MapFlight, MapWsEvent, TrailWirePoint } from "../api/types";
 import { FALLBACK_SHAPE, resolveAircraftShape, shapeScale } from "./aircraftIconResolver";
@@ -21,16 +18,10 @@ export interface TrailPoint {
   altitude: number | null;
 }
 
-// One live sample for the aircraft detail panel's Trace Points action (see
-// components/AircraftDetailPanel.tsx / lib/tracePoints.ts). A parallel,
-// richer accumulation alongside `trail` above rather than an extension of
-// it: `trail` is an established, tested shape consumed by
-// featureCollections.ts/trailSegments.ts, and Trace Points additionally
-// needs velocity and a timestamp per sample (for the "{speed} kt
-// {altitude} ft" + local-time label) that the plain map trail has never
-// needed. Client-accumulated only, same as `trail` -- Trace Points draws
-// this frontend's own live trail, not a server/archive-fetched one (see
-// the issue this implements).
+// One live sample for the aircraft detail panel's Trace Points action.
+// Parallel to, not an extension of, `trail`: Trace Points additionally
+// needs velocity and a timestamp per sample for its label, which the plain
+// map trail never needed. Client-accumulated only, same as `trail`.
 export interface TracePoint {
   latitude: number;
   longitude: number;
@@ -44,104 +35,52 @@ export interface TracePoint {
 export interface AircraftRecord extends MapFlight {
   /** True after a `stale` event and before the next position/metadata event or a `remove`. */
   stale: boolean;
-  /**
-   * True after a `hide` event and before the next position/metadata event
-   * or a `remove`. A hidden aircraft is dropped from view (see
-   * featureCollections.ts's feature-collection builders) but its record
-   * and `trail` are kept -- a resumed flight reappears with its pre-gap
-   * trail intact.
-   */
+  /** True after a `hide` event and before the next position/metadata event
+   * or a `remove`. A hidden aircraft is dropped from view but its record
+   * and `trail` are kept, so a resumed flight reappears with its pre-gap
+   * trail intact. */
   hidden: boolean;
-  /**
-   * True once a `remove` event for this aircraft has been deferred because
-   * its detail panel was open (see ApplyWsEventsOptions.protectedIcaoHex
-   * and releasePendingRemoval below) -- the aircraft stays in state, not
-   * actually evicted, until the panel closes/deselects. Never set outside
-   * that deferral path.
-   */
+  /** True once a `remove` for this aircraft has been deferred because its
+   * detail panel was open (see ApplyWsEventsOptions.protectedIcaoHex and
+   * releasePendingRemoval below); stays in state until the panel closes. */
   pendingRemoval?: boolean;
   /** Oldest-first; client-accumulated only, see module docstring. */
   trail: TrailPoint[];
   /** Oldest-first; see TracePoint's own docstring. */
   tracePoints: TracePoint[];
   /**
-   * Epoch ms of the last *genuinely new* `position` or `metadata` message
-   * received for this aircraft (see applyEventToRecord's position/metadata
-   * case) -- a monotonic max of each event's own carried timestamp (a
-   * `position` event's arrival time, since position packets are never
-   * resent -- see below; a `metadata` event's own `last_message`) against
-   * whatever was already recorded, never the wall-clock arrival time of an
-   * arbitrary WS message. This deliberately differs from stamping "now" on
-   * every position/metadata event: message-processor's metadata resend
-   * loop unconditionally re-sends every active flight's `metadata`
-   * datagram every ~60s for map-service restart recovery, carrying the
-   * *same* `last_message` as before (see message-processor/README.md and
-   * #1966) -- treating that resend as evidence of a fresh message would
-   * make this field (and the stale/live cycle that reads it) reset every
-   * ~60s regardless of whether the aircraft is still actually transmitting.
-   * A `position` event, in contrast, is never resent -- message-processor
-   * only ever sends one for a message actually just decoded -- so its
-   * wall-clock arrival time is itself a genuine freshness signal.
-   *
-   * Drives the aircraft detail panel's live-relative "Last Message
-   * Received" row (lib/aircraftDetail.ts, components/AircraftDetailPanel.tsx).
-   * Undefined until the first position/metadata event with a usable
-   * timestamp, unless applySnapshot could seed it from the wire's
-   * `last_message` on initial load.
+   * Epoch ms of the last genuinely new `position` or `metadata` message
+   * (a monotonic max, never a plain wall-clock stamp). message-processor
+   * unconditionally resends every flight's `metadata` datagram every ~60s
+   * carrying the same `last_message`, so a resend must not advance this or
+   * the stale/live cycle would reset every ~60s regardless of whether the
+   * aircraft is still transmitting. A `position` event is never resent, so
+   * its arrival time is itself a genuine freshness signal.
    */
   lastReceivedAt?: number;
-  /**
-   * The resolved silhouette shape key (aircraftIconResolver.ts) and its
-   * on-map size multiplier. Computed only when the aircraft's `aircraft`
-   * enrichment sub-object changes (a `metadata` event or the snapshot),
-   * not on every position update -- so the icon layer never re-runs the
-   * resolver per render.
-   */
+  /** Resolved silhouette shape key and on-map size multiplier. Recomputed
+   * only when the `aircraft` enrichment sub-object changes, not on every
+   * position update. */
   shape: string;
   iconScale: number;
 }
 
 export type AircraftMap = Record<string, AircraftRecord>;
 
-// Caps how many points a client-accumulated trail can hold. The trail is
-// rendered as one multi-point LineString feature per contiguous
-// same-color run (trailSegments.ts's buildTrailRuns, #1820), but even a
-// single steady-altitude run still holds one coordinate per point, so an
-// unbounded trail still means unbounded per-feature geometry size on a
-// long-lived page session. A point-count cap is used rather than a
-// time-window cap because TrailPoint carries no timestamp -- adding one
-// purely to support capping would be a bigger change than the cap itself
-// needs.
-//
+// Caps how many points a client-accumulated trail can hold, bounding
+// per-feature geometry size over a long-lived page session. A point-count
+// cap rather than a time-window one, since TrailPoint carries no timestamp.
 // Mirrors the server's own trail-line cap (map/state_store.py's
-// MAX_TRAIL_POINTS -- see that constant's docstring for the full memory/
-// rendering reasoning behind 25,000): GET /api/flights/{icao_hex}'s
-// server-accumulated trail (applyTrailSeed below) is already capped to
-// this same value server-side, so a larger client cap here would never
-// actually see more points from that source, and a smaller one would
-// discard server history this client could otherwise keep. Kept in sync
-// by hand -- the two can't share a constant across the Python/TypeScript
-// boundary.
-//
-// Independent from MAX_TRACE_POINTS below: this cap governs the drawn
-// trail line only, not the Aircraft Detail Panel's Trace Points sample
-// buffer (see TracePoint's own docstring for why that stays separately,
-// and much more tightly, capped).
+// MAX_TRAIL_POINTS) -- kept in sync by hand across the Python/TypeScript
+// boundary, since a larger client cap would never see more points from
+// GET /api/flights/{icao_hex} and a smaller one would discard server
+// history this client could otherwise keep.
 export const MAX_TRAIL_POINTS = 25000;
 
-// Caps the Aircraft Detail Panel's Trace Points sample buffer (see
-// TracePoint's docstring). Deliberately independent of, and far smaller
-// than, MAX_TRAIL_POINTS above: Trace Points renders one labeled dot per
-// sample (plus a "{speed} kt {altitude} ft" + local-time label), not a
-// thin line segment, so it's far more visually and computationally
-// expensive per point than the trail line -- an uncapped or even
-// trail-line-sized buffer here would mean thousands of overlapping
-// labeled dots for a single long-tracked aircraft. Left at the same 300
-// the combined constant used to carry: that number was never the
-// bottleneck this issue was about, and 300 labeled samples is still
-// generous for what Trace Points is actually for (spot-checking a
-// flight's recent history), independent of however long the drawn trail
-// line itself now reaches back.
+// Independent of, and far smaller than, MAX_TRAIL_POINTS: Trace Points
+// renders one labeled dot per sample, not a thin line segment, so an
+// uncapped or trail-sized buffer would mean thousands of overlapping
+// labeled dots for a long-tracked aircraft.
 export const MAX_TRACE_POINTS = 300;
 
 function pushTrailPoint(trail: TrailPoint[], flight: Partial<MapFlight>): TrailPoint[] {
@@ -197,19 +136,14 @@ function pushTracePoint(points: TracePoint[], flight: Partial<MapFlight>, now: n
 }
 
 // Replaces an aircraft's client-accumulated trail with the server's own
-// accumulated trail (GET /api/flights/{icao_hex}'s `trail`), converting the
-// wire shape (`lat`/`lon`/`alt`) to TrailPoint and dropping any point with
-// no position. No-op if the aircraft isn't currently in state (it was
-// removed between selecting it and the fetch resolving) or the server
-// returned no trail.
+// accumulated trail, converting the wire shape to TrailPoint and dropping
+// any point with no position. No-op if the aircraft isn't currently in
+// state or the server returned no trail.
 //
-// A straight replace rather than a merge: the server records a point per
-// accepted `position` packet -- the same packets that reach this client as
-// `position` WS events -- so its trail is the authoritative, more complete
-// version of the same history. Any handful of live points this client
-// appended while the fetch was in flight are dropped here and re-appended
-// by the next `position` event a moment later (pushTrailPoint's
-// same-as-last dedupe keeps the seam clean).
+// A straight replace rather than a merge: the server's trail is the
+// authoritative, more complete version of the same history. Any live
+// points appended while the fetch was in flight are dropped here and
+// re-appended by the next `position` event moments later.
 export function applyTrailSeed(
   state: AircraftMap,
   icaoHex: string,
@@ -249,16 +183,12 @@ export function applySnapshot(snapshot: MapFlight[], now: number = Date.now()): 
 
 export interface ApplyWsEventsOptions {
   /**
-   * The icao_hex the aircraft detail panel currently has open, if any (see
-   * components/MapView.tsx / the panel's close-button eviction contract).
-   * A `remove` event for this icao_hex is deferred (the record stays in
-   * state, flagged `pendingRemoval`) rather than deleting it -- an
-   * aircraft the operator is actively looking at must never disappear out
-   * from under the open panel. Every other event type (including `hide`)
-   * is applied normally regardless of this option; only final eviction is
-   * deferred. Call releasePendingRemoval() once the panel closes/deselects
-   * to apply the deferred removal. See this module's docstring and the
-   * issue this implements for the frontend-vs-backend design discussion.
+   * The icao_hex the aircraft detail panel currently has open, if any. A
+   * `remove` for this icao_hex is deferred (flagged `pendingRemoval`)
+   * rather than deleted, so an aircraft the operator is looking at never
+   * disappears out from under the open panel. Every other event type
+   * still applies normally. Call releasePendingRemoval() once the panel
+   * closes/deselects to apply the deferred removal.
    */
   protectedIcaoHex?: string | null;
   /** Injectable wall-clock reading (epoch milliseconds) for Trace Points
@@ -268,19 +198,12 @@ export interface ApplyWsEventsOptions {
   now?: number;
 }
 
-// One event's effect on a single aircraft's record, independent of how
-// many other hexes/events are in the same batch -- the shared core both
-// applyWsEvent (single-event callers, tests) and applyWsEvents (#1820:
-// one map-wide clone for the whole batch, not one per event -- see that
-// function's own comment) apply against whatever map object they're each
-// working on. "set" upserts `record` at `icaoHex`; "delete" evicts it;
-// "noop" (same reference as `existing`) means this event had nothing new
-// to apply (e.g. `stale` on an already-stale aircraft, or any event for a
-// hex not currently tracked except position/metadata, which always
-// create one). Field-level merge for position/metadata events, mirroring
-// the backend's own merge-never-overwrite semantics (map/state_store.py's
-// apply_update): a field absent from this event leaves the existing
-// value untouched.
+// One event's effect on a single aircraft's record -- the shared core both
+// applyWsEvent and applyWsEvents apply. "set" upserts `record` at
+// `icaoHex`; "delete" evicts it; "noop" means this event had nothing new
+// to apply. Field-level merge for position/metadata events, mirroring the
+// backend's own merge-never-overwrite semantics: a field absent from this
+// event leaves the existing value untouched.
 type EventOutcome =
   | { kind: "set"; icaoHex: string; record: AircraftRecord }
   | { kind: "delete"; icaoHex: string }
@@ -292,19 +215,14 @@ function applyEventToRecord(existing: AircraftRecord | undefined, event: MapWsEv
     case "metadata": {
       const { icao_hex } = event;
       const { type: _type, ...fields } = event;
-      // A `position` event is never resent (message-processor only ever
-      // sends one for a message just decoded), so arrival time itself is
-      // a genuine freshness signal. A `metadata` event, however, can be
-      // message-processor's unconditional ~60s resend carrying the exact
-      // same `last_message` as before -- its own carried timestamp, not
-      // arrival time, is what actually tells resend and real update apart
-      // (see AircraftRecord.lastReceivedAt's docstring and #1966).
+      // A `position` event is never resent, so arrival time is a genuine
+      // freshness signal; a `metadata` resend carries the same
+      // `last_message` as before, so its own carried timestamp (not
+      // arrival time) is what tells resend and real update apart.
       const eventTimestamp = event.type === "position" ? now : parseWireTimestamp(event.last_message);
       const previousLastReceivedAt = existing?.lastReceivedAt;
-      // Monotonic max: a resend carrying an unchanged last_message must
-      // never move lastReceivedAt at all, forward or back -- only a
-      // genuinely newer timestamp (or the very first one ever seen for
-      // this aircraft) advances it.
+      // Monotonic max: a resend with an unchanged last_message must never
+      // move lastReceivedAt; only a genuinely newer timestamp advances it.
       const nextLastReceivedAt =
         eventTimestamp == null
           ? previousLastReceivedAt
@@ -321,9 +239,7 @@ function applyEventToRecord(existing: AircraftRecord | undefined, event: MapWsEv
         ...fields,
         // Only genuinely fresh data un-fades a stale aircraft -- a
         // metadata resend carrying old data must never re-brighten one
-        // that's already dimmed (#1966). No existing record means this is
-        // the first event ever seen for this aircraft, which is always
-        // genuine.
+        // that's already dimmed.
         stale: existing && !isGenuinelyFresh ? existing.stale : false,
         hidden: false, // ...and un-hides a previously-hidden one (contact resumed).
         pendingRemoval: false, // ...and cancels a deferred eviction (contact resumed).
@@ -333,8 +249,7 @@ function applyEventToRecord(existing: AircraftRecord | undefined, event: MapWsEv
       merged.tracePoints =
         event.type === "position" ? pushTracePoint(existing?.tracePoints ?? [], merged, now) : (existing?.tracePoints ?? []);
       // Only a `metadata` event carries the `aircraft` sub-object, so only
-      // then can the resolved silhouette change -- a `position` event just
-      // keeps whatever was resolved last.
+      // then can the resolved silhouette change.
       if ("aircraft" in fields) {
         merged.shape = resolveAircraftShape(merged.aircraft);
         merged.iconScale = shapeScale(merged.shape);
@@ -365,12 +280,10 @@ function applyEventToRecord(existing: AircraftRecord | undefined, event: MapWsEv
   }
 }
 
-// Applies one WebSocket event on top of existing state. Never mutates
-// its input -- returns a new AircraftMap (or the same reference when the
-// event is a no-op, e.g. `stale`/`remove` for an aircraft not currently
-// tracked). See applyEventToRecord for the actual merge rules; kept as a
-// single-clone-per-call convenience for single-event callers (tests,
-// mainly) -- applyWsEvents below is what a real WS batch goes through.
+// Applies one WebSocket event on top of existing state. Never mutates its
+// input -- returns a new AircraftMap, or the same reference on a no-op.
+// Single-clone-per-call convenience for single-event callers (tests,
+// mainly); applyWsEvents below is what a real WS batch goes through.
 export function applyWsEvent(state: AircraftMap, event: MapWsEvent, options?: ApplyWsEventsOptions): AircraftMap {
   const outcome = applyEventToRecord(state[eventIcaoHex(event)], event, options?.now ?? Date.now(), options);
   switch (outcome.kind) {
@@ -390,25 +303,13 @@ function eventIcaoHex(event: MapWsEvent): string {
   return event.icao_hex;
 }
 
-// #1820: applies a whole WebSocket batch against at most *one* working
-// copy of `state`, rather than aircraftState's previous reduce-over-
-// applyWsEvent, which spread the entire map fresh on every individual
-// event -- O(batch size x tracked-fleet size) object-copy work per batch,
-// confirmed via a live DevTools trace as a real contributor to sustained
-// high CPU with the full fleet. The clone is lazy (copy-on-write): a
-// batch whose every event turns out to be a no-op (e.g. a redundant
-// `stale` for an already-stale aircraft) returns the exact same `state`
-// reference untouched, same as a single no-op applyWsEvent call always
-// has -- avoiding a wasted top-level AircraftMap identity change (and the
-// React re-render that would trigger) even though nothing changed.
-// Every untouched aircraft's record reference is still preserved exactly
-// once the draft *does* get created (aircraftMapDiff.ts's diffing
-// depends on this -- see that file's own comment): the clone copies
-// every key by reference, and only hexes an event in this batch actually
-// names are ever reassigned/deleted on it afterward. A hex touched by
-// more than one event in the same batch sees each event applied against
-// the *result* of the previous one, same ordering guarantee the old
-// reduce-based version had.
+// Applies a whole WebSocket batch against at most *one* working copy of
+// `state`, rather than reducing over applyWsEvent (which cloned the map
+// per event -- O(batch size x fleet size) per batch). The clone is lazy: a
+// batch whose every event is a no-op returns the exact same `state`
+// reference untouched. Once a draft is created, every untouched aircraft's
+// record reference is preserved exactly (aircraftMapDiff.ts's diffing
+// depends on this) since the clone copies every key by reference.
 export function applyWsEvents(state: AircraftMap, events: MapWsEvent[], options?: ApplyWsEventsOptions): AircraftMap {
   const now = options?.now ?? Date.now();
   let draft: AircraftMap | null = null;
@@ -423,11 +324,9 @@ export function applyWsEvents(state: AircraftMap, events: MapWsEvent[], options?
   return draft ?? state;
 }
 
-// Applies a `remove` that was previously deferred by protectedIcaoHex (see
-// ApplyWsEventsOptions) -- called once the aircraft detail panel closes or
-// deselects. A no-op (same reference) if the aircraft was never flagged
-// pendingRemoval (nothing was ever deferred, so there's nothing to apply)
-// or is no longer tracked at all.
+// Applies a `remove` that was previously deferred by protectedIcaoHex --
+// called once the aircraft detail panel closes or deselects. A no-op if
+// the aircraft was never flagged pendingRemoval or is no longer tracked.
 export function releasePendingRemoval(state: AircraftMap, icaoHex: string): AircraftMap {
   const existing = state[icaoHex];
   if (!existing || !existing.pendingRemoval) return state;

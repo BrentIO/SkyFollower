@@ -1,26 +1,15 @@
-// Originally ported verbatim from management-ui/frontend/src/lib/
-// flightView.ts's altitudeColor()/darkenColor() -- this is a separate,
-// standalone frontend project, so it carries its own copy rather than
-// importing across the two. altitudeColor is used for the aircraft icon
-// fill (MapView.tsx's symbol layer `icon-color`), the live trail color
-// (MapView.tsx's trail `line-color`), and the Trace Points dot color
-// (lib/tracePoints.ts), all driven off an altitude value -- same
-// mechanism throughout, per design. darkenColor is used only by Trace
-// Points, for the dot's stroke.
+// Ported from management-ui/frontend/src/lib/flightView.ts's
+// altitudeColor()/darkenColor() -- a separate, standalone frontend project
+// carries its own copy. altitudeColor drives the aircraft icon fill, the
+// live trail color, and the Trace Points dot color, all off an altitude
+// value. darkenColor is used only by Trace Points, for the dot's stroke.
 
 // Altitude-to-color lookup table (hue and lightness each interpolated from
 // their own set of breakpoints below), giving a smooth climb/cruise/descent
 // color ramp. Only an "air" table is needed here: null altitude is handled
-// separately as pure black (see altitudeColor below) rather than through a
-// ground/unknown table entry.
-//
-// #1912 tried darkening the l breakpoints for h 60-140 (roughly the
-// 6,000-11,000ft band) by ~13-16 points, to fix low contrast against
-// NEXRAD radar returns in that hue range. Reverted: the darker color read
-// as harder to see in general use, not just fixed against radar -- worse
-// than the original, not better. Back to the original values here; a real
-// fix for the radar-contrast problem still needs a properly compared
-// (not simulated) brighter/more-saturated candidate, not another guess.
+// separately as pure black (see altitudeColor below). These values are
+// tuned by eye against a rendered comparison, not arbitrary -- retune only
+// against a real side-by-side rendering, not a simulated guess.
 const COLOR_BY_ALT_AIR = {
   s: 88,
   h: [
@@ -67,14 +56,10 @@ const COLOR_BY_ALT_AIR = {
 };
 
 // Interpolates hue then lightness from COLOR_BY_ALT_AIR's breakpoints.
-//
-// Two deliberate design choices here (both user-confirmed, carried over
-// from the ported source):
-//   - Null/unknown altitude renders pure black rather than a light gray --
-//     the icon/line are thick enough that solid black reads clearly on the
-//     light basemap.
-//   - Altitude is interpolated at its raw value rather than quantized to
-//     fixed bands first.
+// Null/unknown altitude renders pure black rather than a light gray -- the
+// icon/line are thick enough that solid black reads clearly on the light
+// basemap. Altitude is interpolated at its raw value, not quantized to
+// fixed bands first.
 export function altitudeColor(altitudeFt: number | null): string {
   if (altitudeFt === null) return "hsl(0, 0%, 0%)";
 

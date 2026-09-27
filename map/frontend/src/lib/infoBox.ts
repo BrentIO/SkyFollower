@@ -26,9 +26,8 @@ export type TrendArrow = "↑" | "↓" | "";
 //
 // Kept exactly as-is (Unicode glyph, not a direction enum) for its other
 // two callers -- lib/aircraftListRow.ts's list panel and
-// lib/aircraftDetail.ts's detail panel -- which render it as ordinary text
-// and aren't part of issue #2001. See trendDirection() below for the
-// info-box-only replacement.
+// lib/aircraftDetail.ts's detail panel -- which render it as ordinary
+// text. See trendDirection() below for the info-box-only replacement.
 export function trendArrow(verticalSpeed: number | null | undefined): TrendArrow {
   if (verticalSpeed == null) return "";
   if (verticalSpeed > VERTICAL_SPEED_LEVEL_THRESHOLD) return "↑";
@@ -39,14 +38,11 @@ export function trendArrow(verticalSpeed: number | null | undefined): TrendArrow
 export type TrendDirection = "up" | "down" | null;
 
 // Same ±500ft/min threshold as trendArrow(), but returns a direction
-// instead of a Unicode character. #2001: the info box renders the trend
-// as an inline SVG glyph rather than a font glyph (a specific Unicode
-// character isn't guaranteed to be in every platform's font's glyph
-// table, and macOS was observed silently substituting a different,
-// undersized fallback font for just that character) -- InfoBoxLayer.tsx
-// needs a direction value to pick an SVG shape, not a character to embed
-// in text. A separate function rather than reusing trendArrow()'s output
-// so the two Unicode-text callers above stay untouched.
+// instead of a Unicode character: the info box renders the trend as an
+// inline SVG glyph rather than a font glyph, since a specific Unicode
+// character isn't guaranteed to render consistently across platform
+// fonts. A separate function so the two Unicode-text callers above stay
+// untouched.
 export function trendDirection(verticalSpeed: number | null | undefined): TrendDirection {
   if (verticalSpeed == null) return null;
   if (verticalSpeed > VERTICAL_SPEED_LEVEL_THRESHOLD) return "up";
@@ -72,8 +68,8 @@ export interface AltitudeSpeedLine {
 
 // Line 2: rendered by InfoBoxLayer.tsx as "35000<arrow> 450kt". Returned
 // as parts, not one formatted string like line 1/3, because the trend
-// renders as an inline SVG glyph there, not a character embedded in text
-// (#2001). Either altitude or groundspeed alone is independently omitted
+// renders as an inline SVG glyph there, not a character embedded in text.
+// Either altitude or groundspeed alone is independently omitted
 // (null) when its underlying field is unknown -- never a placeholder. The
 // whole line is omitted (returns null) only when both are unknown. trend
 // is only ever non-null alongside a known altitude (an arrow with nothing

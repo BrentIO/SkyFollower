@@ -1,46 +1,16 @@
-// Path/shape data for this map view's icon-only buttons: both
-// components/AircraftDetailPanel.tsx's action row (Isolate/Zoom To/Follow/
-// Trace Points) and components/ControlsPanel.tsx's toggle row (History/
-// Labels/Map Labels/Range Outline). Kept as plain data -- rendered into an
-// <svg> by components/IconButton.tsx's shared ActionIcon -- rather than as
-// JSX directly, so the exact geometry is a plain, unit-testable value
-// (this project has no jsdom/component-render test setup -- see
-// lib/config.test.ts's own note).
+// Path/shape data for this map view's icon-only buttons. Kept as plain
+// data -- rendered into an <svg> by components/IconButton.tsx's shared
+// ActionIcon -- rather than as JSX directly, so the exact geometry is a
+// plain, unit-testable value.
 //
-// TRACE_POINTS_ICON is Lucide's "Waypoints" glyph, copied byte-for-byte
-// (identical path `d` and circle cx/cy/r values) from management-ui/
-// frontend/src/components/FlightViewModal.tsx's TRACE_POINTS_ICON_SVG --
-// same feature, same icon, in both frontends (see the issue this
-// implements). Verified against that source in actionIcons.test.ts.
-//
-// ISOLATE_ICON/ZOOM_TO_ICON/FOLLOW_ICON are Lucide's "Focus"/
-// "LocateFixed"/"Navigation" glyphs (fetched from lucide-icons/lucide) --
-// no prior precedent anywhere in this codebase; picked per the issue's
-// suggested icon set (Focus = "focus on this one", LocateFixed = "center/
-// target this position" and visually distinct from lib/crosshairIcon.ts's
-// recenter glyph, Navigation = the conventional map-app "follow me"
-// compass-arrow).
-//
-// ROUTE_ICON/TAGS_ICON/TYPE_ICON/RADAR_ICON are Lucide's "Route"/
-// "square-text"/"Type"/"Radar" glyphs (fetched byte-for-byte from
-// lucide-icons/lucide, same convention as above) -- also no prior
-// precedent in this codebase; picked per the issue's suggested set for
-// ControlsPanel's toggle row (Route = two endpoints joined by a winding
-// path, reading as "every flight's path"; square-text = a rounded square
-// containing three text lines, reading as "aircraft info-box labels" --
-// TAGS_ICON was originally Lucide's "Tags" glyph, swapped to square-text
-// as a deliberate style choice with no functional change; Type = a stylized "A",
-// deliberately distinct from square-text so the two label toggles don't
-// look identical; Radar = concentric arcs + sweep needle, reading directly
-// as reception range/coverage).
-//
-// MAXIMIZE_ICON/MINIMIZE_ICON are Lucide's "Maximize"/"Minimize" glyphs
-// (fetched byte-for-byte from lucide-icons/lucide's icons/maximize.svg and
-// icons/minimize.svg), same fetch-don't-guess convention as above. Used
-// together as a pair by ControlsPanel's fullscreen toggle -- Maximize
-// (four corner brackets not quite forming a closed square) when the page
-// isn't fullscreen, swapping to Minimize (the same four corners pointing
-// inward) once it is, per the issue's icon-state convention.
+// Every icon below is a Lucide glyph, fetched byte-for-byte from
+// lucide-icons/lucide rather than hand-drawn, except TRACE_POINTS_ICON,
+// which is copied verbatim from management-ui/frontend's own
+// TRACE_POINTS_ICON_SVG so the same feature uses the same icon in both
+// frontends (verified against that source in actionIcons.test.ts).
+// RADAR_ICON ("Range Outline") and WEATHER_RADAR_ICON ("weather radar
+// overlay") are deliberately distinct glyphs despite both being
+// radar-themed, since they're unrelated features.
 
 export interface IconPath {
   d: string;
@@ -152,13 +122,6 @@ export const RADAR_ICON: IconSpec = {
   circles: [{ cx: 12, cy: 12, r: 2 }],
 };
 
-// WEATHER_RADAR_ICON/PLAY_ICON/PAUSE_ICON are Lucide's "CloudRain"/"Play"/
-// "Pause" glyphs (fetched byte-for-byte from lucide-icons/lucide, same
-// convention as above), for ControlsPanel's weather-radar overlay control
-// (#1896). WEATHER_RADAR_ICON is deliberately distinct from RADAR_ICON
-// above -- that one already means "Range Outline" in this panel, so
-// reusing it for the unrelated weather-radar toggle would put two
-// different features behind the same glyph.
 export const WEATHER_RADAR_ICON: IconSpec = {
   paths: [
     { d: "M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" },
@@ -197,12 +160,9 @@ export const MINIMIZE_ICON: IconSpec = {
   ],
 };
 
-// #2000: Lucide's "Scaling" glyph (fetched byte-for-byte from
-// lucide-icons/lucide's icons/scaling.svg, same convention as above) --
-// a diagonal-resize arrow inside a frame, reading as "resize this content,"
-// for ControlsPanel's new display-scale control (the icon/info-box size
-// multiplier). Deliberately distinct from MAXIMIZE_ICON/MINIMIZE_ICON above
-// -- those are about the whole page's fullscreen state, not per-element size.
+// Lucide's "Scaling" glyph -- deliberately distinct from
+// MAXIMIZE_ICON/MINIMIZE_ICON above, which are about the whole page's
+// fullscreen state, not per-element size.
 export const DISPLAY_SCALE_ICON: IconSpec = {
   paths: [
     { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" },
@@ -212,11 +172,6 @@ export const DISPLAY_SCALE_ICON: IconSpec = {
   ],
 };
 
-// #2012: Lucide's "Settings" glyph (fetched byte-for-byte from
-// lucide-icons/lucide's icons/settings.svg, same convention as above) -- a
-// gear, reading as "open the settings panel," for ControlsPanel's new
-// Settings button (which consolidates Map Labels, Text & Icon Size, Range,
-// and Radar's opacity slider into one panel, see components/SettingsPanel.tsx).
 export const SETTINGS_ICON: IconSpec = {
   paths: [
     {

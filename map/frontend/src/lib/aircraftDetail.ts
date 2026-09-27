@@ -1,9 +1,7 @@
 // Pure formatting/omission logic for the aircraft detail side panel (see
-// components/AircraftDetailPanel.tsx). Same split as lib/infoBox.ts's
-// InfoBoxLayer pairing -- the omit-if-unknown rules here are the panel's
-// actual spec, so they're covered by plain unit tests rather than only
-// exercisable through a rendered map (this project has no jsdom/component-
-// render test setup -- see lib/config.test.ts's own note on that).
+// components/AircraftDetailPanel.tsx). The omit-if-unknown rules here are
+// the panel's actual spec, so they're covered by plain unit tests rather
+// than only exercisable through a rendered map.
 
 import type { AircraftInfo, AirportRef, MapFlight, OperatorInfo, RegistrantInfo } from "../api/types";
 import type { CenterPoint } from "./config";
@@ -129,9 +127,7 @@ export interface AircraftDetailData {
   /** Header title. Null (rendered blank, not the ICAO hex) when the
    * aircraft's ident/callsign hasn't resolved yet -- the hex is still
    * available in its own `icaoHex` row below, so this isn't a loss of
-   * information. Deliberately *not* the same convention as
-   * management-ui's FlightViewModal.tsx header (`view.ident ??
-   * view.icao_hex`); see #1843. */
+   * information. */
   title: string | null;
   registration: string | null;
   icaoHex: string | null;

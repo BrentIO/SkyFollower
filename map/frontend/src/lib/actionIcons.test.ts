@@ -16,13 +16,10 @@ import {
   ZOOM_TO_ICON,
 } from "./actionIcons";
 
-// Verbatim path/circle data copied out of management-ui/frontend/src/
-// components/FlightViewModal.tsx's TRACE_POINTS_ICON_SVG template literal
-// (as of this writing) -- kept hardcoded here (rather than a cross-project
-// file import, which this codebase deliberately avoids -- see
-// altitudeColor.ts's own "separate frontend, own copy" convention) so a
-// future edit to either icon silently drifting out of byte-for-byte parity
-// fails a test instead of only being caught by eyeballing a diff.
+// Verbatim path/circle data copied out of management-ui/frontend's
+// TRACE_POINTS_ICON_SVG template literal, kept hardcoded here so a future
+// edit drifting out of byte-for-byte parity fails a test instead of only
+// being caught by eyeballing a diff.
 const MANAGEMENT_UI_TRACE_POINTS_PATHS = [
   "m10.586 5.414-5.172 5.172",
   "m18.586 13.414-5.172 5.172",
@@ -72,11 +69,6 @@ describe("ISOLATE_ICON / ZOOM_TO_ICON / FOLLOW_ICON", () => {
   });
 });
 
-// ROUTE_ICON/TAGS_ICON/TYPE_ICON/RADAR_ICON path/circle/rect data copied
-// byte-for-byte from lucide-icons/lucide's icons/route.svg,
-// icons/square-text.svg, icons/type.svg, and icons/radar.svg (as of this
-// writing) -- same fetch-don't-guess convention ISOLATE_ICON/ZOOM_TO_ICON/
-// FOLLOW_ICON already used above.
 describe("ROUTE_ICON / TAGS_ICON / TYPE_ICON / RADAR_ICON", () => {
   it("ROUTE_ICON is Lucide's Route glyph (two endpoint circles joined by a winding path)", () => {
     expect(ROUTE_ICON.circles).toEqual([
