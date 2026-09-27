@@ -315,8 +315,8 @@ to an older release tag by hand and run `docker compose pull && docker
 compose up -d` in that role's directory.
 
 To install or upgrade to a **development build** instead of a release, set
-the single `branch` variable — see [Testing a dev
-build](/getting-started/#testing-a-dev-build).
+the single `branch` variable — see [Testing a Dev
+Build](/architecture/local-development#testing-a-dev-build).
 
 ## Maintenance
 
