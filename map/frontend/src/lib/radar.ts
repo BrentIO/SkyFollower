@@ -38,18 +38,19 @@ export const RADAR_FRAME_LOAD_TIMEOUT_MS = 5000;
 export const RADAR_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
- * Builds the XYZ tile URL template for one radar frame.
- * `offsetMinutes = 0` is the always-current snapshot
- * (`.../nexrad-n0q/{z}/{x}/{y}.png`); any other value in
- * RADAR_PLAYBACK_OFFSETS_MINUTES is that many minutes old
- * (`.../nexrad-n0q-m{NN}m/{z}/{x}/{y}.png`).
+ * Builds the XYZ tile URL template for one radar frame. Both branches use
+ * IEM's `/cache/` path -- `/c/` (its 14-day stable-timestamp cache) 404s
+ * for the `-mXXm` layers, which are relative to "now" rather than a fixed
+ * time (#2026). `offsetMinutes = 0` is the always-current snapshot
+ * (`nexrad-n0q`); any other value in RADAR_PLAYBACK_OFFSETS_MINUTES is
+ * that many minutes old (`nexrad-n0q-m{NN}m`).
  */
 export function radarFrameTileUrl(offsetMinutes: number): string {
   if (offsetMinutes === 0) {
     return `${RADAR_TILE_HOST}/cache/tile.py/1.0.0/nexrad-n0q/{z}/{x}/{y}.png`;
   }
   const padded = String(offsetMinutes).padStart(2, "0");
-  return `${RADAR_TILE_HOST}/c/tile.py/1.0.0/nexrad-n0q-m${padded}m/{z}/{x}/{y}.png`;
+  return `${RADAR_TILE_HOST}/cache/tile.py/1.0.0/nexrad-n0q-m${padded}m/{z}/{x}/{y}.png`;
 }
 
 // The source/layer id for one playback frame. Each frame gets its own

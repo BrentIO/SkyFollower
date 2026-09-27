@@ -25,16 +25,22 @@ describe("radarFrameTileUrl", () => {
 
   it("returns a zero-padded archived-frame URL for a non-zero offset", () => {
     expect(radarFrameTileUrl(5)).toBe(
-      "https://mesonet.agron.iastate.edu/c/tile.py/1.0.0/nexrad-n0q-m05m/{z}/{x}/{y}.png",
+      "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-m05m/{z}/{x}/{y}.png",
     );
     expect(radarFrameTileUrl(30)).toBe(
-      "https://mesonet.agron.iastate.edu/c/tile.py/1.0.0/nexrad-n0q-m30m/{z}/{x}/{y}.png",
+      "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-m30m/{z}/{x}/{y}.png",
     );
   });
 
   it("produces a distinct URL for every offset in the playback sequence", () => {
     const urls = new Set(RADAR_PLAYBACK_OFFSETS_MINUTES.map(radarFrameTileUrl));
     expect(urls.size).toBe(RADAR_PLAYBACK_OFFSETS_MINUTES.length);
+  });
+
+  it("never requests IEM's /c/ path -- 404s for the -mXXm layers (#2026)", () => {
+    for (const offset of RADAR_PLAYBACK_OFFSETS_MINUTES) {
+      expect(radarFrameTileUrl(offset)).not.toContain("/c/tile.py");
+    }
   });
 });
 
