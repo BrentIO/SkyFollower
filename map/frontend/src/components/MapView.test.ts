@@ -1203,3 +1203,43 @@ describe("Range Rings toggle (#2012) -- new persisted on/off control for the sta
     expect(body).toContain("rangeRingsDisabled={!config.center}");
   });
 });
+
+describe("Trail history seeding -- batched for 'Trails: All', unbatched for a single selection (#2052)", () => {
+  it("destructures seedTrailForMany alongside seedTrailFor from useMapFlights", () => {
+    expect(mapViewSource).toContain(
+      "const { aircraft, connected, seedTrailFor, seedTrailForMany, releaseHold } = useMapFlights(",
+    );
+  });
+
+  it("the newly-selected-aircraft effect is untouched: still calls seedTrailFor per icaoHex, not the batch method", () => {
+    const effectIndex = mapViewSource.indexOf("const prevSelectedRef = useRef<Set<string>>(new Set());");
+    expect(effectIndex).toBeGreaterThan(-1);
+    const depsIndex = mapViewSource.indexOf("}, [selected, seedTrailFor]);", effectIndex);
+    expect(depsIndex).toBeGreaterThan(effectIndex);
+    const effectBody = mapViewSource.slice(effectIndex, depsIndex);
+    expect(effectBody).toContain("if (!prevSelectedRef.current.has(icaoHex)) seedTrailFor(icaoHex);");
+    expect(effectBody).not.toContain("seedTrailForMany");
+  });
+
+  it("the historyAll ('Trails: All') effect calls seedTrailForMany once with the full needed array, not seedTrailFor in a loop", () => {
+    const effectIndex = mapViewSource.indexOf("const historySeededRef = useRef<Set<string>>(new Set());");
+    expect(effectIndex).toBeGreaterThan(-1);
+    const depsIndex = mapViewSource.indexOf("}, [historyAll, aircraft, seedTrailForMany]);", effectIndex);
+    expect(depsIndex).toBeGreaterThan(effectIndex);
+    const effectBody = mapViewSource.slice(effectIndex, depsIndex);
+    expect(effectBody).toContain(
+      "const needed = aircraftNeedingHistorySeed(historyAll, Object.keys(aircraft), historySeededRef.current);",
+    );
+    expect(effectBody).toContain("seedTrailForMany(needed);");
+    expect(effectBody).not.toContain("seedTrailFor(icaoHex)");
+  });
+
+  it("bails out before calling seedTrailForMany when nothing needs seeding", () => {
+    const effectIndex = mapViewSource.indexOf("const historySeededRef = useRef<Set<string>>(new Set());");
+    const neededIndex = mapViewSource.indexOf("const needed = aircraftNeedingHistorySeed(", effectIndex);
+    const guardIndex = mapViewSource.indexOf("if (needed.length === 0) return;", neededIndex);
+    const callIndex = mapViewSource.indexOf("seedTrailForMany(needed);", neededIndex);
+    expect(guardIndex).toBeGreaterThan(neededIndex);
+    expect(callIndex).toBeGreaterThan(guardIndex);
+  });
+});

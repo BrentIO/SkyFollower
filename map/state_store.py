@@ -261,6 +261,50 @@ class FlightStateStore:
         raw = self._redis.lrange(flight_trail_key(icao_hex), 0, -1)
         return [json.loads(p) for p in raw]
 
+    def get_flights_batch(self, icao_hex_list: list[str]) -> list[dict]:
+        """Batched counterpart to get_flight()+get_trail() combined -- same
+        per-aircraft shape (merged current-state plus a `trail` array) as
+        GET /api/flights/{icao_hex}, but for many hexes in two pipelined
+        round trips total, not 2N individual ones.
+
+        A hex that isn't currently tracked is silently omitted from the
+        result, mirroring the singular endpoint's 404-means-null handling
+        at batch granularity -- there's no per-item error.
+
+        Same pipelining shape as list_flights(): every requested hex's
+        HGETALL is issued as one pipeline (a single round trip), then --
+        only for the hexes that actually came back non-empty -- every
+        trail's LRANGE is issued as a second pipeline (a second round
+        trip). Trail-fetching is skipped entirely for hexes that turned
+        out untracked, so an "All" seed over a mostly-stale hex list still
+        costs at most two round trips, never one per hex."""
+        if not icao_hex_list:
+            return []
+
+        detail_pipe = self._redis.pipeline()
+        for icao_hex in icao_hex_list:
+            detail_pipe.hgetall(flight_detail_key(icao_hex))
+        detail_results = detail_pipe.execute()
+
+        tracked: list[tuple[str, dict]] = [
+            (icao_hex, self._decode_hash(raw))
+            for icao_hex, raw in zip(icao_hex_list, detail_results)
+            if raw
+        ]
+        if not tracked:
+            return []
+
+        trail_pipe = self._redis.pipeline()
+        for icao_hex, _flight in tracked:
+            trail_pipe.lrange(flight_trail_key(icao_hex), 0, -1)
+        trail_results = trail_pipe.execute()
+
+        flights: list[dict] = []
+        for (_icao_hex, flight), raw_trail in zip(tracked, trail_results):
+            flight["trail"] = [json.loads(p) for p in raw_trail]
+            flights.append(flight)
+        return flights
+
     def handle_expired_key(self, key: str) -> Optional[dict]:
         """Turns a Redis `expired` keyevent's key name into the WebSocket
         event to broadcast ("stale" for flight:live:*, "hide" for

@@ -160,6 +160,21 @@ class _Server:
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
 
+    def post_flights_batch(self, icao_hex_list: list[str]) -> tuple[int, object]:
+        """(status_code, body) for POST /api/flights/batch."""
+        body = json.dumps({"icao_hex": icao_hex_list}).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.http_port}/api/flights/batch",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
     def get_processors(self) -> dict:
         with urllib.request.urlopen(f"http://127.0.0.1:{self.http_port}/api/processors", timeout=5) as resp:
             return json.loads(resp.read())
@@ -398,6 +413,66 @@ def test_get_flight_history_empty_trail_when_only_velocity_seen(server):
     status, body = server.get_flight_history(icao_hex)
     assert status == 200
     assert body["trail"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /api/flights/batch -- batched counterpart to GET /api/flights/{icao_hex}
+# (see issue #2052: "Trails: All" was firing one HTTP request per aircraft)
+# ---------------------------------------------------------------------------
+
+def test_post_flights_batch_returns_state_and_trail_per_tracked_hex(server):
+    hex_a, hex_b = _hex(), _hex()
+    ts = time.time()
+    server.send_udp({
+        "type": "position", "icao_hex": hex_a, "ts": ts,
+        "lat": 1.0, "lon": 1.0, "alt": 5000,
+    })
+    server.send_udp({
+        "type": "position", "icao_hex": hex_b, "ts": ts,
+        "lat": 2.0, "lon": 2.0, "alt": 6000,
+    })
+    _wait_for_flight(server, hex_a)
+    _wait_for_flight(server, hex_b)
+
+    status, body = server.post_flights_batch([hex_a, hex_b])
+
+    assert status == 200
+    by_hex = {f["icao_hex"]: f for f in body}
+    assert set(by_hex) == {hex_a, hex_b}
+    assert by_hex[hex_a]["lat"] == 1.0
+    assert by_hex[hex_a]["trail"] == [{"lat": 1.0, "lon": 1.0, "alt": 5000}]
+    assert by_hex[hex_b]["lat"] == 2.0
+    assert by_hex[hex_b]["trail"] == [{"lat": 2.0, "lon": 2.0, "alt": 6000}]
+
+
+def test_post_flights_batch_silently_omits_untracked_hexes(server):
+    """No per-item 404 -- an aircraft this test never sent a packet for is
+    just missing from the response list, mirroring the singular endpoint's
+    404-means-null handling at batch granularity."""
+    tracked_hex = _hex()
+    untracked_hex = _hex()
+    server.send_udp({
+        "type": "position", "icao_hex": tracked_hex, "ts": time.time(),
+        "lat": 1.0, "lon": 1.0,
+    })
+    _wait_for_flight(server, tracked_hex)
+
+    status, body = server.post_flights_batch([tracked_hex, untracked_hex])
+
+    assert status == 200
+    assert {f["icao_hex"] for f in body} == {tracked_hex}
+
+
+def test_post_flights_batch_empty_list_returns_empty_list(server):
+    status, body = server.post_flights_batch([])
+    assert status == 200
+    assert body == []
+
+
+def test_post_flights_batch_all_untracked_returns_empty_list(server):
+    status, body = server.post_flights_batch([_hex(), _hex()])
+    assert status == 200
+    assert body == []
 
 
 # ---------------------------------------------------------------------------

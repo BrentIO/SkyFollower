@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchFlights, fetchFlightHistory } from "../api/flights";
+import { fetchFlights, fetchFlightHistory, fetchFlightHistoryBatch } from "../api/flights";
 import type { MapWsEvent } from "../api/types";
 import {
   applySnapshot,
@@ -24,6 +24,15 @@ export interface UseMapFlightsResult {
    * fetch error is swallowed, leaving the client-accumulated trail in place.
    */
   seedTrailFor: (icaoHex: string) => void;
+  /**
+   * Batched counterpart to seedTrailFor: fetches every listed aircraft's
+   * server-accumulated trail in one request (POST /api/flights/batch) and
+   * reseeds each one's client trail from it, instead of firing one request
+   * per aircraft. Used by "Trails: All" -- see issue #2052. An empty list
+   * is a no-op (no request fired). Safe to call repeatedly; a fetch error
+   * is swallowed, leaving the client-accumulated trails in place.
+   */
+  seedTrailForMany: (icaoHexList: string[]) => void;
   /**
    * Applies a `remove` that was deferred because `protectedIcaoHex`
    * matched at the time it arrived -- call once the aircraft detail panel
@@ -69,6 +78,26 @@ export function useMapFlights(
         })
         .catch((err) => {
           console.error(`Failed to fetch flight history for ${icaoHex}:`, err);
+        });
+    },
+    [restFlightsUrl],
+  );
+
+  const seedTrailForMany = useCallback(
+    (icaoHexList: string[]) => {
+      if (icaoHexList.length === 0) return;
+      fetchFlightHistoryBatch(restFlightsUrl, icaoHexList)
+        .then((histories) => {
+          setAircraft((prev) => {
+            let next = prev;
+            for (const history of histories) {
+              next = applyTrailSeed(next, history.icao_hex, history.trail);
+            }
+            return next;
+          });
+        })
+        .catch((err) => {
+          console.error(`Failed to batch-fetch flight history for ${icaoHexList.length} aircraft:`, err);
         });
     },
     [restFlightsUrl],
@@ -146,5 +175,5 @@ export function useMapFlights(
     };
   }, [wsUrl, restFlightsUrl]);
 
-  return { aircraft, connected, seedTrailFor, releaseHold };
+  return { aircraft, connected, seedTrailFor, seedTrailForMany, releaseHold };
 }

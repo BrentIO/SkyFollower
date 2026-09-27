@@ -151,7 +151,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // for eviction deferral.
   const selectedIcaoHex = selected.values().next().value ?? null;
 
-  const { aircraft, connected, seedTrailFor, releaseHold } = useMapFlights(
+  const { aircraft, connected, seedTrailFor, seedTrailForMany, releaseHold } = useMapFlights(
     config.wsUrl,
     config.restFlightsUrl,
     selectedIcaoHex,
@@ -446,11 +446,16 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const historySeededRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const needed = aircraftNeedingHistorySeed(historyAll, Object.keys(aircraft), historySeededRef.current);
+    if (needed.length === 0) return;
     for (const icaoHex of needed) {
       historySeededRef.current.add(icaoHex);
-      seedTrailFor(icaoHex);
     }
-  }, [historyAll, aircraft, seedTrailFor]);
+    // Batched into one request instead of one fetchFlightHistory per
+    // aircraft -- with 100+ tracked aircraft, N individual requests
+    // dominated page-load latency (HTTP/1.1's ~6-in-flight cap queues the
+    // rest). See issue #2052.
+    seedTrailForMany(needed);
+  }, [historyAll, aircraft, seedTrailForMany]);
 
   // One throttle instance for this component's whole lifetime so "move"
   // (fires every camera-transform frame during pan/pinch/easeTo) can't
