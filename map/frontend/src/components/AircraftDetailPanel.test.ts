@@ -128,7 +128,7 @@ describe("panel size cap and scroll (#2003, width fix #2010, icon-column collisi
     const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
     expect(outerDivIndex).toBeGreaterThan(-1);
     const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
-    expect(outerDivClassName).toContain("max-w-[calc(100vw-76px)]");
+    expect(outerDivClassName).toContain("max-w-[calc(100vw-100px)]");
     expect(outerDivClassName).toContain("max-h-[80vh]");
   });
 
@@ -142,7 +142,7 @@ describe("panel size cap and scroll (#2003, width fix #2010, icon-column collisi
     const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
     const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
     expect(outerDivClassName).not.toMatch(/max-w-\[\d+vw\]/);
-    expect(outerDivClassName).toContain("max-w-[calc(100vw-76px)]");
+    expect(outerDivClassName).toContain("max-w-[calc(100vw-100px)]");
   });
 
   it("reserves enough margin to clear ControlsPanel's icon column, not just the viewport edge (#2047 regression guard)", () => {
