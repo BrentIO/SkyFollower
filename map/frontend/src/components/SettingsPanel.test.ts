@@ -68,6 +68,17 @@ describe("Text & Icon Size section (#2000, relabeled)", () => {
     expect(callSite).toContain("onDisplayScaleChange");
   });
 
+  it("shows the percentage right-aligned in the muted color, not embedded in the label text", () => {
+    const sectionIndex = settingsPanelSource.indexOf("Text &amp; Icon Size</div>");
+    const sliderIndex = settingsPanelSource.indexOf('type="range"', sectionIndex);
+    const block = settingsPanelSource.slice(sectionIndex, sliderIndex);
+    expect(block).not.toContain("Text &amp; Icon Size ({");
+    expect(block).toContain("justify-between");
+    expect(block).toContain(
+      '<span className="text-slate-500 dark:text-slate-400">{Math.round(displayScale * 100)}%</span>',
+    );
+  });
+
   it("is never disabled -- unlike Radar's opacity slider, there's no on/off state gating this control", () => {
     const sectionIndex = settingsPanelSource.indexOf("Text &amp; Icon Size");
     const sliderIndex = settingsPanelSource.indexOf('type="range"', sectionIndex);

@@ -83,7 +83,10 @@ export function SettingsPanel({
         <div className={SECTION_BAR}>Text &amp; Icon Size</div>
         <div className="px-4 py-3">
           <label className="flex flex-col gap-1 text-xs text-slate-700 dark:text-slate-200">
-            <span>Text &amp; Icon Size ({Math.round(displayScale * 100)}%)</span>
+            <div className="flex items-center justify-between gap-3">
+              <span>Text &amp; Icon Size</span>
+              <span className="text-slate-500 dark:text-slate-400">{Math.round(displayScale * 100)}%</span>
+            </div>
             <input
               type="range"
               min={0.5}
