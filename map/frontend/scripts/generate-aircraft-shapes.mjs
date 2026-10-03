@@ -279,11 +279,16 @@ for (const key of ACCENT_ADD_KEYS) {
 const sorted = [...spans].sort((a, b) => a - b);
 const referenceSpan = sorted[Math.floor(sorted.length / 2)];
 const SCALE_MIN = 0.6;
-const SCALE_MIN_COMPACT_SILHOUETTE = 1.0;
+const SCALE_MIN_COMPACT_SILHOUETTE = 0.75;
+// GYRO's own un-floored value already clears this, so the shared compact
+// floor would inflate it more than its geometry warrants.
+const SCALE_MIN_GYRO = 0.5;
 const SCALE_MAX = 1.6;
 for (const key of Object.keys(shapes)) {
   const raw = Math.sqrt(shapes[key].span / referenceSpan);
-  const floor = COMPACT_SILHOUETTE_KEYS.has(key) ? SCALE_MIN_COMPACT_SILHOUETTE : SCALE_MIN;
+  let floor = SCALE_MIN;
+  if (key === "GYRO") floor = SCALE_MIN_GYRO;
+  else if (COMPACT_SILHOUETTE_KEYS.has(key)) floor = SCALE_MIN_COMPACT_SILHOUETTE;
   shapes[key].scale = round(Math.min(SCALE_MAX, Math.max(floor, raw)));
 }
 
@@ -320,7 +325,7 @@ export interface AircraftShape {
    * On-map size multiplier vs. the median shape, clamped to
    * [${SCALE_MIN}, ${SCALE_MAX}], except compact/simple-silhouette shapes
    * (see COMPACT_SILHOUETTE_KEYS in generate-aircraft-shapes.mjs), which get
-   * a higher [${SCALE_MIN_COMPACT_SILHOUETTE}, ${SCALE_MAX}] floor.
+   * a higher [${SCALE_MIN_COMPACT_SILHOUETTE}, ${SCALE_MAX}] floor (GYRO: ${SCALE_MIN_GYRO}).
    */
   scale: number;
   /**
