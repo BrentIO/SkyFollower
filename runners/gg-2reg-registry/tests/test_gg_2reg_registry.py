@@ -33,6 +33,7 @@ _mod = _load_main()
 
 
 _col_index = _mod._col_index
+_find_column_thresholds = _mod._find_column_thresholds
 _words_to_cols = _mod._words_to_cols
 _find_pdf_url = _mod._find_pdf_url
 _build_record = _mod._build_record
@@ -44,6 +45,19 @@ REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 _INDEX_URL = _mod._INDEX_URL
 _SKIP_PREFIXES = _mod._SKIP_PREFIXES
+
+
+# Column boundaries for the current register PDF geometry (header x0 minus margin)
+THRESHOLDS = (79.0, 242.0, 364.0, 423.0, 670.0)
+
+
+def _header_words(top: float = 40.0) -> list[dict]:
+    spec = [
+        ("Registration", 19), ("Aircraft", 81), ("Manufacturer", 111), ("Type", 244),
+        ("MSN", 366), ("Registered", 425), ("Owner/", 467), ("Charterer", 498),
+        ("by", 536), ("demise", 547), ("Date", 672), ("of", 692), ("registration", 701),
+    ]
+    return [{"text": t, "x0": float(x), "top": top} for t, x in spec]
 
 
 def _make_word(text: str, x0: float, top: float = 100.0) -> dict:
@@ -98,70 +112,88 @@ def _make_redis_no_match():
     return r
 
 
+class TestFindColumnThresholds:
+    def test_derived_from_header_row(self):
+        assert _find_column_thresholds(_header_words()) == THRESHOLDS
+
+    def test_header_position_independent_of_page_layout(self):
+        shifted = [{**w, "x0": w["x0"] + 100, "top": 96.0} for w in _header_words()]
+        assert _find_column_thresholds(shifted) == tuple(t + 100 for t in THRESHOLDS)
+
+    def test_title_line_alone_is_not_a_header(self):
+        words = [_make_word("Aircraft", 19.0, 42.0), _make_word("register", 63.0, 42.0)]
+        assert _find_column_thresholds(words) is None
+
+    def test_no_header_returns_none(self):
+        assert _find_column_thresholds([_make_word("2-ABCD", 19.0)]) is None
+
+    def test_header_words_split_across_lines_not_matched(self):
+        words = _header_words()
+        words[10]["top"] = 60.0
+        assert _find_column_thresholds(words) is None
+
+
 class TestColIndex:
     def test_registration_col(self):
-        assert _col_index(27.8) == 0
-        assert _col_index(100.0) == 0
+        assert _col_index(19.0, THRESHOLDS) == 0
+        assert _col_index(78.9, THRESHOLDS) == 0
 
     def test_manufacturer_col(self):
-        assert _col_index(126.7) == 1
-        assert _col_index(300.0) == 1
+        assert _col_index(81.0, THRESHOLDS) == 1
+        assert _col_index(210.0, THRESHOLDS) == 1
 
     def test_type_col(self):
-        assert _col_index(387.1) == 2
-        assert _col_index(500.0) == 2
+        assert _col_index(244.0, THRESHOLDS) == 2
+        assert _col_index(322.0, THRESHOLDS) == 2
 
     def test_msn_col(self):
-        assert _col_index(566.8) == 3
+        assert _col_index(366.0, THRESHOLDS) == 3
 
     def test_owner_col(self):
-        assert _col_index(648.1) == 4
-        assert _col_index(900.0) == 4
+        assert _col_index(425.0, THRESHOLDS) == 4
+        assert _col_index(564.0, THRESHOLDS) == 4
 
     def test_date_col(self):
-        assert _col_index(1015.1) == 5
-        assert _col_index(2000.0) == 5
+        assert _col_index(672.0, THRESHOLDS) == 5
 
 
 class TestWordsToCols:
     def test_single_word_per_column(self):
         words = [
-            _make_word("2-ABCD", 28.0),
-            _make_word("Airbus", 127.0),
-            _make_word("A320", 387.0),
-            _make_word("1234", 567.0),
-            _make_word("Owner", 648.0),
-            _make_word("01/01/2020", 1015.0),
+            _make_word("2-ABCD", 19.0),
+            _make_word("The", 81.0),
+            _make_word("737-8", 244.0),
+            _make_word("43317", 366.0),
+            _make_word("AerFin", 425.0),
+            _make_word("04/09/2026", 672.0),
         ]
-        cols = _words_to_cols(words)
-        assert cols[0] == "2-ABCD"
-        assert cols[1] == "Airbus"
-        assert cols[2] == "A320"
-        assert cols[3] == "1234"
-        assert cols[4] == "Owner"
-        assert cols[5] == "01/01/2020"
+        cols = _words_to_cols(words, THRESHOLDS)
+        assert cols == ["2-ABCD", "The", "737-8", "43317", "AerFin", "04/09/2026"]
 
-    def test_multi_word_manufacturer(self):
+    def test_wrapped_multi_word_cells_stay_in_column(self):
         words = [
-            _make_word("2-ABCD", 28.0),
-            _make_word("Eclipse", 127.0),
-            _make_word("Aviation", 160.0),
-            _make_word("Corporation", 210.0),
-            _make_word("EA500", 387.0),
-            _make_word("000267", 567.0),
-            _make_word("TAK", 648.0),
-            _make_word("Aviation", 675.0),
+            _make_word("2-CHOP", 19.0),
+            _make_word("Costruzioni", 81.0),
+            _make_word("Aeronautiche", 124.0),
+            _make_word("Giovanni", 175.0),
+            _make_word("Agusta", 210.0),
+            _make_word("CL-600-2B16", 244.0),
+            _make_word("(CL-604", 293.0),
+            _make_word("Variant)", 322.0),
+            _make_word("8185", 366.0),
+            _make_word("A", 425.0),
+            _make_word("T", 432.0),
+            _make_word("Aviation", 438.0),
         ]
-        cols = _words_to_cols(words)
-        assert cols[0] == "2-ABCD"
-        assert cols[1] == "Eclipse Aviation Corporation"
-        assert cols[2] == "EA500"
-        assert cols[3] == "000267"
-        assert cols[4] == "TAK Aviation"
+        cols = _words_to_cols(words, THRESHOLDS)
+        assert cols[0] == "2-CHOP"
+        assert cols[1] == "Costruzioni Aeronautiche Giovanni Agusta"
+        assert cols[2] == "CL-600-2B16 (CL-604 Variant)"
+        assert cols[3] == "8185"
+        assert cols[4] == "A T Aviation"
 
     def test_empty_column_is_empty_string(self):
-        words = [_make_word("2-ABCD", 28.0)]
-        cols = _words_to_cols(words)
+        cols = _words_to_cols([_make_word("2-ABCD", 19.0)], THRESHOLDS)
         assert cols[0] == "2-ABCD"
         assert cols[1] == ""
         assert cols[4] == ""
@@ -206,11 +238,11 @@ class TestFindPdfUrl:
 
 
 class TestDownloadAndParse:
-    def _mock_page(self, first_line: str, rows: list[list[dict]]) -> MagicMock:
+    def _mock_page(self, first_line: str, rows: list[list[dict]], header: float | None = 40.0) -> MagicMock:
         """Build a mock pdfplumber page with given first line and word rows."""
         page = MagicMock()
         page.extract_text.return_value = first_line + "\nsome content"
-        all_words = []
+        all_words = [] if header is None else [{**w, "top": header} for w in _header_words()]
         for top_idx, word_list in enumerate(rows):
             top = 80.0 + top_idx * 18
             for w in word_list:
@@ -227,14 +259,14 @@ class TestDownloadAndParse:
         owner="Test Owner Ltd.",
         top=80.0,
     ) -> list[dict]:
-        words = [{"text": registration, "x0": 28.0, "top": top}]
+        words = [{"text": registration, "x0": 19.0, "top": top}]
         for i, part in enumerate(manufacturer.split()):
-            words.append({"text": part, "x0": 127.0 + i * 40, "top": top})
+            words.append({"text": part, "x0": 81.0 + i * 40, "top": top})
         for i, part in enumerate(model.split()):
-            words.append({"text": part, "x0": 387.0 + i * 30, "top": top})
-        words.append({"text": serial, "x0": 567.0, "top": top})
+            words.append({"text": part, "x0": 244.0 + i * 30, "top": top})
+        words.append({"text": serial, "x0": 366.0, "top": top})
         for i, part in enumerate(owner.split()):
-            words.append({"text": part, "x0": 648.0 + i * 40, "top": top})
+            words.append({"text": part, "x0": 425.0 + i * 40, "top": top})
         return words
 
     def test_raises_on_pdf_download_error(self):
@@ -278,8 +310,8 @@ class TestDownloadAndParse:
                 mock_pdf.__exit__ = MagicMock(return_value=False)
                 mock_pdf.pages = [page]
                 mock_open.return_value = mock_pdf
-                records = download_and_parse(session)
-            assert records == [], f"Expected empty for prefix: {prefix!r}"
+                with pytest.raises(RuntimeError, match="No 2-prefix records"):
+                    download_and_parse(session)
 
     def test_parses_main_register_page(self):
         words = self._make_data_row_words()
@@ -318,8 +350,66 @@ class TestDownloadAndParse:
             mock_pdf.__exit__ = MagicMock(return_value=False)
             mock_pdf.pages = [page]
             mock_open.return_value = mock_pdf
-            records = download_and_parse(session)
-        assert records == []
+            with pytest.raises(RuntimeError, match="No 2-prefix records"):
+                download_and_parse(session)
+
+
+    def _parse(self, pages):
+        html = _make_index_page("https://www.2-reg.com/wp-content/uploads/2026/07/Register_20260701.pdf")
+        session = MagicMock()
+        session.get.side_effect = [_make_response(text=html), _make_response(content=b"%PDF fake")]
+        with patch("gg_2reg_registry_main.pdfplumber.open") as mock_open:
+            mock_pdf = MagicMock()
+            mock_pdf.__enter__ = lambda s: mock_pdf
+            mock_pdf.__exit__ = MagicMock(return_value=False)
+            mock_pdf.pages = pages
+            mock_open.return_value = mock_pdf
+            return download_and_parse(session)
+
+    def test_registration_is_bare_mark_and_fields_land_in_columns(self):
+        words = self._make_data_row_words(
+            registration="2-AACC", manufacturer="The Boeing Company",
+            model="737-8", serial="43317", owner="AerFin Limited",
+        )
+        records = self._parse([self._mock_page("Aircraft register", [words])])
+        assert records == [{
+            "registration": "2-AACC",
+            "manufacturer": "The Boeing Company",
+            "model": "737-8",
+            "serial": "43317",
+            "owner": "AerFin Limited",
+        }]
+
+    def test_page_without_header_is_skipped_not_parsed_with_stale_boundaries(self):
+        good = self._mock_page("Aircraft register", [self._make_data_row_words()])
+        headerless = self._mock_page("Aircraft register", [self._make_data_row_words(registration="2-WXYZ")], header=None)
+        records = self._parse([good, headerless])
+        assert [r["registration"] for r in records] == ["2-ABCD"]
+
+    def test_zero_records_parsed_raises(self):
+        headerless = self._mock_page("Aircraft register", [self._make_data_row_words()], header=None)
+        with pytest.raises(RuntimeError, match="No 2-prefix records"):
+            self._parse([headerless])
+
+
+class TestMainFailure:
+    def _run(self, rows_or_exc, write_result):
+        cfg = {"redis": {}, "mqtt": {}}
+        with patch.object(_mod, "load_config", return_value=cfg), \
+             patch.object(_mod, "configure_logging"), \
+             patch.object(_mod, "build_redis_client", return_value=MagicMock()), \
+             patch.object(_mod, "_ensure_search_index"), \
+             patch.object(_mod, "download_and_parse", return_value=rows_or_exc), \
+             patch.object(_mod, "write_to_redis", side_effect=write_result), \
+             patch.object(_mod, "publish_completion_stats") as pub:
+            with pytest.raises(SystemExit) as exc:
+                _mod.main()
+        return exc.value.code, pub
+
+    def test_zero_match_publishes_failure_and_exits_nonzero(self):
+        code, pub = self._run([_make_row()], RuntimeError("none matched"))
+        assert code == 1
+        assert pub.call_args.args[2] == "failure"
 
 
 class TestBuildRecord:
@@ -391,11 +481,16 @@ class TestWriteToRedis:
         count = write_to_redis(rows, r, REDIS_TTL)
         assert count == 1
 
-    def test_record_not_written_when_not_found(self):
+    def test_zero_matches_raises(self):
         rows = [_make_row()]
         r = _make_redis_no_match()
-        count = write_to_redis(rows, r, REDIS_TTL)
-        assert count == 0
+        with pytest.raises(RuntimeError, match="matched the Mictronics index"):
+            write_to_redis(rows, r, REDIS_TTL)
+
+    def test_partial_match_not_written_for_unmatched(self):
+        rows = [_make_row(), _make_row(registration="2-ZZZZ")]
+        r = _make_redis_with_search(icao_hex="4CA123", registration="2-ABCD")
+        assert write_to_redis(rows, r, REDIS_TTL) == 1
 
     def test_empty_registration_skipped(self):
         rows = [_make_row(registration="")]

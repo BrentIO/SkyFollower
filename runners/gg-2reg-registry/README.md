@@ -17,7 +17,13 @@ The index page is scraped to discover the current register PDF (matches
 special-section heading (New Registrations, Deregistrations, Ownership Changes,
 Registration Changes, Reserved Marks) are skipped. Remaining pages are parsed by
 grouping extracted words into columns by x-position, since `pdfplumber`'s table
-detection does not reliably find the column boundaries in this PDF. MSN
+detection does not reliably find the column boundaries in this PDF. The
+boundaries are derived on each page from the header row (the x-position of the
+first word of each column heading), so they follow the PDF's layout rather than
+being fixed; a page with no recognisable header row is skipped with a warning.
+A run that parses no records, or parses records but matches none of them to the
+Mictronics index, is reported as a failure (non-zero exit, `last_run_status` of
+`Failure`) instead of a successful run with zero records. MSN
 (serial number) is whitespace-collapsed like manufacturer, model, and owner
 already are, since a word-position-grouped cell can end up with an embedded
 newline rather than a space. Every written record explicitly sets `military: false` — this register is
