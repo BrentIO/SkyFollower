@@ -5,3 +5,7 @@
 # measured values -- there's no production traffic yet to tune against.
 vm_memory_high_watermark.absolute = 2GB
 disk_free_limit.absolute = 2GB
+
+# Console log level lowered from RabbitMQ's default (info) to cut routine
+# log noise on a constrained host.
+log.console.level = warning
