@@ -85,9 +85,10 @@ services:
     # 30s default to 5 minutes, since a bigger process forking that often
     # costs proportionally more on a smaller host. Re-measure once real
     # traffic is flowing — these are starting points, not measured values.
+    # --loglevel warning lowers Redis's default (notice) to cut routine log noise.
     environment:
       REDISEARCH_ARGS: "MAXSEARCHRESULTS 10000 MAXAGGREGATERESULTS 10000 FORK_GC_RUN_INTERVAL 300"
-    command: redis-stack-server --appendonly yes --save "" --no-appendfsync-on-rewrite yes --dir /data --requirepass ${REDIS_PASSWORD}
+    command: redis-stack-server --appendonly yes --save "" --no-appendfsync-on-rewrite yes --loglevel warning --dir /data --requirepass ${REDIS_PASSWORD}
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} --no-auth-warning ping"]
       interval: 30s
