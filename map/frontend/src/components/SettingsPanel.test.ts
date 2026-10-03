@@ -122,6 +122,16 @@ describe("Radar section -- opacity slider only (#2012)", () => {
     expect(callSite).toContain("onRadarOpacityChange");
   });
 
+  it("shows the opacity as a rounded percentage, right-aligned and muted, on the label line", () => {
+    const sectionIndex = settingsPanelSource.indexOf(">Radar<");
+    const sliderIndex = settingsPanelSource.indexOf('type="range"', sectionIndex);
+    const row = settingsPanelSource.slice(sectionIndex, sliderIndex);
+    expect(row).toContain("justify-between");
+    expect(row).toContain("<span>Opacity</span>");
+    expect(row).toContain("text-slate-500 dark:text-slate-400");
+    expect(row).toContain("Math.round(radarOpacity * 100)");
+  });
+
   it("does not render an on/off switch or Play/Pause button -- those stay in ControlsPanel's own Radar popover", () => {
     const sectionIndex = settingsPanelSource.indexOf(">Radar<");
     const callSite = settingsPanelSource.slice(sectionIndex, sectionIndex + 500);
