@@ -5,28 +5,23 @@
 | **Name** | `lu-dac-registry` |
 | **Country** | Luxembourg |
 | **Registration prefix** | `LX-` |
-| **Data source** | https://data.public.lu/en/datasets/releve-luxembourgeois-des-immatriculations/ (Luxembourg open-data portal, published by the Direction de l'Aviation Civile) |
+| **Data source** | https://data.public.lu/en/datasets/releve-luxembourgeois-des-immatriculations/ |
 | **Licence** | [Open Data Commons Attribution (`odc-by`)](https://opendatacommons.org/licenses/by/1-0/) — attribution to the Direction de l'Aviation Civile / data.public.lu is required |
-| **Format** | PDF (downloaded through the portal's stable resource permalink, which redirects to the current monthly file) |
+| **Format** | PDF (portal resource permalink) |
 | **Run frequency** | Weekly (Wednesday, 10:10 UTC) |
 | **Depends on Mictronics for ICAO hex** | Yes — the Luxembourg DAC register does not publish ICAO hex (Mode S) addresses; registrations are resolved via RediSearch against Mictronics records (`idx:aircraft:mictronics`). Must run after the `mictronics` runner. |
 
 ## How it works
 
-The register PDF is downloaded from the open-data portal's resource
-permalink (`https://data.public.lu/fr/datasets/r/78d14c57-dee5-4903-9216-c33a0da06647`),
-which answers with a redirect to the current file; the dated filename (e.g.
-`releve-aeronefs-10-09-2026.pdf`) changes with each monthly update, but the
-permalink does not. Any non-200 response fails the run with a clear error.
-The PDF is parsed by grouping
-`pdfplumber.extract_words()` output into rows by `top` coordinate (5-point
-tolerance) and then into named columns by x0 boundaries derived from each page's header row
-(each column starts just left of its header word; fixed fallback bounds are
-used only if a page has no header row), since
-`pdfplumber.extract_table()` does not correctly detect all columns in this
-PDF. Header and page-footer lines are discarded, and the run fails rather
-than writing wrong data if the parsed rows look mis-columned (fewer than half
-of the serial numbers contain a numeral) or no rows are parsed. Rows whose `immat` column starts with `LX-` begin a new record;
+The register PDF is downloaded from the open-data portal's resource permalink
+(`https://data.public.lu/fr/datasets/r/78d14c57-dee5-4903-9216-c33a0da06647`),
+which redirects to the current monthly file. Any non-200 response fails the run.
+The PDF is parsed by grouping `pdfplumber.extract_words()` output into rows by
+`top` coordinate (5-point tolerance) and then into named columns by x0
+boundaries derived from each page's header row, since
+`pdfplumber.extract_table()` does not detect all columns in this PDF. Header
+and page-footer lines are discarded, and the run fails if no rows parse or the
+rows look mis-columned. Rows whose `immat` column starts with `LX-` begin a new record;
 subsequent rows without an `LX-` value are treated as continuation lines and
 appended to the current record's fields (handling multi-line cells).
 Only `proprietaire` (owner) values are imported into `registrant.names`;

@@ -14,7 +14,7 @@ addresses. This runner can only enrich records that already exist in Redis from
 Mictronics. Schedule it AFTER the Mictronics runner.
 
 Data source: https://data.public.lu/en/datasets/releve-luxembourgeois-des-immatriculations/
-             (open-data portal, licence odc-by; downloaded via the resource permalink)
+             (open-data portal)
 """
 
 from __future__ import annotations
@@ -63,21 +63,14 @@ DOWNLOAD_URL = (
 MQTT_ROOT = "SkyFollower/runner/lu-dac-registry"
 BATCH_SIZE = 100
 
-# Fallback x0 column boundaries, used only when a page has no recognisable
-# header row. Normally the boundaries are derived from each page's header row
-# (each column starts a few points left of its header word).
-# Columns: immat | constructeur | type | sn | proprietaire | exploitant
+# Fallback x0 bounds when a page has no header row. Columns: immat | constructeur | type | sn | proprietaire | exploitant
 _COL_BOUNDS = [44, 98, 256, 388, 455, 605, 842]
 _COL_NAMES = ["immat", "constructeur", "type", "sn", "proprietaire", "exploitant"]
 
-# Header word that begins each column, in _COL_NAMES order
 _HEADER_WORDS = ["Immat", "Constructeur", "Type", "SN", "Propriétaire", "Exploitant"]
 
-# Words whose top is within this many points of the page bottom are the page
-# footer (print date, page number), not table data
 _FOOTER_MARGIN = 45
 
-# Points a column's boundary sits left of its header word's x0
 _HEADER_MARGIN = 3
 
 # Multi-word strings that represent privacy placeholders in the proprietaire
@@ -107,10 +100,7 @@ def download_register(session: requests.Session) -> bytes:
 # ---------------------------------------------------------------------------
 
 def _header_bounds(words: list[dict], page_width: float) -> Optional[list[float]]:
-    """
-    Derive column boundaries from a page's header row, or None if the header
-    row (all six header words on one line) is not found.
-    """
+    """Column bounds from the page's header row, or None if it isn't found."""
     by_text: dict[str, list[dict]] = {}
     for w in words:
         by_text.setdefault(w.get("text", ""), []).append(w)
@@ -249,11 +239,7 @@ def parse_pdf(pdf_bytes: bytes) -> list[dict]:
 
 
 def _validate_records(records: list[dict]) -> None:
-    """
-    Fail the run when the parsed rows look mis-columned rather than silently
-    writing wrong data. Serial numbers almost always contain a digit; a
-    shifted layout puts owner names in that column instead.
-    """
+    """Fail on empty or mis-columned output (serials almost always contain a digit)."""
     if not records:
         raise RuntimeError("No aircraft records were parsed from the Luxembourg DAC PDF.")
     with_digit = sum(1 for r in records if re.search(r"\d", r["serial_number"]))
