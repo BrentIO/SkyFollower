@@ -78,16 +78,35 @@ export function radarAmbientFrameId(slot: number): string {
 export interface RadarAmbientCacheEntry {
   /** Ring-buffer slot holding this frame (0..RADAR_AMBIENT_CACHE_CAPACITY-1). */
   slot: number;
-  /** When this frame's tiles were fetched, i.e. what moment it depicts. */
+  /** When this frame was captured; orders entries most-recent-first. */
   timestampMs: number;
 }
 
-// How close an ambient frame's capture time has to be to a target playback
-// slot to be reused as-is, instead of fetching fresh. Half of
-// RADAR_REFRESH_INTERVAL_MS's 5-minute cadence -- the widest tolerance
-// that still maps every possible capture time to exactly one target slot
-// with no gaps and no slot eligible for two captures at once.
-export const RADAR_AMBIENT_MATCH_TOLERANCE_MS = 2.5 * 60 * 1000;
+/**
+ * URL of the single tile used to detect whether the upstream composite has
+ * changed since the last ambient capture: the current snapshot's world-wide
+ * z0 tile, which covers the whole mosaic, so any radar update alters its
+ * bytes. Fetched by the app itself (rather than only by MapLibre) so the
+ * response bytes can be hashed.
+ */
+export function radarChangeProbeUrl(): string {
+  return radarFrameTileUrl(0).replace("{z}", "0").replace("{x}", "0").replace("{y}", "0");
+}
+
+/** Hex SHA-256 of a fetched tile's bytes -- the content identity compared between ambient polls. */
+export async function hashRadarTileBytes(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Whether a freshly-fetched probe hash represents a genuinely new radar
+ * image worth advancing the ambient ring buffer for. The first capture
+ * (no previous hash) always counts.
+ */
+export function isNewRadarContent(previousHash: string | null, nextHash: string): boolean {
+  return previousHash === null || previousHash !== nextHash;
+}
 
 // The tri-state Radar button's animate state doesn't tear down a
 // fetch-frame source/layer the instant the operator cancels out of it --
@@ -160,33 +179,23 @@ export interface RadarPlaybackPlan {
 }
 
 /**
- * For each playback target slot (RADAR_PLAYBACK_OFFSETS_MINUTES, relative
- * to `nowMs`), decides whether an existing ambient-cache entry is close
- * enough to reuse as-is, or whether that slot must be fetched fresh.
- * Greedily assigns each cache entry to its single closest unclaimed
- * target slot, oldest-target-first, so no entry is reused twice. An
- * empty/near-empty `cache` degrades to "fetch everything."
+ * Builds the playback frame plan. The ambient cache only ever holds
+ * distinct images (a slot advances only when the upstream content actually
+ * changed), so every held entry is reused, most recent first, filling the
+ * newest playback offsets; whatever offsets remain (the oldest ones) are
+ * fetched from IEM's archived-frame endpoints. An empty `cache` degrades to
+ * "fetch everything." Entries beyond the playback length are ignored.
  */
-export function planRadarPlaybackFrames(
-  cache: readonly RadarAmbientCacheEntry[],
-  nowMs: number,
-): RadarPlaybackPlan[] {
-  const unclaimed = [...cache];
-  return RADAR_PLAYBACK_OFFSETS_MINUTES.map((offsetMinutes) => {
-    const targetMs = nowMs - offsetMinutes * 60 * 1000;
-    let bestIndex = -1;
-    let bestDelta = RADAR_AMBIENT_MATCH_TOLERANCE_MS;
-    unclaimed.forEach((entry, index) => {
-      const delta = Math.abs(entry.timestampMs - targetMs);
-      if (delta <= bestDelta) {
-        bestDelta = delta;
-        bestIndex = index;
-      }
-    });
-    if (bestIndex === -1) {
-      return { offsetMinutes, source: { kind: "fetch" } };
-    }
-    const [matched] = unclaimed.splice(bestIndex, 1);
-    return { offsetMinutes, source: { kind: "ambient", slot: matched.slot } };
-  });
+export function planRadarPlaybackFrames(cache: readonly RadarAmbientCacheEntry[]): RadarPlaybackPlan[] {
+  const newestFirst = [...cache].sort((a, b) => b.timestampMs - a.timestampMs);
+  const offsetsNewestFirst = [...RADAR_PLAYBACK_OFFSETS_MINUTES].reverse();
+  return offsetsNewestFirst
+    .map((offsetMinutes, index): RadarPlaybackPlan => {
+      const entry = newestFirst[index];
+      return {
+        offsetMinutes,
+        source: entry ? { kind: "ambient", slot: entry.slot } : { kind: "fetch" },
+      };
+    })
+    .reverse();
 }

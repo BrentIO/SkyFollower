@@ -911,7 +911,7 @@ describe("map render loop (idle redraws)", () => {
 
 describe("radar overlay (#1896, #1965)", () => {
   it("captures each ambient-cache frame's layer before RANGE_RING_LAYER_ID -- above the base map, below everything this app draws", () => {
-    const captureFnIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    const captureFnIndex = mapViewSource.indexOf("async function captureAmbientFrame()");
     expect(captureFnIndex).toBeGreaterThan(-1);
     const addLayerIndex = mapViewSource.indexOf("radarMap.addLayer(", captureFnIndex);
     expect(addLayerIndex).toBeGreaterThan(-1);
@@ -930,7 +930,7 @@ describe("radar overlay (#1896, #1965)", () => {
   });
 
   it("declares each ambient-cache slot's source with the empirically-verified zoom bounds from lib/radar.ts, not hardcoded numbers", () => {
-    const captureFnIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    const captureFnIndex = mapViewSource.indexOf("async function captureAmbientFrame()");
     expect(captureFnIndex).toBeGreaterThan(-1);
     const addSourceIndex = mapViewSource.indexOf("radarMap.addSource(id,", captureFnIndex);
     expect(addSourceIndex).toBeGreaterThan(-1);
@@ -964,7 +964,7 @@ describe("radar overlay (#1896, #1965)", () => {
   });
 
   it("the ambient-capture effect adds/removes each slot's source+layer whole, rather than only toggling layout visibility -- the hard tile-fetch guarantee", () => {
-    const effectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    const effectIndex = mapViewSource.indexOf("async function captureAmbientFrame()");
     expect(effectIndex).toBeGreaterThan(-1);
     const depsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", effectIndex);
     expect(depsIndex).toBeGreaterThan(-1);
@@ -977,18 +977,18 @@ describe("radar overlay (#1896, #1965)", () => {
   });
 
   it("the ambient-capture effect does not depend on radarOpacity or radarPlaying -- neither should restart the capture interval or re-fetch tiles", () => {
-    const effectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    const effectIndex = mapViewSource.indexOf("async function captureAmbientFrame()");
     const depsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", effectIndex);
     expect(depsIndex).toBeGreaterThan(-1);
     // #2015 grew this effect's cleanup (also tears down leftover
     // playback-fetch frames, see radarPlaybackFetchCacheRef) without
     // adding any new dependency -- generous enough to allow that, tight
     // enough to still catch an accidental extra dep sneaking in.
-    expect(depsIndex - effectIndex).toBeLessThan(3500);
+    expect(depsIndex - effectIndex).toBeLessThan(4500);
   });
 
   it("#1965: captures an ambient frame immediately and then every RADAR_REFRESH_INTERVAL_MS, independent of radarPlaying (read from a ref, not the effect's own deps), and stops on cleanup", () => {
-    const effectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+    const effectIndex = mapViewSource.indexOf("async function captureAmbientFrame()");
     const depsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", effectIndex);
     const effectBody = mapViewSource.slice(effectIndex, depsIndex);
     expect(effectBody).toContain("captureAmbientFrame();");
@@ -998,6 +998,18 @@ describe("radar overlay (#1896, #1965)", () => {
     // frame is still always written into the cache either way.
     expect(effectBody).toContain("if (radarPlayingRef.current) return;");
     expect(effectBody).toContain("radarAmbientCacheRef.current.set(slot, Date.now());");
+  });
+
+  it("only advances the ambient ring buffer when the probe tile's content hash changed, otherwise skips the poll", () => {
+    const effectIndex = mapViewSource.indexOf("async function captureAmbientFrame()");
+    expect(effectIndex).toBeGreaterThan(-1);
+    const body = mapViewSource.slice(effectIndex, mapViewSource.indexOf("captureAmbientFrame();", effectIndex));
+    expect(body).toContain("await fetch(radarChangeProbeUrl())");
+    expect(body).toContain("hashRadarTileBytes(");
+    const gateIndex = body.indexOf("!isNewRadarContent(radarAmbientLastHashRef.current, nextHash)");
+    expect(gateIndex).toBeGreaterThan(-1);
+    expect(body.indexOf("radarNextAmbientSlotRef.current = ")).toBeGreaterThan(gateIndex);
+    expect(body.indexOf("radarAmbientCacheRef.current.set(")).toBeGreaterThan(gateIndex);
   });
 
   it("opacity changes go through setPaintProperty only, never rebuild a source", () => {
@@ -1013,7 +1025,7 @@ describe("radar overlay (#1896, #1965)", () => {
     const effectIndex = mapViewSource.indexOf("if (!map || !mapLoaded || !radarOn || !radarPlaying) return;");
     expect(effectIndex).toBeGreaterThan(-1);
     const body = mapViewSource.slice(effectIndex, mapViewSource.indexOf("async function loadThenPlay()", effectIndex));
-    expect(body).toContain("const plan = planRadarPlaybackFrames(cacheEntries, Date.now());");
+    expect(body).toContain("const plan = planRadarPlaybackFrames(cacheEntries);");
     expect(body).toContain(
       'step.source.kind === "ambient" ? radarAmbientFrameId(step.source.slot) : radarPlaybackFrameId(step.offsetMinutes)',
     );
@@ -1053,7 +1065,7 @@ describe("radar overlay (#1896, #1965)", () => {
     });
 
     it("the ambient-capture effect's cleanup is the only place these ever get torn down (radarOn -> false), not the playback effect's own cleanup", () => {
-      const ambientEffectIndex = mapViewSource.indexOf("function captureAmbientFrame()");
+      const ambientEffectIndex = mapViewSource.indexOf("async function captureAmbientFrame()");
       const ambientDepsIndex = mapViewSource.indexOf("}, [radarOn, mapLoaded]);", ambientEffectIndex);
       const ambientCleanup = mapViewSource.slice(ambientEffectIndex, ambientDepsIndex);
       expect(ambientCleanup).toContain("radarPlaybackFetchCacheRef.current.keys()");

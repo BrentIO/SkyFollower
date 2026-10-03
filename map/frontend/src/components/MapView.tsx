@@ -55,6 +55,9 @@ import {
   nextRadarState,
   planRadarPlaybackFrames,
   RADAR_AMBIENT_CACHE_CAPACITY,
+  hashRadarTileBytes,
+  isNewRadarContent,
+  radarChangeProbeUrl,
   RADAR_FRAME_INTERVAL_MS,
   RADAR_FRAME_LOAD_TIMEOUT_MS,
   RADAR_MAX_ZOOM,
@@ -233,6 +236,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
   // RADAR_AMBIENT_CACHE_CAPACITY so the oldest entry is naturally overwritten
   // first.
   const radarNextAmbientSlotRef = useRef(0);
+  // Content hash of the newest ambient frame kept, compared against each
+  // poll so an unchanged upstream image doesn't consume a ring-buffer slot.
+  const radarAmbientLastHashRef = useRef<string | null>(null);
   // Which slot is newest, i.e. shown as "current" whenever playback isn't
   // running. Null only before the first ambient capture completes.
   const radarNewestAmbientSlotRef = useRef<number | null>(null);
@@ -925,7 +931,28 @@ function MapViewInner({ config }: { config: AppConfig }) {
     if (!map || !mapLoaded || !radarOn) return;
     const radarMap = map;
 
-    function captureAmbientFrame() {
+    let disposed = false;
+    let captureInFlight = false;
+
+    // Polls a probe tile and only advances the ring buffer when its content
+    // hash differs from the newest kept frame's -- an unchanged upstream
+    // composite is skipped and retried on the next interval, so the cache
+    // only ever holds distinct images.
+    async function captureAmbientFrame() {
+      if (captureInFlight) return;
+      captureInFlight = true;
+      let nextHash: string;
+      try {
+        const response = await fetch(radarChangeProbeUrl());
+        if (!response.ok) return;
+        nextHash = await hashRadarTileBytes(await response.arrayBuffer());
+      } catch {
+        return;
+      } finally {
+        captureInFlight = false;
+      }
+      if (disposed || !isNewRadarContent(radarAmbientLastHashRef.current, nextHash)) return;
+      radarAmbientLastHashRef.current = nextHash;
       const slot = radarNextAmbientSlotRef.current;
       radarNextAmbientSlotRef.current = (slot + 1) % RADAR_AMBIENT_CACHE_CAPACITY;
       const id = radarAmbientFrameId(slot);
@@ -969,7 +996,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
     const interval = setInterval(captureAmbientFrame, RADAR_REFRESH_INTERVAL_MS);
 
     return () => {
+      disposed = true;
       clearInterval(interval);
+      radarAmbientLastHashRef.current = null;
       for (let slot = 0; slot < RADAR_AMBIENT_CACHE_CAPACITY; slot++) {
         const id = radarAmbientFrameId(slot);
         if (radarMap.getLayer(id)) radarMap.removeLayer(id);
@@ -1041,7 +1070,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     const cacheEntries: RadarAmbientCacheEntry[] = Array.from(radarAmbientCacheRef.current.entries()).map(
       ([slot, timestampMs]) => ({ slot, timestampMs }),
     );
-    const plan = planRadarPlaybackFrames(cacheEntries, Date.now());
+    const plan = planRadarPlaybackFrames(cacheEntries);
     const frameIds = plan.map((step) =>
       step.source.kind === "ambient" ? radarAmbientFrameId(step.source.slot) : radarPlaybackFrameId(step.offsetMinutes),
     );

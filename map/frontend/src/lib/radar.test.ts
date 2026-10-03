@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  hashRadarTileBytes,
+  isNewRadarContent,
   nextRadarState,
   planRadarPlaybackFrames,
   RADAR_AMBIENT_CACHE_CAPACITY,
-  RADAR_AMBIENT_MATCH_TOLERANCE_MS,
   RADAR_FETCH_RETRY_COOLDOWN_MS,
   RADAR_MAX_ZOOM,
   RADAR_MIN_ZOOM,
   RADAR_PLAYBACK_OFFSETS_MINUTES,
   radarAmbientFrameId,
+  radarChangeProbeUrl,
   radarFetchAction,
   radarFrameTileUrl,
   radarPlaybackFrameId,
@@ -97,63 +99,72 @@ describe("RADAR_AMBIENT_CACHE_CAPACITY", () => {
 });
 
 describe("planRadarPlaybackFrames", () => {
-  const NOW = Date.parse("2026-01-01T00:30:00.000Z");
+  const fetchAll = RADAR_PLAYBACK_OFFSETS_MINUTES.map((offsetMinutes) => ({ offsetMinutes, source: { kind: "fetch" } }));
 
   it("fetches every slot fresh when the cache is empty", () => {
-    const plan = planRadarPlaybackFrames([], NOW);
-    expect(plan).toEqual(RADAR_PLAYBACK_OFFSETS_MINUTES.map((offsetMinutes) => ({ offsetMinutes, source: { kind: "fetch" } })));
+    expect(planRadarPlaybackFrames([])).toEqual(fetchAll);
   });
 
-  it("reuses a cache entry that lands exactly on a target slot", () => {
-    // 10 minutes before NOW is one of the 7 target slots.
-    const entry: RadarAmbientCacheEntry = { slot: 3, timestampMs: NOW - 10 * 60 * 1000 };
-    const plan = planRadarPlaybackFrames([entry], NOW);
-    const tenMinuteStep = plan.find((step) => step.offsetMinutes === 10);
-    expect(tenMinuteStep?.source).toEqual({ kind: "ambient", slot: 3 });
-    // Every other slot still has nothing to reuse.
-    plan
-      .filter((step) => step.offsetMinutes !== 10)
-      .forEach((step) => expect(step.source).toEqual({ kind: "fetch" }));
+  it("reuses a single held frame for the newest slot and fetches the rest", () => {
+    const plan = planRadarPlaybackFrames([{ slot: 3, timestampMs: 1000 }]);
+    expect(plan.find((step) => step.offsetMinutes === 0)?.source).toEqual({ kind: "ambient", slot: 3 });
+    plan.filter((step) => step.offsetMinutes !== 0).forEach((step) => expect(step.source).toEqual({ kind: "fetch" }));
   });
 
-  it("reuses an entry within tolerance of a target slot, not just an exact match", () => {
-    const entry: RadarAmbientCacheEntry = {
-      slot: 0,
-      timestampMs: NOW - 10 * 60 * 1000 - (RADAR_AMBIENT_MATCH_TOLERANCE_MS - 1),
-    };
-    const plan = planRadarPlaybackFrames([entry], NOW);
+  it("assigns held frames most-recent-first regardless of how far apart in time they were captured", () => {
+    const hour = 60 * 60 * 1000;
+    const plan = planRadarPlaybackFrames([
+      { slot: 0, timestampMs: 1 * hour },
+      { slot: 2, timestampMs: 3 * hour },
+      { slot: 1, timestampMs: 2 * hour },
+    ]);
+    expect(plan.find((step) => step.offsetMinutes === 0)?.source).toEqual({ kind: "ambient", slot: 2 });
+    expect(plan.find((step) => step.offsetMinutes === 5)?.source).toEqual({ kind: "ambient", slot: 1 });
     expect(plan.find((step) => step.offsetMinutes === 10)?.source).toEqual({ kind: "ambient", slot: 0 });
+    expect(plan.filter((step) => step.source.kind === "fetch").map((step) => step.offsetMinutes)).toEqual([30, 25, 20, 15]);
   });
 
-  it("does not reuse an entry that falls outside tolerance of every target slot", () => {
-    // Older than the oldest (30-minute) target slot by well more than the
-    // tolerance, with no other slot nearby on either side.
-    const entry: RadarAmbientCacheEntry = { slot: 0, timestampMs: NOW - 40 * 60 * 1000 };
-    const plan = planRadarPlaybackFrames([entry], NOW);
-    plan.forEach((step) => expect(step.source).toEqual({ kind: "fetch" }));
+  it("keeps the plan in oldest-to-newest offset order", () => {
+    const plan = planRadarPlaybackFrames([{ slot: 0, timestampMs: 1 }]);
+    expect(plan.map((step) => step.offsetMinutes)).toEqual([...RADAR_PLAYBACK_OFFSETS_MINUTES]);
   });
 
-  it("assigns each cache entry to at most one target slot", () => {
-    // Two entries close enough together that both are within tolerance of
-    // the same single target slot -- only one can win it, the other must
-    // fall back to a fetch rather than being double-counted.
-    const target = NOW - 10 * 60 * 1000;
-    const entries: RadarAmbientCacheEntry[] = [
-      { slot: 0, timestampMs: target - 60 * 1000 },
-      { slot: 1, timestampMs: target + 60 * 1000 },
-    ];
-    const plan = planRadarPlaybackFrames(entries, NOW);
-    const ambientSteps = plan.filter((step) => step.source.kind === "ambient");
-    expect(ambientSteps).toHaveLength(1);
-  });
-
-  it("reuses a full cache for every slot, needing no fresh fetch", () => {
-    const entries: RadarAmbientCacheEntry[] = RADAR_PLAYBACK_OFFSETS_MINUTES.map((offsetMinutes, slot) => ({
-      slot,
-      timestampMs: NOW - offsetMinutes * 60 * 1000,
-    }));
-    const plan = planRadarPlaybackFrames(entries, NOW);
+  it("uses each held slot at most once and needs no fetch when the cache is full", () => {
+    const entries: RadarAmbientCacheEntry[] = RADAR_PLAYBACK_OFFSETS_MINUTES.map((_, slot) => ({ slot, timestampMs: slot }));
+    const plan = planRadarPlaybackFrames(entries);
     plan.forEach((step) => expect(step.source.kind).toBe("ambient"));
+    const slots = plan.map((step) => (step.source.kind === "ambient" ? step.source.slot : -1));
+    expect(new Set(slots).size).toBe(RADAR_PLAYBACK_OFFSETS_MINUTES.length);
+  });
+});
+
+describe("radarChangeProbeUrl", () => {
+  it("is the current snapshot's world z0 tile with no unresolved placeholders", () => {
+    expect(radarChangeProbeUrl()).toBe(
+      "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q/0/0/0.png",
+    );
+  });
+});
+
+describe("hashRadarTileBytes", () => {
+  it("is stable for identical bytes and differs for different bytes", async () => {
+    const a = new Uint8Array([1, 2, 3]).buffer;
+    const b = new Uint8Array([1, 2, 3]).buffer;
+    const c = new Uint8Array([1, 2, 4]).buffer;
+    expect(await hashRadarTileBytes(a)).toBe(await hashRadarTileBytes(b));
+    expect(await hashRadarTileBytes(a)).not.toBe(await hashRadarTileBytes(c));
+    expect(await hashRadarTileBytes(a)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("isNewRadarContent", () => {
+  it("always accepts the first capture", () => {
+    expect(isNewRadarContent(null, "abc")).toBe(true);
+  });
+
+  it("skips an unchanged hash and accepts a changed one", () => {
+    expect(isNewRadarContent("abc", "abc")).toBe(false);
+    expect(isNewRadarContent("abc", "def")).toBe(true);
   });
 });
 
