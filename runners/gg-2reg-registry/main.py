@@ -7,13 +7,21 @@ main-register pages (skipping special sections at the end), resolves each
 2-prefix registration to an ICAO hex via the Redis Mictronics search index,
 and writes enrichment to aircraft:registry:{icao_hex}.
 
-PDF column layout (all pages; determined from word x-positions):
-  x <  126 → Registration          (2-prefix; lookup key)
-  x <  387 → Aircraft Manufacturer (stored as aircraft.manufacturer)
-  x <  567 → Type                  (stored as aircraft.model)
-  x <  648 → MSN                   (stored as aircraft.serial_number)
-  x < 1015 → Registered Owner      (stored as registrant.names[0])
-  x ≥ 1015 → Date of Registration  (not stored)
+PDF column layout: each main-register page repeats a header row (Registration,
+Aircraft Manufacturer, Type, MSN, Registered Owner/Charterer, Date of
+registration). Column boundaries are derived per page from the x-position of
+each header column's first word, so a change to the page size or column widths
+does not require a code change. A page with no recognisable header row is
+skipped with a warning. Columns, left to right:
+  Registration          (2-prefix; lookup key)
+  Aircraft Manufacturer (stored as aircraft.manufacturer)
+  Type                  (stored as aircraft.model)
+  MSN                   (stored as aircraft.serial_number)
+  Registered Owner      (stored as registrant.names[0])
+  Date of Registration  (not stored)
+
+A run that parses no rows, or parses rows but matches none of them to the
+Mictronics index, is treated as a failure.
 
 Special sections (pages with these first-line prefixes are skipped entirely):
   ALL NEW REGISTRATIONS IN …
@@ -73,8 +81,11 @@ BATCH_SIZE = 100
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
-# x-position thresholds separating the six PDF columns (see module docstring)
-_COL_THRESHOLDS = (126, 387, 566, 648, 1015)
+# First word of each header column, left to right (see module docstring)
+_HEADER_MARKERS = ("Registration", "Aircraft", "Type", "MSN", "Registered", "Date")
+
+# Distance a column boundary sits left of its header word's x0
+_COL_MARGIN = 2.0
 
 # First-line text that identifies special sections to skip
 _SKIP_PREFIXES = (
@@ -89,19 +100,44 @@ _SKIP_PREFIXES = (
 _PRIVATE_PLACEHOLDERS = {"(PRIVATE)", "PRIVATE"}
 
 
-def _col_index(x0: float) -> int:
+def _find_column_thresholds(words: list[dict]) -> tuple[float, ...] | None:
+    """Derive the five column boundaries from a page's header row.
+
+    Returns None when no line contains every header marker in left-to-right order.
+    """
+    lines: dict[int, list[dict]] = {}
+    for w in words:
+        lines.setdefault(round(w["top"]), []).append(w)
+
+    for top_key in sorted(lines):
+        line = sorted(lines[top_key], key=lambda w: w["x0"])
+        starts: list[float] = []
+        pos = 0
+        for marker in _HEADER_MARKERS:
+            while pos < len(line) and line[pos]["text"] != marker:
+                pos += 1
+            if pos == len(line):
+                break
+            starts.append(line[pos]["x0"])
+            pos += 1
+        if len(starts) == len(_HEADER_MARKERS):
+            return tuple(x - _COL_MARGIN for x in starts[1:])
+    return None
+
+
+def _col_index(x0: float, thresholds: tuple[float, ...]) -> int:
     """Return 0-based column index for a word at horizontal position x0."""
-    for i, threshold in enumerate(_COL_THRESHOLDS):
+    for i, threshold in enumerate(thresholds):
         if x0 < threshold:
             return i
-    return len(_COL_THRESHOLDS)
+    return len(thresholds)
 
 
-def _words_to_cols(words: list[dict]) -> list[str]:
+def _words_to_cols(words: list[dict], thresholds: tuple[float, ...]) -> list[str]:
     """Assemble pdfplumber word dicts into a list of 6 column strings."""
-    cols: list[list[str]] = [[] for _ in range(len(_COL_THRESHOLDS) + 1)]
+    cols: list[list[str]] = [[] for _ in range(len(thresholds) + 1)]
     for w in sorted(words, key=lambda w: w["x0"]):
-        cols[_col_index(w["x0"])].append(w["text"])
+        cols[_col_index(w["x0"], thresholds)].append(w["text"])
     return [" ".join(c) for c in cols]
 
 
@@ -138,14 +174,20 @@ def download_and_parse(session: requests.Session) -> list[dict]:
                 logger.debug("Page %d: skipping special section (%s)", page_num, first_line[:50])
                 continue
 
+            words = page.extract_words()
+            thresholds = _find_column_thresholds(words)
+            if thresholds is None:
+                logger.warning("Page %d: no column header row found; skipping page.", page_num)
+                continue
+
             # Group words by rounded y-position (same line)
             line_words: dict[int, list[dict]] = {}
-            for w in page.extract_words():
+            for w in words:
                 key = round(w["top"])
                 line_words.setdefault(key, []).append(w)
 
             for top_key in sorted(line_words.keys()):
-                cols = _words_to_cols(line_words[top_key])
+                cols = _words_to_cols(line_words[top_key], thresholds)
                 reg = cols[0].strip()
                 if not reg.startswith("2-"):
                     continue
@@ -158,6 +200,8 @@ def download_and_parse(session: requests.Session) -> list[dict]:
                 })
 
     logger.info("Parsed %d 2-prefix records from PDF.", len(records))
+    if not records:
+        raise RuntimeError("No 2-prefix records parsed from the register PDF; its layout may have changed.")
     return records
 
 
@@ -266,6 +310,12 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis, ttl: int) -> int:
         len(reg_icao_map),
         len(registrations),
     )
+
+    if registrations and not reg_icao_map:
+        raise RuntimeError(
+            f"None of {len(registrations)} parsed registrations matched the Mictronics index; "
+            "the PDF layout may have changed or the Mictronics index is empty."
+        )
 
     count = 0
     errors = 0
