@@ -169,14 +169,24 @@ describe("compact/simple-silhouette shape scale floor", () => {
     "NH90", "LYNX", "MI24", "H47",
     "BALL", "GYRO", "AS21", "Q4", "SF25",
   ];
-  const SCALE_MIN_COMPACT_SILHOUETTE = 1.0;
+  const SCALE_MIN_COMPACT_SILHOUETTE = 0.75;
+  const SCALE_MIN_GYRO = 0.5;
 
   it("gives every shape in the broadened set at least the higher scale floor", () => {
     for (const key of COMPACT_SILHOUETTE_SHAPE_KEYS) {
+      const floor = key === "GYRO" ? SCALE_MIN_GYRO : SCALE_MIN_COMPACT_SILHOUETTE;
       expect(AIRCRAFT_SHAPES[key], `AIRCRAFT_SHAPES[${key}]`).toBeDefined();
-      expect(AIRCRAFT_SHAPES[key].scale, `${key}.scale`).toBeGreaterThanOrEqual(
-        SCALE_MIN_COMPACT_SILHOUETTE,
-      );
+      expect(AIRCRAFT_SHAPES[key].scale, `${key}.scale`).toBeGreaterThanOrEqual(floor);
+    }
+  });
+
+  it("gives GYRO its own lower floor than the rest of the set", () => {
+    expect(AIRCRAFT_SHAPES.GYRO.scale).toBeLessThan(SCALE_MIN_COMPACT_SILHOUETTE);
+  });
+
+  it("does not render any helicopter larger than a mid-size airliner", () => {
+    for (const key of ["EC20", "EC35", "EC45", "GAZL", "AS65", "AS32", "S61", "R44", "H60", "NH90", "LYNX", "MI24", "H47"]) {
+      expect(AIRCRAFT_SHAPES[key].scale, `${key}.scale`).toBeLessThan(AIRCRAFT_SHAPES.A320.scale);
     }
   });
 
