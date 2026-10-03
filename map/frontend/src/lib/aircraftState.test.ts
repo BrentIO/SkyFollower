@@ -117,7 +117,7 @@ describe("applyWsEvent -- position/metadata merge", () => {
     expect(revived.A1B2C3.stale).toBe(false);
   });
 
-  it("#1966: does NOT un-fade on a metadata resend carrying the same last_message as already recorded", () => {
+  it("does NOT un-fade on a metadata resend carrying the same last_message as already recorded", () => {
     const base = applyWsEvent(
       applySnapshot([{ icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" }]),
       { type: "stale", icao_hex: "A1B2C3" },
@@ -132,6 +132,33 @@ describe("applyWsEvent -- position/metadata merge", () => {
       last_message: "2026-09-13T12:00:00Z",
     });
     expect(resent.A1B2C3.stale).toBe(true);
+  });
+
+  it("does NOT un-hide on a metadata resend carrying the same last_message as already recorded", () => {
+    const base = applyWsEvent(
+      applySnapshot([{ icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" }]),
+      { type: "hide", icao_hex: "A1B2C3" },
+    );
+    expect(base.A1B2C3.hidden).toBe(true);
+    const resent = applyWsEvent(base, {
+      type: "metadata",
+      icao_hex: "A1B2C3",
+      last_message: "2026-09-13T12:00:00Z",
+    });
+    expect(resent.A1B2C3.hidden).toBe(true);
+  });
+
+  it("un-hides on a metadata update whose last_message is genuinely newer", () => {
+    const base = applyWsEvent(
+      applySnapshot([{ icao_hex: "A1B2C3", last_message: "2026-09-13T12:00:00Z" }]),
+      { type: "hide", icao_hex: "A1B2C3" },
+    );
+    const revived = applyWsEvent(base, {
+      type: "metadata",
+      icao_hex: "A1B2C3",
+      last_message: "2026-09-13T12:01:00Z",
+    });
+    expect(revived.A1B2C3.hidden).toBe(false);
   });
 
   it("un-hides (clears hidden) on any live position/metadata update", () => {
