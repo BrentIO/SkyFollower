@@ -208,7 +208,7 @@ describe("accent-detail icon treatments (ACCENT_CUTOUT_RATIO_THRESHOLD / ACCENT_
   // cutout rather than reading as a rotor (see #1884, #2013). Keep these
   // lists in sync with the generator script's own threshold/add-list.
   const SHAPES_WITH_ACCENT_CUTOUT = ["BALL"];
-  const SHAPES_WITH_ACCENT_ADD = ["EC35"];
+  const SHAPES_WITH_ACCENT_ADD = ["EC35", "R44"];
 
   it("gives exactly the expected shapes an accentD, no others", () => {
     const expectedKeys = [...SHAPES_WITH_ACCENT_CUTOUT, ...SHAPES_WITH_ACCENT_ADD];
