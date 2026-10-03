@@ -30,6 +30,6 @@ features:
     details: Every completed flight is archived to S3, building a long-term, queryable history.
     link: /components/archive-processor
   - title: Home Assistant Integration
-    details: Publishes live metrics and rule alerts over MQTT, with Home Assistant autodiscovery built in.
+    details: Per-service metrics appear as Home Assistant sensors through MQTT autodiscovery. Rule alerts are published as plain MQTT messages for your automations to trigger on.
     link: /specs/asyncapi
 ---
