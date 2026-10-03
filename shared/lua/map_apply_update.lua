@@ -3,8 +3,8 @@
 -- Collapses map/state_store.py's FlightStateStore.apply_update into a
 -- single round trip: the out-of-order check, the merge HSET, all three TTL
 -- refreshes (flight:detail:{icao_hex}'s EXPIRE and flight:visible:{icao_hex}'s
--- SET...EX on every accepted packet, flight:live:{icao_hex}'s SET...EX on
--- `position` packets only -- see #1966 below), and -- for `position`
+-- SET...EX on every accepted packet carrying new signal, flight:live:{icao_hex}'s SET...EX on
+-- `position` packets only -- see the TTL comment below), and -- for `position`
 -- packets only -- the trail RPUSH, then returns the full merged
 -- current-state so the caller never needs a separate HGETALL to build the
 -- WebSocket event payload.
@@ -24,7 +24,7 @@
 --           empty-array/empty-object ambiguity (see route_airports.lua's
 --           header comment) ever enters the round trip.
 -- ARGV[6] : stale_seconds (flight:live:{icao_hex} TTL -- only applied for
---           `position` packets, see #1966 below)
+--           `position` packets, see the TTL comment below)
 -- ARGV[7] : evict_seconds (flight:detail:{icao_hex} / flight:trail:{icao_hex} TTL)
 -- ARGV[8] : hide_seconds (flight:visible:{icao_hex} TTL)
 -- ARGV[9] : max_trail_points -- flight:trail:{icao_hex} is LTRIMmed to the
@@ -64,12 +64,15 @@ local visible_key = 'flight:visible:' .. icao_hex
 local trail_key = 'flight:trail:' .. icao_hex
 
 local last_raw = redis.call('HGET', detail_key, LAST_APPLIED_TIMESTAMP_FIELD)
-if last_raw then
-    local last_timestamp = tonumber(last_raw)
-    if last_timestamp and timestamp < last_timestamp - TIMESTAMP_EPSILON_SECONDS then
-        return nil
-    end
+local last_timestamp = last_raw and tonumber(last_raw) or nil
+if last_timestamp and timestamp < last_timestamp - TIMESTAMP_EPSILON_SECONDS then
+    return nil
 end
+-- A packet is a genuinely new signal when nothing was previously applied
+-- for this aircraft, or its timestamp advances past the stored one. A
+-- metadata resend carries the frozen last_message of the flight it
+-- describes, so it is accepted (not out-of-order) but is not new signal.
+local is_new_signal = (last_timestamp == nil) or (timestamp > last_timestamp + TIMESTAMP_EPSILON_SECONDS)
 
 local hset_args = {}
 for i, name in ipairs(field_names) do
@@ -82,7 +85,13 @@ table.insert(hset_args, LAST_APPLIED_TIMESTAMP_FIELD)
 table.insert(hset_args, cjson.encode(timestamp))
 
 redis.call('HSET', detail_key, unpack(hset_args))
-redis.call('EXPIRE', detail_key, evict_seconds)
+-- flight:detail's (evict) and flight:visible's (hide) TTLs refresh only on
+-- new signal, so a resend of a silent aircraft never postpones either; a
+-- resend for a flight whose keys already expired still recreates them,
+-- since no stored timestamp exists then.
+if is_new_signal then
+    redis.call('EXPIRE', detail_key, evict_seconds)
+end
 -- flight:live's TTL (the "stale" signal) is refreshed for `position`
 -- packets only -- not `metadata`. message-processor's
 -- _map_metadata_resend_loop unconditionally re-sends every active
@@ -94,15 +103,14 @@ redis.call('EXPIRE', detail_key, evict_seconds)
 -- timestamps aren't out-of-order, see the epsilon comment above) -- but
 -- refreshing flight:live on it would make an aircraft with no real
 -- position update in minutes cycle stale/live once per resend interval,
--- fully decoupled from whether anything actually happened (#1966).
--- flight:visible's TTL refresh stays unconditional on purpose: the
--- resend's resync/keep-on-screen purpose is legitimate and unrelated to
--- the stale/live distinction -- only "is this aircraft still active at
--- all" (visible), not "was a real position just received" (live).
+-- fully decoupled from whether anything actually happened. The same
+-- reasoning is why detail and visible above are gated on is_new_signal.
 if msg_type == 'position' then
     redis.call('SET', live_key, '1', 'EX', stale_seconds)
 end
-redis.call('SET', visible_key, '1', 'EX', hide_seconds)
+if is_new_signal then
+    redis.call('SET', visible_key, '1', 'EX', hide_seconds)
+end
 
 -- Re-reading the hash after the write (rather than folding the
 -- just-applied fields into a Lua-side copy of the previous state) is what

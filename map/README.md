@@ -239,9 +239,9 @@ tracked aircraft, all TTL'd in seconds, plus two untracked-by-aircraft keys:
 
 | Key | TTL | Contents |
 |---|---|---|
-| `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale`. Refreshed only by `position` packets, not `metadata` (#1966) -- see [Lifecycle](#lifecycle) below |
-| `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide`. Refreshed by both `position` and `metadata` packets -- unlike `flight:live` above, this is unrelated to the stale/live distinction |
-| `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove`. Refreshed by both `position` and `metadata` packets |
+| `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale`. Refreshed only by `position` packets, not `metadata` -- see [Lifecycle](#lifecycle) below |
+| `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide`. Refreshed by any packet carrying new signal (a `position`, or a `metadata` whose timestamp advances); a metadata resend with an unchanged timestamp does not refresh it, so a silent aircraft hides on schedule |
+| `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove`. Refreshed by any packet carrying new signal, same rule as `flight:visible` |
 | `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` (25,000 -- see [Trail History Caps](#trail-history-caps)) after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
 | `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
 | `map:range:outline` | 2 days (safety net only) | A Redis **hash** (field = `"{bearing}:{band}"`, value = JSON `{nm, lat, lon, alt, ts}`) holding the current UTC day's reception range outline. The disk snapshots are the real store; this TTL only cleans up after a process that died without rolling over -- see [Range Outline](#range-outline) |
@@ -268,12 +268,11 @@ quickly without losing its trail history: if contact resumes before
 rendered as one continuous flight -- the gap itself renders as a normal
 trail segment, with no special dashed/faded styling. A `position` event
 always clears both `stale` and `hidden` client-side; a `metadata` event
-clears `hidden` unconditionally too (matching `flight:visible`'s own
-unconditional refresh above), but only clears `stale` when its own carried
+clears `stale` and `hidden` only when its own carried
 timestamp is genuinely newer than the last one this client already
 recorded for that aircraft -- otherwise it's indistinguishable from
 message-processor's unconditional metadata resend, which must not
-re-brighten an aircraft with no real new data (#1966; see
+re-brighten or un-hide an aircraft with no real new data (see
 `src/lib/aircraftState.ts`'s `applyEventToRecord`).
 
 `GET /api/flights` only ever lists currently-*visible* aircraft (backed by

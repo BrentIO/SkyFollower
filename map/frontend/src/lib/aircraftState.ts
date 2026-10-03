@@ -241,7 +241,9 @@ function applyEventToRecord(existing: AircraftRecord | undefined, event: MapWsEv
         // metadata resend carrying old data must never re-brighten one
         // that's already dimmed.
         stale: existing && !isGenuinelyFresh ? existing.stale : false,
-        hidden: false, // ...and un-hides a previously-hidden one (contact resumed).
+        // Likewise only genuinely fresh data un-hides a hidden aircraft
+        // (contact resumed); a resend must not.
+        hidden: existing && !isGenuinelyFresh ? existing.hidden : false,
         pendingRemoval: false, // ...and cancels a deferred eviction (contact resumed).
       };
       merged.lastReceivedAt = nextLastReceivedAt;

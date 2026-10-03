@@ -563,6 +563,43 @@ def test_update_refreshes_ttl_so_live_aircraft_never_goes_stale(redis_client):
     assert redis_client.exists(flight_detail_key(icao_hex))
 
 
+def test_metadata_resend_with_frozen_timestamp_does_not_refresh_visible_or_detail(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=5, hide_seconds=3, evict_seconds=6)
+    icao_hex = _hex()
+    frozen = time.time()
+
+    store.apply_update(icao_hex, "position", frozen, {"lat": 1.0, "lon": 1.0})
+    time.sleep(1.2)
+    # Resend: identical (frozen) timestamp, accepted but not new signal.
+    assert store.apply_update(icao_hex, "metadata", frozen, {"ident": "ABC1"}) is not None
+
+    assert redis_client.ttl(flight_visible_key(icao_hex)) <= 2
+    assert redis_client.ttl(flight_detail_key(icao_hex)) <= 5
+
+
+def test_metadata_with_newer_timestamp_refreshes_visible_and_detail(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=5, hide_seconds=3, evict_seconds=6)
+    icao_hex = _hex()
+    first = time.time()
+
+    store.apply_update(icao_hex, "position", first, {"lat": 1.0, "lon": 1.0})
+    time.sleep(1.2)
+    store.apply_update(icao_hex, "metadata", first + 1.2, {"squawk": "7700"})
+
+    assert redis_client.ttl(flight_visible_key(icao_hex)) >= 3
+    assert redis_client.ttl(flight_detail_key(icao_hex)) >= 6
+
+
+def test_metadata_resend_recreates_expired_keys(redis_client):
+    store = FlightStateStore(redis_client, stale_seconds=5, hide_seconds=3, evict_seconds=6)
+    icao_hex = _hex()
+
+    store.apply_update(icao_hex, "metadata", time.time(), {"ident": "ABC1"})
+
+    assert redis_client.exists(flight_visible_key(icao_hex))
+    assert redis_client.exists(flight_detail_key(icao_hex))
+
+
 # ---------------------------------------------------------------------------
 # Processor status thresholds -- pure functions, no Redis needed. Final
 # thresholds: green <=15s, amber 15-60s, red >60s or never seen (see
