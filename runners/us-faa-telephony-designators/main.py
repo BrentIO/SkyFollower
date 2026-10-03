@@ -209,7 +209,8 @@ def build_record(row: dict, *, default_country: Optional[str] = None) -> dict:
 def write_to_redis(rows: list[dict], r: redis_lib.Redis) -> int:
     """Write operator:{designator} for each row via NX (skips existing keys),
     refreshing TTL on every row regardless of whether the write happened.
-    Returns the count actually written, not the count attempted."""
+    Returns the total processed (newly written plus already-present with
+    TTL refreshed)."""
     written = 0
     skipped_existing = 0
     for row in rows:
@@ -227,7 +228,7 @@ def write_to_redis(rows: list[dict], r: redis_lib.Redis) -> int:
         skipped_existing,
         written + skipped_existing,
     )
-    return written
+    return written + skipped_existing
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +364,7 @@ def main() -> None:
         records_imported = write_to_redis(records, r)
         status = "success"
         logger.info(
-            "US FAA telephony designators runner completed successfully. Newly written: %d",
+            "US FAA telephony designators runner completed successfully. Designators processed: %d",
             records_imported,
         )
 

@@ -265,17 +265,17 @@ class TestWriteToRedis:
         r = _FakeRedisJson(existing={"operator:AAL": {"airline_designator": "AAL", "name": "Pre-existing Mictronics value"}})
         rows = [{"airline_designator": "AAL", "name": "FAA all-caps value that must not win", "country": "UNITED STATES"}]
         count = write_to_redis(rows, r)
-        assert count == 0
+        assert count == 1
         assert r._store["operator:AAL"]["name"] == "Pre-existing Mictronics value"
 
-    def test_mixed_batch_only_counts_new_writes(self):
+    def test_mixed_batch_counts_new_and_existing(self):
         r = _FakeRedisJson(existing={"operator:AAL": {"airline_designator": "AAL", "name": "Existing"}})
         rows = [
             {"airline_designator": "AAL", "name": "Should not overwrite"},
             {"airline_designator": "KMM", "name": "New entry"},
         ]
         count = write_to_redis(rows, r)
-        assert count == 1
+        assert count == 2
         assert r._store["operator:AAL"]["name"] == "Existing"
         assert r._store["operator:KMM"]["name"] == "New entry"
 
@@ -287,7 +287,7 @@ class TestWriteToRedis:
         first = write_to_redis(rows, r)
         second = write_to_redis(rows, r)
         assert first == 1
-        assert second == 0
+        assert second == 1
 
     def test_empty_list_returns_zero(self):
         r = _FakeRedisJson()
@@ -312,7 +312,7 @@ class TestWriteToRedis:
         r = _FakeRedisJson(existing={"operator:AAL": {"airline_designator": "AAL", "name": "Pre-existing Mictronics value"}})
         rows = [{"airline_designator": "AAL", "name": "Should not overwrite"}]
         count = write_to_redis(rows, r)
-        assert count == 0
+        assert count == 1
         assert r._store["operator:AAL"]["name"] == "Pre-existing Mictronics value"
         assert r.expired["operator:AAL"] == ENRICHMENT_TTL_SECONDS
 

@@ -96,7 +96,7 @@ Published once, at the end of a run, to `SkyFollower/runner/us-faa-telephony-des
 
 | Topic suffix | Value | Format |
 |---|---|---|
-| `records_imported` | e.g. `171` | Integer as string — count of designators **newly written** this run, not rows parsed |
+| `records_imported` | e.g. `171` | Integer as string — count of designators processed this run, newly written plus already-present (TTL refreshed), not rows parsed |
 | `last_run_at` | e.g. `2026-09-23T06:10:01.123456+00:00` | ISO 8601 UTC |
 | `last_run_status` | `Success` or `Failure` | String |
 
