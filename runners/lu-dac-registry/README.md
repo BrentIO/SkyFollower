@@ -5,20 +5,28 @@
 | **Name** | `lu-dac-registry` |
 | **Country** | Luxembourg |
 | **Registration prefix** | `LX-` |
-| **Data source** | https://dac.gouvernement.lu/en/administration/departements/navigabilite/immatriculation-aeronefs/releve-immatriculations.html |
-| **Format** | PDF (index page scraped to discover the current register PDF URL) |
+| **Data source** | https://data.public.lu/en/datasets/releve-luxembourgeois-des-immatriculations/ (Luxembourg open-data portal, published by the Direction de l'Aviation Civile) |
+| **Licence** | [Open Data Commons Attribution (`odc-by`)](https://opendatacommons.org/licenses/by/1-0/) — attribution to the Direction de l'Aviation Civile / data.public.lu is required |
+| **Format** | PDF (downloaded through the portal's stable resource permalink, which redirects to the current monthly file) |
 | **Run frequency** | Weekly (Wednesday, 10:10 UTC) |
 | **Depends on Mictronics for ICAO hex** | Yes — the Luxembourg DAC register does not publish ICAO hex (Mode S) addresses; registrations are resolved via RediSearch against Mictronics records (`idx:aircraft:mictronics`). Must run after the `mictronics` runner. |
 
 ## How it works
 
-The index page is scraped for a link matching `dam-assets`/`relev*.pdf`
-(handling both URL-encoded and plain forms of the accented French/Luxembourgish
-path) to discover the current register PDF. The PDF is parsed by grouping
+The register PDF is downloaded from the open-data portal's resource
+permalink (`https://data.public.lu/fr/datasets/r/78d14c57-dee5-4903-9216-c33a0da06647`),
+which answers with a redirect to the current file; the dated filename (e.g.
+`releve-aeronefs-10-09-2026.pdf`) changes with each monthly update, but the
+permalink does not. Any non-200 response fails the run with a clear error.
+The PDF is parsed by grouping
 `pdfplumber.extract_words()` output into rows by `top` coordinate (5-point
-tolerance) and then into named columns by fixed x0 boundaries, since
+tolerance) and then into named columns by x0 boundaries derived from each page's header row
+(each column starts just left of its header word; fixed fallback bounds are
+used only if a page has no header row), since
 `pdfplumber.extract_table()` does not correctly detect all columns in this
-PDF. Rows whose `immat` column starts with `LX-` begin a new record;
+PDF. Header and page-footer lines are discarded, and the run fails rather
+than writing wrong data if the parsed rows look mis-columned (fewer than half
+of the serial numbers contain a numeral) or no rows are parsed. Rows whose `immat` column starts with `LX-` begin a new record;
 subsequent rows without an `LX-` value are treated as continuation lines and
 appended to the current record's fields (handling multi-line cells).
 Only `proprietaire` (owner) values are imported into `registrant.names`;
@@ -56,8 +64,8 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     "aircraft": {
         "manufacturer": "CESSNA AIRCRAFT COMPANY",
         "manufacturer_model": "CESSNA 172 Skyhawk",
-        "model": "172S Skyhawk SP 172S10739",
-        "serial_number": "AÉRO-SPORT DE LUXEMBOURG",
+        "model": "172S Skyhawk SP",
+        "serial_number": "172S10739",
         "type_designator": "C172"
     },
     "data_sources": [
@@ -68,7 +76,7 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     "military": false,
     "registrant": {
         "names": [
-            "DU GRAND-DUCHÉ AÉRO-SPORT A.S.B.L. LUXEMBOURG"
+            "AÉRO-SPORT DU GRAND-DUCHÉ DE LUXEMBOURG A.S.B.L."
         ]
     },
     "registration": "LX-AIE"
@@ -84,8 +92,8 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     "aircraft": {
         "manufacturer": "BOEING COMPANY, THE",
         "manufacturer_model": "BOEING 747-8",
-        "model": "B747-8R7F 38078",
-        "serial_number": "COPROPRIÉTÉ",
+        "model": "B747-8R7F",
+        "serial_number": "38078",
         "type_designator": "B748"
     },
     "data_sources": [
@@ -94,11 +102,6 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
     ],
     "icao_hex": "4D0114",
     "military": false,
-    "registrant": {
-        "names": [
-            "CARGOLUX"
-        ]
-    },
     "registration": "LX-VCK"
 }
 ```

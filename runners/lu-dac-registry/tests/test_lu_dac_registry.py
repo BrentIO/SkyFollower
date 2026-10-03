@@ -38,6 +38,10 @@ _mod = _load_main()
 
 _assign_column = _mod._assign_column
 _cluster_rows = _mod._cluster_rows
+_header_bounds = _mod._header_bounds
+_validate_records = _mod._validate_records
+download_register = _mod.download_register
+parse_pdf = _mod.parse_pdf
 _build_names = _mod._build_names
 _build_record = _mod._build_record
 _escape_tag = _mod._escape_tag
@@ -108,18 +112,18 @@ class TestAssignColumn:
 
     def test_type_range(self):
         assert _assign_column(256) == "type"
-        assert _assign_column(400) == "type"
+        assert _assign_column(380) == "type"
 
     def test_sn_range(self):
-        assert _assign_column(421) == "sn"
+        assert _assign_column(388) == "sn"
         assert _assign_column(450) == "sn"
 
     def test_proprietaire_range(self):
-        assert _assign_column(489) == "proprietaire"
+        assert _assign_column(455) == "proprietaire"
         assert _assign_column(600) == "proprietaire"
 
     def test_exploitant_range(self):
-        assert _assign_column(639) == "exploitant"
+        assert _assign_column(605) == "exploitant"
         assert _assign_column(800) == "exploitant"
 
     def test_below_first_boundary_returns_none(self):
@@ -128,6 +132,76 @@ class TestAssignColumn:
     def test_at_or_beyond_last_boundary_returns_none(self):
         assert _assign_column(842) is None
         assert _assign_column(900) is None
+
+
+    def test_custom_bounds(self):
+        bounds = [10, 20, 30, 40, 50, 60, 70]
+        assert _assign_column(25, bounds) == "constructeur"
+        assert _assign_column(5, bounds) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: header-derived bounds
+# ---------------------------------------------------------------------------
+
+def _header_words(top=69):
+    xs = [("Immat", 46), ("Constructeur", 100), ("Type", 259), ("SN", 392),
+          ("Propriétaire", 460), ("Exploitant", 610)]
+    return [_make_word(t, x, top) for t, x in xs]
+
+
+class TestHeaderBounds:
+    def test_derived_from_header_row(self):
+        bounds = _header_bounds(_header_words(), 842)
+        assert bounds == [43, 97, 256, 389, 457, 607, 842]
+
+    def test_missing_header_word_returns_none(self):
+        assert _header_bounds(_header_words()[:-1], 842) is None
+
+    def test_header_words_on_different_lines_returns_none(self):
+        words = _header_words()
+        words[3] = _make_word("SN", 392, 200)
+        assert _header_bounds(words, 842) is None
+
+    def test_no_words_returns_none(self):
+        assert _header_bounds([], 842) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: _validate_records
+# ---------------------------------------------------------------------------
+
+class TestValidateRecords:
+    def test_empty_raises(self):
+        with pytest.raises(RuntimeError, match="No aircraft records"):
+            _validate_records([])
+
+    def test_owner_names_in_serial_column_raises(self):
+        records = [{"serial_number": "PRAETOR GMBH"}, {"serial_number": "CARGOLUX"}]
+        with pytest.raises(RuntimeError, match="mis-columned"):
+            _validate_records(records)
+
+    def test_numeric_serials_pass(self):
+        _validate_records([{"serial_number": "55010140"}, {"serial_number": "802-1043"}])
+
+
+# ---------------------------------------------------------------------------
+# Tests: download_register
+# ---------------------------------------------------------------------------
+
+class TestDownloadRegister:
+    def test_downloads_from_permalink(self):
+        session = MagicMock()
+        session.get.return_value = MagicMock(status_code=200, content=b"%PDF-1.7")
+        assert download_register(session) == b"%PDF-1.7"
+        assert session.get.call_args[0][0] == _mod.DOWNLOAD_URL
+        assert "data.public.lu" in _mod.DOWNLOAD_URL
+
+    def test_non_200_raises(self):
+        session = MagicMock()
+        session.get.return_value = MagicMock(status_code=404, content=b"")
+        with pytest.raises(RuntimeError, match="HTTP 404"):
+            download_register(session)
 
 
 # ---------------------------------------------------------------------------
