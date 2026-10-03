@@ -515,12 +515,12 @@ sources:
 
   lu-dac-registry:
     description: "Luxembourg Directorate of Civil Aviation (DAC) aircraft register — LX-prefix registrations"
-    url: "https://dac.gouvernement.lu/en/administration/departements/navigabilite/immatriculation-aeronefs/releve-immatriculations.html"
+    url: "https://data.public.lu/en/datasets/releve-luxembourgeois-des-immatriculations/"
     format: pdf
     cadence: weekly_wednesday
-    notes: "~20-page PDF, ~298 records; URL is date-stamped (relev-aronefs-DD-MM-YYYY.pdf) and changes with each update — runner scrapes the index page to discover the current link; pdfplumber.extract_table() does not correctly detect the 6th column — uses word-position extraction instead; column x0 boundaries: [44,98,256,421,489,639,842]; rows where immat starts with 'LX-' begin a new record; subsequent rows without LX- are continuation rows for multi-line cells; only Propriétaire (owner) stored as registrant.names — Exploitant (operator) present in source but not read; privacy placeholders excluded from registrant.names: PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics; must run after Mictronics; no address/city/country data available; ICAO hex range: 4A0000–4AFFFF"
+    notes: "~21-page PDF, ~306 records, updated monthly; licence odc-by (attribution to the Direction de l'Aviation Civile / data.public.lu required); downloaded via the portal resource permalink https://data.public.lu/fr/datasets/r/78d14c57-dee5-4903-9216-c33a0da06647, which redirects to the current date-stamped file (releve-aeronefs-DD-MM-YYYY.pdf); pdfplumber.extract_table() does not correctly detect the 6th column — uses word-position extraction instead; column x0 boundaries are derived per page from the header row (each starts 3 points left of its header word; fallback [44,98,256,388,455,605,842]); header and footer lines discarded; rows where immat starts with 'LX-' begin a new record; subsequent rows without LX- are continuation rows for multi-line cells; only Propriétaire (owner) stored as registrant.names — Exploitant (operator) present in source but not read; privacy placeholders excluded from registrant.names: PROPRIÉTAIRE PRIVÉ, COPROPRIÉTÉ; run fails if no rows parse or fewer than half of serial numbers contain a numeral; no ICAO hex — resolved via RediSearch reverse-lookup against Mictronics; must run after Mictronics; no address/city/country data available; ICAO hex range: 4A0000–4AFFFF"
     files:
-      - name: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+      - name: "releve-aeronefs-{DD}-{MM}-{YYYY}.pdf"
         format: pdf
         columns:
           Immat:              Full LX-prefix registration mark
@@ -1249,7 +1249,7 @@ records:
             file: aircraft-register (HTML page)
             description: "Turks & Caicos CAA does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{VQ\\-XXX} against Mictronics records; enriches existing records only"
           - source: lu-dac-registry
-            file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+            file: "releve-aeronefs-{DD}-{MM}-{YYYY}.pdf"
             description: "Luxembourg DAC does not publish ICAO hex; resolved via FT.SEARCH idx:aircraft:mictronics @registration:{LX\\-XXX} against Mictronics records; enriches existing records only"
           - source: bz-bdca-registry
             file: bdca-civil-aircraft-register (HTML page)
@@ -1436,7 +1436,7 @@ records:
             field: REG
             description: "Full VQ-prefix registration mark (e.g. VQ-TCA)"
           - source: lu-dac-registry
-            file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+            file: "releve-aeronefs-{DD}-{MM}-{YYYY}.pdf"
             field: Immat
             description: "Full LX-prefix registration mark (e.g. LX-AIR)"
           - source: bz-bdca-registry
@@ -1697,7 +1697,7 @@ records:
                   type: wrap_array
                   description: "Single owner or operator name — wrap in a one-element list"
               - source: lu-dac-registry
-                file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+                file: "releve-aeronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: Propriétaire
                 transform:
                   type: wrap_array
@@ -2490,7 +2490,7 @@ records:
                 file: aircraft-register (HTML page)
                 field: MODEL
               - source: lu-dac-registry
-                file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+                file: "releve-aeronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: "Type d'aéronef"
               - source: bz-bdca-registry
                 file: bdca-civil-aircraft-register (HTML page)
@@ -2673,7 +2673,7 @@ records:
                 file: aircraft-register (HTML page)
                 field: "MANUFACT."
               - source: lu-dac-registry
-                file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+                file: "releve-aeronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: Constructeur
 
           type_designator:
@@ -2996,7 +2996,7 @@ records:
                 file: aircraft-register (HTML page)
                 field: "S/N"
               - source: lu-dac-registry
-                file: "relev-aronefs-{DD}-{MM}-{YYYY}.pdf"
+                file: "releve-aeronefs-{DD}-{MM}-{YYYY}.pdf"
                 field: "SN aéronef"
               - source: bz-bdca-registry
                 file: bdca-civil-aircraft-register (HTML page)

@@ -13,8 +13,8 @@ Important: the Luxembourg DAC register does not publish ICAO hex (Mode S)
 addresses. This runner can only enrich records that already exist in Redis from
 Mictronics. Schedule it AFTER the Mictronics runner.
 
-Data source: https://dac.gouvernement.lu/en/administration/departements/navigabilite/
-             immatriculation-aeronefs/releve-immatriculations.html
+Data source: https://data.public.lu/en/datasets/releve-luxembourgeois-des-immatriculations/
+             (open-data portal)
 """
 
 from __future__ import annotations
@@ -57,17 +57,21 @@ from shared.country_flags import country_flag
 
 logger = logging.getLogger("lu-dac-registry")
 
-INDEX_URL = (
-    "https://dac.gouvernement.lu/en/administration/departements/navigabilite"
-    "/immatriculation-aeronefs/releve-immatriculations.html"
+DOWNLOAD_URL = (
+    "https://data.public.lu/fr/datasets/r/78d14c57-dee5-4903-9216-c33a0da06647"
 )
 MQTT_ROOT = "SkyFollower/runner/lu-dac-registry"
 BATCH_SIZE = 100
 
-# x0 column boundaries — determined from PDF structure
-# Columns: immat | constructeur | type | sn | proprietaire | exploitant
-_COL_BOUNDS = [44, 98, 256, 421, 489, 639, 842]
+# Fallback x0 bounds when a page has no header row. Columns: immat | constructeur | type | sn | proprietaire | exploitant
+_COL_BOUNDS = [44, 98, 256, 388, 455, 605, 842]
 _COL_NAMES = ["immat", "constructeur", "type", "sn", "proprietaire", "exploitant"]
+
+_HEADER_WORDS = ["Immat", "Constructeur", "Type", "SN", "Propriétaire", "Exploitant"]
+
+_FOOTER_MARGIN = 45
+
+_HEADER_MARGIN = 3
 
 # Multi-word strings that represent privacy placeholders in the proprietaire
 # (owner) column — omit from names list
@@ -78,43 +82,13 @@ _ROW_TOLERANCE = 5
 
 
 # ---------------------------------------------------------------------------
-# URL discovery
-# ---------------------------------------------------------------------------
-
-def _find_download_url(session: requests.Session) -> str:
-    """Scrape the Luxembourg DAC index page to discover the current PDF URL."""
-    logger.info("Fetching Luxembourg DAC index page to discover current PDF URL.")
-    resp = session.get(INDEX_URL, timeout=30)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Luxembourg DAC index page returned HTTP {resp.status_code}")
-
-    # Matches both URL-encoded (navigabilit%C3%A9) and plain (navigabilité) forms
-    pattern = re.compile(
-        r'href=["\']([^"\']*dam-assets[^"\']*relev[^"\']*\.pdf)["\']',
-        re.IGNORECASE,
-    )
-    matches = pattern.findall(resp.text)
-    if not matches:
-        raise RuntimeError("Could not find PDF URL on Luxembourg DAC index page.")
-
-    url = matches[0]
-    if url.startswith("//"):
-        url = "https:" + url
-    elif not url.startswith("http"):
-        url = "https://dac.gouvernement.lu" + url
-    logger.info("Discovered PDF URL: %s", url)
-    return url
-
-
-# ---------------------------------------------------------------------------
 # Download
 # ---------------------------------------------------------------------------
 
 def download_register(session: requests.Session) -> bytes:
-    """Download the Luxembourg DAC PDF and return raw bytes."""
-    url = _find_download_url(session)
+    """Download the Luxembourg DAC register PDF via the open-data portal permalink."""
     logger.info("Downloading Luxembourg DAC aircraft register PDF.")
-    resp = session.get(url, timeout=120)
+    resp = session.get(DOWNLOAD_URL, timeout=120)
     if resp.status_code != 200:
         raise RuntimeError(f"PDF download failed with HTTP {resp.status_code}")
     logger.info("Download complete (%d bytes).", len(resp.content))
@@ -125,15 +99,41 @@ def download_register(session: requests.Session) -> bytes:
 # Word-position PDF parsing
 # ---------------------------------------------------------------------------
 
-def _assign_column(x0: float) -> Optional[str]:
-    """Map an x0 coordinate to a column name using _COL_BOUNDS."""
-    for i in range(len(_COL_BOUNDS) - 1):
-        if _COL_BOUNDS[i] <= x0 < _COL_BOUNDS[i + 1]:
+def _header_bounds(words: list[dict], page_width: float) -> Optional[list[float]]:
+    """Column bounds from the page's header row, or None if it isn't found."""
+    by_text: dict[str, list[dict]] = {}
+    for w in words:
+        by_text.setdefault(w.get("text", ""), []).append(w)
+    if any(h not in by_text for h in _HEADER_WORDS):
+        return None
+    for anchor in by_text["Immat"]:
+        starts: list[float] = []
+        for h in _HEADER_WORDS:
+            hit = next(
+                (w for w in by_text[h] if abs(w["top"] - anchor["top"]) <= _ROW_TOLERANCE),
+                None,
+            )
+            if hit is None:
+                break
+            starts.append(hit["x0"] - _HEADER_MARGIN)
+        else:
+            if starts == sorted(starts):
+                return starts + [page_width]
+    return None
+
+
+def _assign_column(x0: float, bounds: Optional[list[float]] = None) -> Optional[str]:
+    """Map an x0 coordinate to a column name using the given (or default) bounds."""
+    bounds = bounds or _COL_BOUNDS
+    for i in range(len(bounds) - 1):
+        if bounds[i] <= x0 < bounds[i + 1]:
             return _COL_NAMES[i]
     return None
 
 
-def _cluster_rows(words: list[dict]) -> list[dict[str, list[str]]]:
+def _cluster_rows(
+    words: list[dict], bounds: Optional[list[float]] = None
+) -> list[dict[str, list[str]]]:
     """
     Group pdfplumber words into rows by `top` coordinate (5-point tolerance),
     then assign each word to a named column by x0.
@@ -153,7 +153,7 @@ def _cluster_rows(words: list[dict]) -> list[dict[str, list[str]]]:
     for word in sorted_words:
         top = word["top"]
         text = word.get("text", "").strip()
-        col = _assign_column(word["x0"])
+        col = _assign_column(word["x0"], bounds)
 
         if col is None or not text:
             continue
@@ -187,8 +187,16 @@ def parse_pdf(pdf_bytes: bytes) -> list[dict]:
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
-            words = page.extract_words()
-            all_rows.extend(_cluster_rows(words))
+            words = [
+                w for w in page.extract_words()
+                if w["top"] < page.height - _FOOTER_MARGIN
+            ]
+            bounds = _header_bounds(words, page.width)
+            all_rows.extend(
+                row
+                for row in _cluster_rows(words, bounds)
+                if _join_col(row, "immat") != _HEADER_WORDS[0]
+            )
 
     # Merge multi-line cells: rows starting with LX- begin a new record;
     # rows without an LX- immat are continuation rows for the previous record.
@@ -225,8 +233,21 @@ def parse_pdf(pdf_bytes: bytes) -> list[dict]:
     if current is not None:
         records.append(current)
 
+    _validate_records(records)
     logger.info("Parsed %d aircraft records from PDF.", len(records))
     return records
+
+
+def _validate_records(records: list[dict]) -> None:
+    """Fail on empty or mis-columned output (serials almost always contain a digit)."""
+    if not records:
+        raise RuntimeError("No aircraft records were parsed from the Luxembourg DAC PDF.")
+    with_digit = sum(1 for r in records if re.search(r"\d", r["serial_number"]))
+    if with_digit < len(records) / 2:
+        raise RuntimeError(
+            "Parsed Luxembourg DAC rows look mis-columned: only "
+            f"{with_digit} of {len(records)} serial numbers contain a digit."
+        )
 
 
 # ---------------------------------------------------------------------------
