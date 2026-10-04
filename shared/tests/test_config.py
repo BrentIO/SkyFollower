@@ -561,24 +561,23 @@ class TestBlockHelpers:
         not raise, and must leave the feature fully disabled."""
         monkeypatch.delenv("MAP_UDP_HOST", raising=False)
         monkeypatch.delenv("MAP_UDP_PORT", raising=False)
-        monkeypatch.delenv("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS", raising=False)
         assert map_udp_config() == {
-            "host": "", "port": 0, "min_position_interval_seconds": 1,
+            "host": "", "port": 0,
         }
 
     def test_map_udp_config_reads_host_and_port(self, monkeypatch):
         monkeypatch.setenv("MAP_UDP_HOST", "map.example.com")
         monkeypatch.setenv("MAP_UDP_PORT", "9999")
-        monkeypatch.delenv("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS", raising=False)
         assert map_udp_config() == {
-            "host": "map.example.com", "port": 9999, "min_position_interval_seconds": 1,
+            "host": "map.example.com", "port": 9999,
         }
 
-    def test_map_udp_config_reads_min_position_interval(self, monkeypatch):
-        monkeypatch.setenv("MAP_UDP_HOST", "map.example.com")
-        monkeypatch.setenv("MAP_UDP_PORT", "9999")
+    def test_map_udp_config_warns_on_removed_interval_variable(self, monkeypatch, caplog):
         monkeypatch.setenv("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS", "2.5")
-        assert map_udp_config()["min_position_interval_seconds"] == 2.5
+        with caplog.at_level("WARNING"):
+            cfg = map_udp_config()
+        assert "min_position_interval_seconds" not in cfg
+        assert sum("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS" in r.message for r in caplog.records) == 1
 
     def test_helpers_share_a_loader_when_given_one(self):
         loader = ConfigLoader({})

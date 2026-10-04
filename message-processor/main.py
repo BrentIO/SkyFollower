@@ -82,7 +82,7 @@ from shared.redis_keys import (
 from shared.timing import (
     CONFIG_POLL_INTERVAL_SECONDS,
     DEFAULT_FLIGHT_TTL_SECONDS,
-    DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS,
+    MAP_UDP_POSITION_MIN_INTERVAL_SECONDS,
     HEALTHCHECK_INTERVAL_SECONDS,
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_TTL_SECONDS,
@@ -252,7 +252,7 @@ class _MapUdpPublisher:
 
     def __init__(
         self, host: str, port: int,
-        min_position_interval_seconds: float = DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS,
+        min_position_interval_seconds: float = MAP_UDP_POSITION_MIN_INTERVAL_SECONDS,
     ) -> None:
         if host and not port:
             logger.warning(
@@ -951,10 +951,6 @@ class MessageProcessor:
         mu = config.get("map_udp") or {}
         self._map_udp = _MapUdpPublisher(
             mu.get("host", ""), mu.get("port", 0),
-            mu.get(
-                "min_position_interval_seconds",
-                DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS,
-            ),
         )
 
         # RabbitMQ
@@ -1948,7 +1944,7 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def _publish_map_position(self, flight: Flight, data: dict, received_at: float) -> None:
-        """Throttled to at most one per MAP_UDP_MIN_POSITION_INTERVAL_SECONDS
+        """Throttled to at most one per MAP_UDP_POSITION_MIN_INTERVAL_SECONDS
         per flight (see should_send_position). Fields absent from `data`
         are omitted, not sent as null. Carries `processor_id` so the map
         service's liveness roster updates from ordinary traffic too, not

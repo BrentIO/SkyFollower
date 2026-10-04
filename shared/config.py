@@ -16,10 +16,12 @@ one name per restart.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Callable, Optional
 
-from shared.timing import DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS
+
+logger = logging.getLogger(__name__)
 
 # Fixed by every compose file's bind mount; not meant to vary by deployment.
 DATA_DIR = "/app/data"
@@ -143,19 +145,17 @@ def map_udp_config(loader: Optional[ConfigLoader] = None) -> dict:
     toward the `map` service. Optional, same as mqtt_config() above: an
     unset MAP_UDP_HOST means no socket is ever created.
 
-    min_position_interval_seconds throttles only `position` sends (see
-    message-processor's _MapUdpPublisher); `metadata` sends are
-    change-gated and `heartbeat` sends use MAP_HEARTBEAT_INTERVAL_SECONDS
-    instead (shared/timing.py)."""
+    The `position` throttle is a constant (shared/timing.py), not read here."""
     loader, own = _own_loader(loader)
     block = {
         "host": loader.string("MAP_UDP_HOST", ""),
         "port": loader.integer("MAP_UDP_PORT", 0),
-        "min_position_interval_seconds": loader.number(
-            "MAP_UDP_MIN_POSITION_INTERVAL_SECONDS",
-            DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS,
-        ),
     }
+    if loader._environ.get("MAP_UDP_MIN_POSITION_INTERVAL_SECONDS", "").strip():
+        logger.warning(
+            "MAP_UDP_MIN_POSITION_INTERVAL_SECONDS is no longer read and is ignored; "
+            "remove it from .env"
+        )
     if own:
         loader.raise_for_problems()
     return block

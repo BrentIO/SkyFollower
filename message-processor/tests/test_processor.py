@@ -5083,7 +5083,7 @@ class TestMapUdpPosition:
 
 
 class TestMapUdpPositionThrottle:
-    """MAP_UDP_MIN_POSITION_INTERVAL_SECONDS -- a per-icao_hex minimum
+    """MAP_UDP_POSITION_MIN_INTERVAL_SECONDS -- a per-icao_hex minimum
     spacing between `position` sends, keyed on each message's own
     received_at (see _MapUdpPublisher.should_send_position), never applied
     to `metadata` sends."""

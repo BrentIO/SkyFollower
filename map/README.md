@@ -349,7 +349,7 @@ weighing both costs it's meant to bound:
   collide with either way.
 - **Rendering cost.** The message processor enforces a floor of one
   `position` UDP packet per aircraft per second
-  (`shared/timing.py`'s `DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS`),
+  (`shared/timing.py`'s `MAP_UDP_POSITION_MIN_INTERVAL_SECONDS`),
   so 25,000 points is a worst case of roughly 7 hours of uninterrupted
   max-rate tracking for one aircraft -- comfortably past a typical domestic
   flight, and past most international ones too, since a ground-based
