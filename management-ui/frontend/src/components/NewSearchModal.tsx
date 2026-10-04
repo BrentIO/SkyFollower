@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { todayUtc } from "../lib/todayUtc";
 
 interface NewSearchModalProps {
   open: boolean;
@@ -35,8 +36,8 @@ export function NewSearchModal({
   onCancel,
   initialName = "",
   initialWhereClause = "",
-  initialStartDate = "",
-  initialEndDate = "",
+  initialStartDate = todayUtc(),
+  initialEndDate = todayUtc(),
   title = "New Search",
 }: NewSearchModalProps) {
   const [name, setName] = useState(initialName);
@@ -100,8 +101,8 @@ export function NewSearchModal({
             </label>
           </div>
           <p className="mt-1 text-xs text-slate-400">
-            Leave either blank to search the full archive on that side. Both dates are UTC, and
-            inclusive.
+            Defaults to today. Clear either to search the full archive on that side. Both dates are
+            UTC, and inclusive.
           </p>
           {rangeInvalid && (
             <p className="mt-1 text-xs text-red-600 dark:text-red-400">Start date must not be after end date.</p>
