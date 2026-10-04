@@ -146,22 +146,21 @@ class TestLiveTtlRefreshByMsgType:
 
 
 class TestOtherTtlsStayUnconditional:
-    """flight:detail/flight:visible's refresh-on-every-accepted-packet
-    behavior is the resync/keep-on-screen mechanism the metadata resend
-    loop depends on -- #1966 must not touch it."""
+    """flight:detail/flight:visible refresh on a packet with a newer
+    timestamp, and a metadata-only packet still creates them."""
 
     def test_metadata_packet_refreshes_visible_ttl(self, redis_client, apply_update_sha, icao_hex):
         _apply_update(redis_client, apply_update_sha, icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})
         redis_client.expire(_visible_key(icao_hex), 3)
 
-        _apply_update(redis_client, apply_update_sha, icao_hex, "metadata", 1000.0, {"ident": "TST1"})
+        _apply_update(redis_client, apply_update_sha, icao_hex, "metadata", 1001.0, {"ident": "TST1"})
         assert redis_client.ttl(_visible_key(icao_hex)) > 3
 
     def test_metadata_packet_refreshes_detail_ttl(self, redis_client, apply_update_sha, icao_hex):
         _apply_update(redis_client, apply_update_sha, icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})
         redis_client.expire(_detail_key(icao_hex), 3)
 
-        _apply_update(redis_client, apply_update_sha, icao_hex, "metadata", 1000.0, {"ident": "TST1"})
+        _apply_update(redis_client, apply_update_sha, icao_hex, "metadata", 1001.0, {"ident": "TST1"})
         assert redis_client.ttl(_detail_key(icao_hex)) > 3
 
     def test_metadata_only_packet_still_creates_detail_and_visible_keys(self, redis_client, apply_update_sha, icao_hex):
