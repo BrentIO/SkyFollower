@@ -451,6 +451,8 @@ liveness roster from *any* of the three, not just `heartbeat` -- see
   change is detected -- plus `processor_id`. Independently of that
   change-gated path, a dedicated `_map_metadata_resend_loop` also resends
   every currently-active flight's `metadata` datagram unconditionally
+  (skipping any flight whose `last_message` is older than `flight_ttl_seconds` by
+  wall clock, so the map never resurrects an aircraft it already evicted)
   every `MAP_METADATA_RESEND_INTERVAL_SECONDS` (60s, `shared/timing.py`),
   via `_resend_all_map_metadata` (enumeration pattern mirrors
   `_force_evict_all`) -- this does *not* update `map_metadata_hash`, so it
