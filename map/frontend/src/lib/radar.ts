@@ -184,10 +184,19 @@ export interface RadarPlaybackPlan {
  * changed), so every held entry is reused, most recent first, filling the
  * newest playback offsets; whatever offsets remain (the oldest ones) are
  * fetched from IEM's archived-frame endpoints. An empty `cache` degrades to
- * "fetch everything." Entries beyond the playback length are ignored.
+ * "fetch everything." Entries beyond the playback length are ignored, as are
+ * entries older than the playback window plus one refresh interval of slack.
  */
-export function planRadarPlaybackFrames(cache: readonly RadarAmbientCacheEntry[]): RadarPlaybackPlan[] {
-  const newestFirst = [...cache].sort((a, b) => b.timestampMs - a.timestampMs);
+export const RADAR_AMBIENT_MAX_AGE_MS =
+  Math.max(...RADAR_PLAYBACK_OFFSETS_MINUTES) * 60 * 1000 + RADAR_REFRESH_INTERVAL_MS;
+
+export function planRadarPlaybackFrames(
+  cache: readonly RadarAmbientCacheEntry[],
+  nowMs: number = Date.now(),
+): RadarPlaybackPlan[] {
+  const newestFirst = cache
+    .filter((entry) => nowMs - entry.timestampMs <= RADAR_AMBIENT_MAX_AGE_MS)
+    .sort((a, b) => b.timestampMs - a.timestampMs);
   const offsetsNewestFirst = [...RADAR_PLAYBACK_OFFSETS_MINUTES].reverse();
   return offsetsNewestFirst
     .map((offsetMinutes, index): RadarPlaybackPlan => {
