@@ -1592,11 +1592,12 @@ select_roles_interactively() {
 # every run or a re-run silently keeps a stale local image. --profile
 # runners refreshes the core host's runner-* images too; NOT passed to
 # `up -d` (would launch every one-shot runner). A release pin is
-# immutable, so a plain release install skips the pull.
+# immutable, so a plain release install skips the pull. --parallel 4 keeps
+# the ~50 runner pulls from saturating CPU and storage on an SD-card host.
 compose_bring_up() {
   local role_dir="$1"
   if [ "$DEV_BUILD" -eq 1 ]; then
-    (cd "$role_dir" && docker compose --profile runners pull && docker compose up -d)
+    (cd "$role_dir" && docker compose --parallel 4 --profile runners pull && docker compose up -d)
   else
     (cd "$role_dir" && docker compose up -d)
   fi
@@ -2091,7 +2092,7 @@ do_upgrade() {
     # `up` would kick off every one of them, including the multi-hour
     # uk-caa-registry. Ofelia is recreated by `up -d` and spawns fresh
     # runner containers from the pulled images on its own schedule.
-    (cd "$role_dir" && docker compose --profile runners pull && docker compose up -d)
+    (cd "$role_dir" && docker compose --parallel 4 --profile runners pull && docker compose up -d)
   done
   if [ "$found" -eq 0 ]; then
     echo "No role directories found under ${INSTALL_ROOT} (looked for */.env)." >&2
