@@ -180,6 +180,12 @@ else -- no telemetry.
 | `MQTT_PASSWORD` | ❌ | — |
 | `MAP_UDP_HOST` | ❌ | — |
 | `MAP_UDP_PORT` | ❌ | — |
+| `CAPTURE_RAW_FRAMES` | ❌ | `false` |
+
+`CAPTURE_RAW_FRAMES` enables opt-in forensic raw-frame capture
+(see the message processor's Raw Frame Capture section). `install.sh`
+writes it as `false` and `--upgrade` adds it to an existing `.env` that
+lacks it, never overwriting a value you set.
 
 `MESSAGE_PROCESSOR_ID` isn't in this table: it's not read from `.env` at
 all. Each instance's ID is in its own `message-processors/{id}.env`,

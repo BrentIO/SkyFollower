@@ -37,7 +37,7 @@ interpolated by Compose from this host's `.env` (written by
 | `MAP_UDP_PORT` | ❌ | — | |
 | `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees). Used as the CPR reference for surface/taxi position decoding |
 | `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
-| `CAPTURE_RAW_FRAMES` | ❌ | `false` | Opt-in forensic raw-frame capture (see [Raw Frame Capture](#raw-frame-capture-forensic) below). Read once at startup; restart to pick up a changed value |
+| `CAPTURE_RAW_FRAMES` | ❌ | `false` | Opt-in forensic raw-frame capture (see [Raw Frame Capture](#raw-frame-capture-forensic) below). `install.sh` writes `CAPTURE_RAW_FRAMES=false` into the node's `.env` (and `--upgrade` appends it if missing, leaving an existing value alone). Read once at startup; restart to pick up a changed value |
 | `LOG_LEVEL` | ❌ | `info` | `"debug"` for verbose output |
 
 Timing values -- the MQTT publish cadence, the Redis heartbeat refresh and
@@ -521,7 +521,7 @@ set without `MAP_UDP_PORT`, which defaults to `0`).
 
 ## Raw Frame Capture (Forensic)
 
-`CAPTURE_RAW_FRAMES` (default off) is general-purpose forensic
+`CAPTURE_RAW_FRAMES` (default off, written explicitly to `.env` by `install.sh`) is general-purpose forensic
 infrastructure for investigating a decode anomaly (a bad CPR position, a
 corrupted velocity/altitude/squawk/ident, a burst of CRC failures, a future
 pyModeS regression) after the fact, without needing a bespoke diagnostic
