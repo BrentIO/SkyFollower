@@ -185,8 +185,13 @@ def build_completed_flight(doc: dict) -> CompletedFlight:
     Parses a legacy Mongo flight stub into the same CompletedFlight model
     live flights use. Only call after guard_reason(doc) is None --
     CompletedFlight enforces shape, not the DLQ guards above (it accepts
-    total_messages == 0).
+    total_messages == 0). Legacy stores origin/destination as bare ICAO
+    strings; the live model expects a dict, so wrap them first.
     """
+    doc = dict(doc)
+    for field in ("origin", "destination"):
+        if isinstance(doc.get(field), str):
+            doc[field] = {"icao_code": doc[field]}
     return CompletedFlight.model_validate(doc)
 
 
