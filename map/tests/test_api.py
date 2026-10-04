@@ -80,6 +80,17 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+_SHORT_TTL_LAUNCHER = """
+import map.main as m
+import map.state_store as ss
+m.MAP_STALE_TTL_SECONDS = 1
+m.MAP_HIDE_TTL_SECONDS = 2
+m.DEFAULT_FLIGHT_TTL_SECONDS = 3
+ss.MAP_EVICT_AFTER_HIDE_WINDOW_SECONDS = 1
+m.main()
+"""
+
+
 class _Server:
     """A real `python -m map.main` subprocess, bound to freshly-chosen
     ports so parallel xdist workers/tests never collide."""
@@ -95,15 +106,12 @@ class _Server:
             "MAP_LISTEN_PORT": str(self.udp_port),
             "MAP_HTTP_HOST": "127.0.0.1",
             "MAP_HTTP_PORT": str(self.http_port),
-            "MAP_STALE_SECONDS": "1",
-            "MAP_HIDE_SECONDS": "2",
-            "MAP_EVICT_SECONDS": "3",
             "PYTHONPATH": _REPO_ROOT,
         })
         if extra_env:
             env.update(extra_env)
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "map.main"], cwd=_REPO_ROOT, env=env,
+            [sys.executable, "-c", _SHORT_TTL_LAUNCHER], cwd=_REPO_ROOT, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         self._wait_until_ready()
@@ -325,7 +333,7 @@ def test_websocket_receives_stale_then_hide_then_remove_on_eviction(server):
 
 
 def test_get_flights_omits_hidden_aircraft(server):
-    """Once MAP_HIDE_SECONDS elapses, the aircraft must drop out of the
+    """Once the hide window elapses, the aircraft must drop out of the
     GET /api/flights snapshot (its detail/trail data is still present
     server-side -- see map/state_store.py's list_flights -- but a fresh
     client has no trail to bridge with, so it's omitted until it either

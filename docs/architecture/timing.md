@@ -57,6 +57,9 @@ rather than durations omit the `_SECONDS` suffix
 | `TCP_KEEPIDLE_SECONDS` | 60 s | Idle time before the first TCP keepalive probe on a receiver source socket. |
 | `TCP_KEEPINTVL_SECONDS` | 10 s | Interval between keepalive probes. |
 | `TCP_KEEPALIVE_PROBES` | 3 | Unanswered probes before the kernel tears the connection down. Idle + interval × probes ≈ a 90 s detection budget for a peer that vanished without a clean FIN/RST — far below the ~2-hour OS default, without false-positiving on a legitimately quiet feed. |
+| `MAP_STALE_TTL_SECONDS` | 15 s | TTL on the map service's per-aircraft sentinel whose expiry fades an aircraft. Import-time assertion: must stay below the hide window. |
+| `MAP_HIDE_TTL_SECONDS` | 45 s | TTL on the sentinel whose expiry drops an aircraft from view while keeping its trail. The map's evict window is not a constant: it adopts `flight_ttl_seconds` from the first `metadata` datagram a message processor sends. |
+| `MAP_EVICT_AFTER_HIDE_WINDOW_SECONDS` | 15 s | Minimum gap kept between the hide window and the adopted evict window, so a very small `flight_ttl_seconds` cannot make eviction precede hide. |
 | `UNPARSEABLE_WARNING_INTERVAL_SECONDS` | 60 s | Minimum spacing between "N unparseable lines" summary warnings, per source connection. |
 | `STITCH_POINTER_TTL_SECONDS` | 86 400 s (1 day) | TTL on the `archive:last_segment:{icao_hex}` pointer used for split-flight stitching. |
 | `ENRICHMENT_TTL_SECONDS` | 1 209 600 s (14 days) | TTL every data runner sets on the enrichment keys it writes — registration, operator, type, airport, livery. Long enough that a single missed weekly run never expires live data. |

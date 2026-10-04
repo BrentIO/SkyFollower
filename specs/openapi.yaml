@@ -1253,7 +1253,7 @@ paths:
       description: Served by the map service (map/main.py), not this file's
         management-ui backend -- included here so the whole system's REST
         surface has one spec. One object per currently-*visible* aircraft
-        (an aircraft past MAP_HIDE_SECONDS with no traffic since is omitted
+        (an aircraft past the hide window with no traffic since is omitted
         until it either reappears or is fully evicted -- see
         map/README.md's Lifecycle section), the same merged current-state
         shape carried by the WebSocket `metadata` event documented in
@@ -1283,7 +1283,7 @@ paths:
         (flight:trail:{icao_hex}), which the frontend fetches when an
         aircraft is selected so the drawn trail covers the whole flight and
         survives a page reload. HTTP 404 when the aircraft isn't currently
-        tracked (never seen, or evicted past MAP_EVICT_SECONDS of silence).
+        tracked (never seen, or evicted after the evict window of silence).
       operationId: get_flight_api_flights__icao_hex__get
       parameters:
       - name: icao_hex

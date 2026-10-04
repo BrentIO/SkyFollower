@@ -481,7 +481,7 @@ def _drain_expired_events(redis_client, store, deadline: float) -> list[dict]:
 
 
 def test_eviction_fires_stale_then_hide_then_remove_at_correct_ttls(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=1, hide_seconds=2, evict_seconds=3)
+    store = FlightStateStore(redis_client, stale_seconds=1, hide_seconds=2, evict_seconds=3, evict_min_margin_seconds=1)
     store.enable_keyspace_notifications()
     icao_hex = _hex()
 
@@ -564,7 +564,10 @@ def test_update_refreshes_ttl_so_live_aircraft_never_goes_stale(redis_client):
 
 
 def test_metadata_resend_with_frozen_timestamp_does_not_refresh_visible_or_detail(redis_client):
-    store = FlightStateStore(redis_client, stale_seconds=5, hide_seconds=3, evict_seconds=6)
+    store = FlightStateStore(
+        redis_client, stale_seconds=5, hide_seconds=3, evict_seconds=6,
+        evict_min_margin_seconds=1,
+    )
     icao_hex = _hex()
     frozen = time.time()
 
@@ -716,3 +719,56 @@ def test_processor_roster_resets_on_fresh_redis_state():
         assert store.get_processor_roster() == {}
     finally:
         client.close()
+
+
+# ---------------------------------------------------------------------------
+# Evict window learned from flight_ttl_seconds
+# ---------------------------------------------------------------------------
+
+def _store(redis_client):
+    return FlightStateStore(redis_client, stale_seconds=15, hide_seconds=45, evict_seconds=300)
+
+
+def test_evict_defaults_until_a_flight_ttl_is_adopted(redis_client):
+    assert _store(redis_client).evict_seconds == 300
+
+
+def test_first_adopted_flight_ttl_wins_and_later_values_warn_once(redis_client, caplog):
+    store = _store(redis_client)
+    store.adopt_flight_ttl(600)
+    with caplog.at_level("WARNING", logger="map.state_store"):
+        store.adopt_flight_ttl(900)
+        store.adopt_flight_ttl(1200)
+    assert store.evict_seconds == 600
+    assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 1
+
+
+def test_matching_later_flight_ttl_does_not_warn(redis_client, caplog):
+    store = _store(redis_client)
+    store.adopt_flight_ttl(600)
+    with caplog.at_level("WARNING", logger="map.state_store"):
+        store.adopt_flight_ttl(600)
+    assert not caplog.records
+
+
+@pytest.mark.parametrize("bad", [None, "600", 0, -5, True])
+def test_invalid_flight_ttl_is_ignored_and_does_not_consume_adoption(redis_client, bad):
+    store = _store(redis_client)
+    store.adopt_flight_ttl(bad)
+    assert store.evict_seconds == 300
+    store.adopt_flight_ttl(500)
+    assert store.evict_seconds == 500
+
+
+def test_tiny_flight_ttl_is_clamped_above_hide(redis_client):
+    store = _store(redis_client)
+    store.adopt_flight_ttl(10)
+    assert store.evict_seconds == 60
+
+
+def test_adopted_flight_ttl_drives_detail_ttl(redis_client):
+    store = _store(redis_client)
+    store.adopt_flight_ttl(600)
+    icao_hex = _hex()
+    store.apply_update(icao_hex, "position", 1000.0, {"lat": 1.0, "lon": 2.0})
+    assert 595 <= redis_client.ttl(f"flight:detail:{icao_hex}") <= 600

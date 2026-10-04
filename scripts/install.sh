@@ -1117,12 +1117,6 @@ collect_map_env() {
   # Optional -- map-redis has no auth by default; only set this for an
   # external, already-secured Redis instead of the bundled one.
   MAP_REDIS_PASSWORD="$(prompt_password_value MAP_REDIS_PASSWORD "map-redis password (blank for none)" "$(existing_env_value "$env_file" MAP_REDIS_PASSWORD)" 0)"
-  MAP_STALE_SECONDS="$(prompt_int_range MAP_STALE_SECONDS "Stale TTL, seconds (aircraft fades but stays visible)" "$(existing_env_value_or "$env_file" MAP_STALE_SECONDS 15)" 1 86400)"
-  MAP_HIDE_SECONDS="$(prompt_int_range MAP_HIDE_SECONDS "Hide TTL, seconds (aircraft drops from view but trail data is kept)" "$(existing_env_value_or "$env_file" MAP_HIDE_SECONDS 60)" 1 86400)"
-  # Should equal core Redis's config:flight_ttl_seconds for this
-  # deployment -- this role never queries core Redis, so it's a reminder,
-  # not an auto-detected value.
-  MAP_EVICT_SECONDS="$(prompt_int_range MAP_EVICT_SECONDS "Evict TTL, seconds (aircraft fully removed -- should match this deployment's flight_ttl_seconds)" "$(existing_env_value_or "$env_file" MAP_EVICT_SECONDS 300)" 1 86400)"
   probe_tcp "$MAP_REDIS_HOST" "$MAP_REDIS_PORT" "map-redis"
 
   # Optional "center" reference point for the frontend's on-map marker,
@@ -1163,13 +1157,6 @@ MAP_HTTP_PORT=${MAP_HTTP_PORT}
 MAP_REDIS_HOST=${MAP_REDIS_HOST}
 MAP_REDIS_PORT=${MAP_REDIS_PORT}
 MAP_REDIS_PASSWORD=${MAP_REDIS_PASSWORD}
-
-# Lifecycle TTLs, seconds. MAP_STALE_SECONDS < MAP_HIDE_SECONDS <
-# MAP_EVICT_SECONDS must hold. MAP_EVICT_SECONDS should match this
-# deployment's flight_ttl_seconds (core Redis's config:flight_ttl_seconds).
-MAP_STALE_SECONDS=${MAP_STALE_SECONDS}
-MAP_HIDE_SECONDS=${MAP_HIDE_SECONDS}
-MAP_EVICT_SECONDS=${MAP_EVICT_SECONDS}
 
 # Optional "center" reference point (on-map marker, initial camera position,
 # "Return to center"). Leave both blank to disable.
@@ -2167,7 +2154,9 @@ do_upgrade() {
     # Rewrite SKYFOLLOWER_VERSION in place; every other line, including
     # operator edits, is left as-is. Also renames the map role's old
     # MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys to MAP_CENTER_LATITUDE/
-    # MAP_CENTER_LONGITUDE -- a no-op on every non-map role dir.
+    # MAP_CENTER_LONGITUDE, and drops the retired MAP_STALE_SECONDS/
+    # MAP_HIDE_SECONDS/MAP_EVICT_SECONDS lines -- both no-ops on every
+    # non-map role dir.
     local tmp role_compose=""
     case "$(basename "$role_dir")" in
       receiver|message-processor) role_compose="$(role_compose_files "$(basename "$role_dir")")" ;;
@@ -2176,6 +2165,10 @@ do_upgrade() {
     awk -v v="$IMAGE_VERSION" -v cf="$role_compose" '
       cf != "" && /^COMPOSE_FILE=/ { print "COMPOSE_FILE=" cf; next }
       /^SKYFOLLOWER_VERSION=/ { print "SKYFOLLOWER_VERSION=" v; next }
+      /^MAP_(STALE|HIDE|EVICT)_SECONDS=/ { next }
+      /^# Lifecycle TTLs, seconds\. MAP_STALE_SECONDS/ { skip_note = 1; next }
+      skip_note && /^# / { next }
+      { skip_note = 0 }
       /^MAP_HOME_LATITUDE=/ { sub(/^MAP_HOME_LATITUDE=/, "MAP_CENTER_LATITUDE="); print; next }
       /^MAP_HOME_LONGITUDE=/ { sub(/^MAP_HOME_LONGITUDE=/, "MAP_CENTER_LONGITUDE="); print; next }
       { print }

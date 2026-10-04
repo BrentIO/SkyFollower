@@ -385,25 +385,16 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
             f"MAP_CENTER_LONGITUDE must be between -180 and 180 (got {center_longitude!r})"
         )
         center_longitude = None
-    map_stale_seconds = loader.integer("MAP_STALE_SECONDS", 15)
-    map_hide_seconds = loader.integer("MAP_HIDE_SECONDS", 60)
-    map_evict_seconds = loader.integer("MAP_EVICT_SECONDS", 300)
-    # The three-stage lifecycle (see map/README.md) only makes sense in this
-    # order; checked here so a misconfigured .env fails at startup instead
-    # of producing an aircraft that disappears before it ever goes grey.
-    if not (map_stale_seconds < map_hide_seconds < map_evict_seconds):
-        loader.problems.append(
-            "MAP_STALE_SECONDS < MAP_HIDE_SECONDS < MAP_EVICT_SECONDS must hold "
-            f"(got {map_stale_seconds}, {map_hide_seconds}, {map_evict_seconds})"
-        )
+    for legacy in ("MAP_STALE_SECONDS", "MAP_HIDE_SECONDS", "MAP_EVICT_SECONDS"):
+        if loader._environ.get(legacy, "").strip():
+            logger.warning(
+                "%s is deprecated and ignored; remove it from this host's .env.", legacy,
+            )
     block = {
         "map_listen_host": loader.string("MAP_LISTEN_HOST", "0.0.0.0"),
         "map_listen_port": loader.integer("MAP_LISTEN_PORT"),
         "map_http_host": loader.string("MAP_HTTP_HOST", "0.0.0.0"),
         "map_http_port": loader.integer("MAP_HTTP_PORT", 443),
-        "map_stale_seconds": map_stale_seconds,
-        "map_hide_seconds": map_hide_seconds,
-        "map_evict_seconds": map_evict_seconds,
         "map_center_latitude": center_latitude,
         "map_center_longitude": center_longitude,
     }

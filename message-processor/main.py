@@ -2004,6 +2004,7 @@ class MessageProcessor:
         payload = self._build_flight_notification_payload(flight)
         payload["type"] = "metadata"
         payload["processor_id"] = self._id
+        payload["flight_ttl_seconds"] = self._flight_ttl_seconds
         self._map_udp.send(payload)
         flight.map_metadata_hash = snapshot
 
@@ -2052,6 +2053,7 @@ class MessageProcessor:
                 payload = self._build_flight_notification_payload(flight)
             payload["type"] = "metadata"
             payload["processor_id"] = self._id
+            payload["flight_ttl_seconds"] = self._flight_ttl_seconds
             self._map_udp.send(payload)
 
     def _map_metadata_resend_loop(self) -> None:

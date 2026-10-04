@@ -457,7 +457,8 @@ liveness roster from *any* of the three, not just `heartbeat` -- see
   operator/registrant/origin/destination/force_archive omitted) minus the
   `rule` key, via a shared `_build_flight_notification_payload()` helper —
   see `Flight.map_metadata_hash`, persisted across messages, for how a
-  change is detected -- plus `processor_id`. Independently of that
+  change is detected -- plus `processor_id` and `flight_ttl_seconds`
+  (the map service adopts its evict window from the first one it sees). Independently of that
   change-gated path, a dedicated `_map_metadata_resend_loop` also resends
   every currently-active flight's `metadata` datagram unconditionally
   (skipping any flight whose `last_message` is older than `flight_ttl_seconds` by
@@ -470,7 +471,7 @@ liveness roster from *any* of the three, not just `heartbeat` -- see
   `metadata` datagram for its entire duration; since UDP delivery isn't
   confirmed and the map service's own Redis has no persistence, this
   periodic resend is what actually lets a map-service restart recover a
-  still-active flight's full metadata within one `MAP_EVICT_SECONDS`
+  still-active flight's full metadata within one `flight_ttl_seconds`
   window, not just its position.
 - **`heartbeat`** -- `{"type": "heartbeat", "processor_id": "mp-1",
   "ts": 1725720000.0}`. A fixed-interval liveness beacon from a
