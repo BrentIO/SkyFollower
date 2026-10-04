@@ -3,9 +3,8 @@ name: skyfollower-message-processor
 # Interpolated from this host's .env (written by
 # scripts/install.sh). Named one variable at a time rather than
 # `env_file: .env`, so a container only ever holds the values it reads.
-# MESSAGE_PROCESSOR_ID is not here: each generated service below sets it as
-# a literal, since it's the one thing that differs per instance and is
-# decided by install.sh at generation time, not read from .env.
+# MESSAGE_PROCESSOR_ID is not here: it differs per instance and comes from
+# each instance's own message-processors/{id}.env.
 x-message-processor-environment: &message-processor-environment
   LOG_LEVEL: ${LOG_LEVEL:-info}
   LATITUDE: ${LATITUDE}
@@ -33,13 +32,14 @@ x-message-processor-environment: &message-processor-environment
   # anomaly.
   CAPTURE_RAW_FRAMES: ${CAPTURE_RAW_FRAMES:-false}
 
-# Everything identical across instances. What differs per instance is its
+# Template every message processor extends. What differs per instance is its
 # fleet-wide ID, used verbatim -- with no local/global translation -- as the
 # compose service name, container name, RabbitMQ queue name, Redis
-# heartbeat key, and data directory. scripts/install.sh appends one
-# concrete service block below per fleet ID this node hosts; see
-# collect_message_processor_env()'s "Are you replacing an existing message
-# processor?" and fleet-count prompts.
+# heartbeat key, and data directory. scripts/install.sh generates
+# docker-compose.instances.yaml next to this file with one service per ID
+# (container name, ./data/skyfollower-message-processor-{id} data
+# directory, env_file ./message-processors/{id}.env), so this file holds no
+# per-host content.
 #
 # deploy.replicas cannot substitute for this. A replica's hostname is its
 # container ID rather than an ordinal, so there is nothing inside the
@@ -48,22 +48,25 @@ x-message-processor-environment: &message-processor-environment
 # not substituted by `docker compose up`. Replicas would also share one
 # volume definition, which means one SQLite active store written by N
 # processes with N independent recovery loops.
-x-message-processor: &message-processor
-  image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
-  restart: unless-stopped
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  # RAM-backed, not the container's writable layer -- the healthcheck
-  # heartbeat file is rewritten every 15s and must never hit the host's
-  # eMMC/SD storage the way /app/data (the active flight store) legitimately does.
-  tmpfs:
-    - /app/health
-  healthcheck:
-    test: ["CMD", "python", "/app/healthcheck.py"]
-    interval: 15s
-    timeout: 5s
-    retries: 3
-    start_period: 30s
+services:
+  message-processor:
+    profiles: ["template"]
+    environment: *message-processor-environment
+    image: ghcr.io/brentio/skyfollower-message-processor:${SKYFOLLOWER_VERSION:-latest}
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # RAM-backed, not the container's writable layer -- the healthcheck
+    # heartbeat file is rewritten every 15s and must never hit the host's
+    # eMMC/SD storage the way /app/data (the active flight store) legitimately does.
+    tmpfs:
+      - /app/health
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 # Slots inside the RabbitMQ consistent-hash exchange are positional,
 # assigned in the order processors bind, and stable across restarts once
@@ -71,10 +74,3 @@ x-message-processor: &message-processor
 # unbinding from the middle reshuffles ~68% of aircraft, while merely
 # stopping a container leaves its binding intact and costs nothing. See
 # receiver/README.md's "Remove from the end, never the middle" guidance.
-#
-# No services are declared in this repo-provided template -- it exists only
-# to hold the two anchors above. scripts/install.sh appends one service
-# block per fleet ID immediately below this line the first time it fetches
-# this file for a node, and leaves already-appended blocks (and any
-# instance they represent) untouched on a later re-run that only adds more.
-services:
