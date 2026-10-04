@@ -1163,6 +1163,9 @@ class MessageProcessor:
             # _update_flight anyway with a minimal stand-in `data`, so it's
             # still recorded as a raw frame against this icao_hex.
             data = {"icao_hex": msg.icao_hex}
+            with self._db_lock:
+                self._update_flight(data, msg, decoded=False)
+            return
         with self._db_lock:
             self._update_flight(data, msg)
 
@@ -1365,7 +1368,7 @@ class MessageProcessor:
 
         return data if len(data) > 1 else None
 
-    def _update_flight(self, data: dict, msg: InboundMessage) -> None:
+    def _update_flight(self, data: dict, msg: InboundMessage, decoded: bool = True) -> None:
         self._message_clock = max(self._message_clock, msg.received_at)
 
         flight = Flight(self._db)
@@ -1449,7 +1452,7 @@ class MessageProcessor:
         # for an out-of-order message -- unlike the lag check, this catches
         # a message that's "fresh enough" but older than what's already
         # shown, which would visibly snap the aircraft backward on the map.
-        if not out_of_order:
+        if decoded and not out_of_order:
             self._publish_map_position(flight, data, msg.received_at)
 
         if "squawk" in data and not flight.squawk:
@@ -2035,14 +2038,14 @@ class MessageProcessor:
     def _resend_all_map_metadata(self) -> None:
         """Unconditional counterpart to _maybe_publish_map_metadata: resends
         every active flight's metadata regardless of whether anything
-        changed. Deliberately does not touch flight.map_metadata_hash,
+        changed, skipping flights past flight_ttl_seconds by wall clock. Deliberately does not touch flight.map_metadata_hash,
         which stays owned by the change-gated path -- a real change still
         goes out immediately, not just on this periodic tick."""
         if not self._map_udp.enabled:
             return
         with self._db_lock:
             cur = self._db.cursor()
-            cur.execute("SELECT icao_hex FROM flights")
+            cur.execute("SELECT icao_hex FROM flights WHERE last_message >= ?", (time.time() - self._flight_ttl_seconds,))
             active = [row[0] for row in cur.fetchall()]
 
         for icao_hex in active:

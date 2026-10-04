@@ -5391,12 +5391,14 @@ class TestMapMetadataResendLoop:
     _maybe_publish_map_metadata. See
     message_processor.main.MAP_METADATA_RESEND_INTERVAL_SECONDS."""
 
-    def _make_flight(self, p, icao_hex: str) -> Flight:
+    def _make_flight(self, p, icao_hex: str, last_message: Optional[float] = None) -> Flight:
+        if last_message is None:
+            last_message = time.time()
         f = Flight(p._db)
         f.icao_hex = icao_hex
         f.flight_id = f"fid-{icao_hex}"
-        f.first_message = 1757000000.0
-        f.last_message = 1757000000.0
+        f.first_message = last_message
+        f.last_message = last_message
         f.total_messages = 1
         f.receiver_sources = ["1090"]
         f.aircraft = {"icao_hex": icao_hex, "registration": "N12345"}
@@ -5447,6 +5449,18 @@ class TestMapMetadataResendLoop:
         assert {s["aircraft"]["icao_hex"] for s in sent} == {"A8AE7F", "B00000"}
         for s in sent:
             assert s["processor_id"] == "0"
+
+    def test_skips_flights_past_ttl_by_wall_clock(self):
+        p, _ = _make_processor()
+        mock_sock = _enable_map_udp(p)
+        p._message_clock = 1.0
+        self._make_flight(p, "A8AE7F")
+        self._make_flight(p, "B00000", last_message=time.time() - p._flight_ttl_seconds - 5)
+
+        self._run_one_resend_tick(p)
+
+        sent = [json.loads(c.args[0].decode("utf-8")) for c in mock_sock.sendto.call_args_list]
+        assert [s["aircraft"]["icao_hex"] for s in sent] == ["A8AE7F"]
 
     def test_fires_even_when_nothing_changed_since_the_last_send(self):
         """The whole point of the periodic sweep: a flight whose metadata
@@ -5803,6 +5817,18 @@ class TestCaptureRawFramesOn:
         assert f.raw_frames[0].decoded is True
         assert f.raw_frames[0].raw == msg.raw
         assert f.raw_frames[0].source == "1090"
+
+    def test_undecoded_stand_in_frame_never_publishes_to_map(self):
+        p, _ = self._processor()
+        mock_sock = _enable_map_udp(p)
+        msg = InboundMessage(raw="5D" + "00" * 6, icao_hex="A8AE7F", received_at=time.time(), source="1090")
+
+        with patch.object(p, "_decode_message", return_value=None):
+            p._process(msg)
+
+        types = [json.loads(c.args[0].decode("utf-8"))["type"] for c in mock_sock.sendto.call_args_list]
+        assert "position" not in types
+        assert Flight(p._db).load("A8AE7F")
 
     def test_process_routes_a_decode_failure_into_update_flight(self):
         """The core #1842 behavior change while the flag is on: a message
