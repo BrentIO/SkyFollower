@@ -183,10 +183,9 @@ DEFAULT_FLIGHT_TTL_SECONDS = 300
 # within the window into one frame.
 MAP_WS_BATCH_INTERVAL_SECONDS = 0.25
 
-# Fallback for MAP_UDP_MIN_POSITION_INTERVAL_SECONDS when unset: minimum
-# spacing, per icao_hex, between `position` datagrams the message
+# Minimum spacing, per icao_hex, between `position` datagrams the message
 # processor's _MapUdpPublisher sends toward the map service.
-DEFAULT_MAP_UDP_MIN_POSITION_INTERVAL_SECONDS = 1
+MAP_UDP_POSITION_MIN_INTERVAL_SECONDS = 1
 
 # How often each message processor's _map_heartbeat_loop ticks. The loop
 # skips sending a `heartbeat` datagram on a tick if a `position`/`metadata`

@@ -947,8 +947,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--position-rate", type=float, default=2.0,
-        help="Position datagrams per second, PER AIRCRAFT. Deliberately allowed to exceed the real "
-        "MAP_UDP_MIN_POSITION_INTERVAL_SECONDS throttle (default 1/s in message-processor) -- "
+        help="Position datagrams per second, PER AIRCRAFT. Deliberately allowed to exceed the "
+        "message processor's fixed 1/s per-aircraft position throttle -- "
         "finding where that breaks is the point (default: 2.0)",
     )
     parser.add_argument(

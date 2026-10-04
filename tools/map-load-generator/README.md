@@ -301,7 +301,7 @@ the three, matching the real traffic-reduction design (see
 | `--host` | Yes | — | Target `map` instance's UDP listen host. |
 | `--port` | No | `30500` | Target `map` instance's UDP listen port (`MAP_LISTEN_PORT`). |
 | `--aircraft-count` | No | `10` | Number of simulated aircraft, including the one balloon. |
-| `--position-rate` | No | `2.0` | Position datagrams per second, **per aircraft**. Deliberately allowed to exceed the real `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` throttle (default 1/s in message-processor) — finding where that breaks is the point. |
+| `--position-rate` | No | `2.0` | Position datagrams per second, **per aircraft**. Deliberately allowed to exceed the message processor's fixed 1/s per-aircraft position throttle — finding where that breaks is the point. |
 | `--metadata-interval` | No | `30.0` | Seconds between metadata resends per aircraft. |
 | `--processor-id` | No | `load-gen-1` | Fake `processor_id` stamped on every packet. A second, one-shot `processor_id` (this value + `-secondary`) sends exactly one heartbeat at run start. |
 | `--duration` | No | `0` | Run length in seconds. `0` (or omitted) runs indefinitely until `Ctrl+C`/`SIGTERM`. |

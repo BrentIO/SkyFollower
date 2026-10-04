@@ -36,7 +36,6 @@ interpolated by Compose from this host's `.env` (written by
 | `MQTT_PASSWORD` | ❌ | — | |
 | `MAP_UDP_HOST` | ❌ | — | Destination host for the live position/metadata/heartbeat UDP feed toward the `map` service (see [Map UDP Publisher](#map-udp-publisher)). Leave unset to disable entirely |
 | `MAP_UDP_PORT` | ❌ | — | |
-| `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` | ❌ | `1` | Minimum spacing, per aircraft, between `position` sends (see [Map UDP Publisher](#map-udp-publisher)). Does not throttle `metadata` sends |
 | `LATITUDE` | ✅ | — | Receiver location latitude (decimal degrees). Used as the CPR reference for surface/taxi position decoding |
 | `LONGITUDE` | ✅ | — | Receiver location longitude (decimal degrees) |
 | `CAPTURE_RAW_FRAMES` | ❌ | `false` | Opt-in forensic raw-frame capture (see [Raw Frame Capture](#raw-frame-capture-forensic) below). Read once at startup; restart to pick up a changed value |
@@ -424,7 +423,7 @@ and MQTT topics), which the map service uses to update a per-processor
 liveness roster from *any* of the three, not just `heartbeat` -- see
 [map/README.md](../map/README.md)'s "Processor Roster" section:
 
-- **`position`** -- sent at most once per `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS`
+- **`position`** -- sent at most once per `MAP_UDP_POSITION_MIN_INTERVAL_SECONDS` (`shared/timing.py`)
   (default 1s) per aircraft -- sub-second position updates aren't
   perceptible on a map, and this is the single biggest lever on UDP
   volume / map-Redis write rate. Throttled per `icao_hex` on the source
@@ -441,7 +440,7 @@ liveness roster from *any* of the three, not just `heartbeat` -- see
 - **`metadata`** -- sent the first time a flight's ident/aircraft
   enrichment/operator/registrant/squawk/origin/destination are known, and
   again whenever one of those changes (`_maybe_publish_map_metadata`).
-  Never throttled by `MAP_UDP_MIN_POSITION_INTERVAL_SECONDS` -- this
+  Never throttled by `MAP_UDP_POSITION_MIN_INTERVAL_SECONDS` -- this
   change-gating is already its own throttle. Reuses the exact same
   `CompletedFlight`-shape payload the `SkyFollower/rule/{IDENTIFIER}` MQTT
   notification publishes (positions/velocities/`_id` popped, empty
