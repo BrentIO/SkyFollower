@@ -1,14 +1,12 @@
 """
 Guards scripts/install.sh's `--upgrade` re-fetch of each role's compose
-file (#1961): do_upgrade() calls the existing fetch_role() per role
-directory before the pull/up step, reusing its no-clobber logic rather
-than reinventing it.
+file: do_upgrade() calls fetch_role() per role directory before the
+pull/up step.
 
 These assertions exercise do_upgrade() + fetch_role() together (stubbing
 `docker` and `http_get` so no real compose/pull/up or network fetch
-happens) and confirm the two compose files with per-instance generated
-service blocks, and any config/* file already derived from a .example
-template, are still never clobbered by an upgrade.
+happens) and confirm every compose file is refreshed while per-instance env files and
+any config/* file already derived from a .example template are not.
 """
 
 from __future__ import annotations
@@ -28,7 +26,13 @@ def _extract_function(name: str) -> str:
 
 
 _FUNCS = "\n".join(
-    _extract_function(n) for n in ("fetch_role", "role_files", "role_data_dirs", "do_upgrade")
+    _extract_function(n)
+    for n in (
+        "fetch_role", "role_files", "role_compose_files", "role_data_dirs", "do_upgrade",
+        "convert_generated_blocks", "init_instances_compose", "instance_ids",
+        "write_instance_env", "write_receiver_env", "write_message_processor_env",
+        "append_receiver_service", "append_message_processor_service",
+    )
 )
 
 # docker is stubbed to a no-op: these tests only care which files
@@ -41,6 +45,7 @@ set -eu
 DEV_BUILD=0
 BRANCH=""
 REF="main"
+INSTANCES_COMPOSE_FILE="docker-compose.instances.yaml"
 docker() { return 0; }
 http_get() { echo "FETCHED:${1}"; }
 """ + _FUNCS
@@ -63,7 +68,7 @@ class TestComposeRefetchedOnUpgrade:
         role_dir = tmp_path / "core"
         role_dir.mkdir()
         (role_dir / ".env").write_text("SKYFOLLOWER_VERSION=2026.01.01\n")
-        (role_dir / "docker-compose.core.yaml").write_text("# stale pre-#1907 compose file\n")
+        (role_dir / "docker-compose.core.yaml").write_text("# stale compose file\n")
 
         result = _run_upgrade(tmp_path)
         assert result.returncode == 0, result.stderr
@@ -98,50 +103,42 @@ class TestComposeRefetchedOnUpgrade:
         assert example.read_text().startswith("FETCHED:")
 
 
-class TestNoClobberPreservedDuringUpgrade:
-    def test_message_processor_generated_blocks_survive_upgrade(self, tmp_path):
-        """The whole reason fetch_role() no-clobbers this file: blind
-        re-fetching would silently discard every already-running instance's
-        generated service block. An upgrade must not regress that."""
+class TestInstanceRoleComposeRefetched:
+    def test_message_processor_compose_is_refetched_and_instances_kept(self, tmp_path):
         role_dir = tmp_path / "message-processor"
         role_dir.mkdir()
-        (role_dir / ".env").write_text("SKYFOLLOWER_VERSION=2026.01.01\n")
-        compose = role_dir / "docker-compose.message-processor.yaml"
-        generated = (
-            "name: skyfollower-message-processor\n"
-            "services:\n"
-            "  skyfollower-message-processor-1:\n"
-            "    environment:\n"
-            "      MESSAGE_PROCESSOR_ID: 1\n"
-        )
-        compose.write_text(generated)
+        (role_dir / ".env").write_text("SKYFOLLOWER_VERSION=2026.01.01\nCOMPOSE_FILE=docker-compose.message-processor.yaml\n")
+        (role_dir / "message-processors").mkdir()
+        (role_dir / "message-processors" / "1.env").write_text("MESSAGE_PROCESSOR_ID=1\n")
+        instances = role_dir / "docker-compose.instances.yaml"
+        instances.write_text("services:\n  skyfollower-message-processor-1: {}\n")
+        (role_dir / "docker-compose.message-processor.yaml").write_text("# stale\n")
 
         result = _run_upgrade(tmp_path)
         assert result.returncode == 0, result.stderr
 
-        assert compose.read_text() == generated
-        assert "FETCHED:" not in compose.read_text()
+        compose = (role_dir / "docker-compose.message-processor.yaml").read_text()
+        assert compose.startswith("FETCHED:")
+        assert instances.read_text() == "services:\n  skyfollower-message-processor-1: {}\n"
+        assert (role_dir / "message-processors" / "1.env").read_text() == "MESSAGE_PROCESSOR_ID=1\n"
+        assert "COMPOSE_FILE=docker-compose.message-processor.yaml:docker-compose.instances.yaml" in (role_dir / ".env").read_text()
 
-    def test_receiver_generated_blocks_survive_upgrade(self, tmp_path):
+    def test_receiver_compose_is_refetched_and_instances_kept(self, tmp_path):
         role_dir = tmp_path / "receiver"
         role_dir.mkdir()
         (role_dir / ".env").write_text("SKYFOLLOWER_VERSION=2026.01.01\n")
-        compose = role_dir / "docker-compose.receiver.yaml"
-        generated = (
-            "name: skyfollower-receiver\n"
-            "services:\n"
-            "  skyfollower-receiver-attic-pi:\n"
-            "    environment:\n"
-            "      RECEIVER_NAME: ATTIC-PI\n"
-        )
-        compose.write_text(generated)
+        (role_dir / "receivers").mkdir()
+        (role_dir / "receivers" / "attic-pi.env").write_text("RECEIVER_NAME='ATTIC-PI'\n")
+        (role_dir / "docker-compose.receiver.yaml").write_text("# stale\n")
 
         result = _run_upgrade(tmp_path)
         assert result.returncode == 0, result.stderr
 
-        assert compose.read_text() == generated
-        assert "FETCHED:" not in compose.read_text()
+        assert (role_dir / "docker-compose.receiver.yaml").read_text().startswith("FETCHED:")
+        assert (role_dir / "receivers" / "attic-pi.env").read_text() == "RECEIVER_NAME='ATTIC-PI'\n"
 
+
+class TestNoClobberPreservedDuringUpgrade:
     def test_config_file_already_derived_from_example_is_not_clobbered(self, tmp_path):
         """A config/* file the operator has (or install already has) turned
         into a real file from its .example template must survive -- only

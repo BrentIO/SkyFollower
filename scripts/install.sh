@@ -664,6 +664,19 @@ role_files() {
   esac
 }
 
+INSTANCES_COMPOSE_FILE="docker-compose.instances.yaml"
+
+role_compose_files() {
+  case "$1" in
+    receiver|message-processor)
+      echo "$(role_files "$1" | awk '{print $1}'):${INSTANCES_COMPOSE_FILE}"
+      ;;
+    *)
+      role_files "$1" | awk '{print $1}'
+      ;;
+  esac
+}
+
 role_data_dirs() {
   case "$1" in
     receiver)
@@ -695,21 +708,12 @@ fetch_role() {
   local raw_base="https://raw.githubusercontent.com/BrentIO/SkyFollower/${REF}"
   local main_base="https://raw.githubusercontent.com/BrentIO/SkyFollower/main"
 
+  convert_generated_blocks "$role" "$role_dir"
+
   echo "Fetching files for ${role}..."
   for rel_path in $(role_files "$role"); do
     local dest_path="${role_dir}/${rel_path}"
     mkdir -p "$(dirname "$dest_path")"
-    # The message-processor/receiver compose files hold generated
-    # per-instance service blocks once collect_*_env() has run --
-    # re-fetching would discard them, so no-clobber like config/*.example
-    # below (delete by hand to pick up template/anchor changes).
-    if [ -e "$dest_path" ] && {
-      { [ "$role" = "message-processor" ] && [ "$rel_path" = "docker-compose.message-processor.yaml" ]; } ||
-      { [ "$role" = "receiver" ] && [ "$rel_path" = "docker-compose.receiver.yaml" ]; }
-    }; then
-      echo "  ${rel_path} (already exists -- left as-is, holds this node's generated service blocks)"
-      continue
-    fi
     echo "  ${rel_path}"
     if http_get "${raw_base}/${rel_path}" > "$dest_path" 2>/dev/null; then
       continue
@@ -752,16 +756,16 @@ fetch_role() {
 
 collect_receiver_env() {
   local role_dir="$1" env_file="${1}/.env"
-  local compose_file="${role_dir}/docker-compose.receiver.yaml"
   echo "-- ${role_dir} (receiver) --"
+  init_instances_compose "$role_dir"
 
   # One or more receiver instances share this host and this .env. Each
   # instance is a name (Home Assistant label + Redis identity) plus its own
-  # RECEIVER_SOURCES, baked into a generated service block in
-  # docker-compose.receiver.yaml; connection settings below are shared.
-  # Re-running appends any name whose slug isn't already a block.
+  # RECEIVER_SOURCES, written to receivers/{slug}.env with a generated
+  # service in docker-compose.instances.yaml; connection settings below are
+  # shared. Re-running adds any name whose slug has no env file yet.
   local existing_slugs
-  existing_slugs="$(existing_receiver_slugs "$compose_file")"
+  existing_slugs="$(instance_ids "${role_dir}/receivers")"
 
   local first=1
   while true; do
@@ -778,11 +782,14 @@ collect_receiver_env() {
     if [ -z "$slug" ]; then
       record_problem "RECEIVER_NAME must contain at least one letter or number (got '${RECEIVER_NAME}')"
     elif printf '%s\n' "$existing_slugs" | grep -qx "$slug"; then
-      echo "  skyfollower-receiver-${slug} already has a service block in ${compose_file} -- leaving it as-is."
+      echo "  skyfollower-receiver-${slug} is already configured in ${role_dir}/receivers/${slug}.env -- leaving it as-is."
+    elif [[ "$RECEIVER_NAME" == *"'"* ]]; then
+      record_problem "RECEIVER_NAME must not contain a single quote (got '${RECEIVER_NAME}')"
     else
       RECEIVER_SOURCES="$(prompt_receiver_sources "")"
       mkdir -p "${role_dir}/data/skyfollower-receiver-${slug}"
-      append_receiver_service "$compose_file" "$RECEIVER_NAME" "$RECEIVER_SOURCES"
+      write_receiver_env "$role_dir" "$slug" "$RECEIVER_NAME" "$RECEIVER_SOURCES"
+      append_receiver_service "$role_dir" "$slug"
       existing_slugs="$(printf '%s\n%s' "$existing_slugs" "$slug")"
       echo "  Added skyfollower-receiver-${slug}."
     fi
@@ -835,8 +842,8 @@ collect_receiver_env() {
 # Which receivers run on this node -- and each one's RECEIVER_NAME
 # (Home Assistant label + Redis identity) and RECEIVER_SOURCES
 # (comma-separated host:port:source triples; source is 1090, 978, or
-# EXTERNAL) -- lives in docker-compose.receiver.yaml as generated service
-# blocks, not here. Re-run install.sh for the receiver role to add more.
+# EXTERNAL) -- lives in receivers/{name-slug}.env, not here. Re-run
+# install.sh for the receiver role to add more.
 # The connection settings below are shared across every instance.
 
 RABBITMQ_HOST=${RABBITMQ_HOST}
@@ -1199,69 +1206,150 @@ normalize_message_processor_id() {
   printf '%s' "$id"
 }
 
-existing_message_processor_ids() {
-  # IDs already holding a generated service block, one per line -- empty
-  # (not an error) if the file doesn't exist yet. Lets a re-run only
-  # append IDs it doesn't already find.
-  local compose_file="$1"
-  [ -f "$compose_file" ] || return 0
-  grep -E '^  skyfollower-message-processor-[0-9]+:' "$compose_file" 2>/dev/null \
-    | sed -E 's/^  skyfollower-message-processor-([0-9]+):.*/\1/' || true
+instance_ids() {
+  local dir="$1" f
+  for f in "${dir}"/*.env; do
+    [ -e "$f" ] || continue
+    basename "$f" .env
+  done
+}
+
+write_instance_env() {
+  local path="$1"
+  shift
+  mkdir -p "$(dirname "$path")"
+  (umask 077; printf '%s\n' "$@" > "$path")
+}
+
+init_instances_compose() {
+  local file="${1}/${INSTANCES_COMPOSE_FILE}"
+  [ -f "$file" ] || printf 'services:\n' > "$file"
 }
 
 append_message_processor_service() {
-  # References this file's own x-message-processor anchors -- YAML anchors
-  # only resolve within the file that defines them, so this can't be a
-  # second compose file merged in via COMPOSE_FILE.
-  local compose_file="$1" id="$2"
-  cat >> "$compose_file" <<SERVICE_EOF
+  local role_dir="$1" id="$2"
+  cat >> "${role_dir}/${INSTANCES_COMPOSE_FILE}" <<SERVICE_EOF
 
   skyfollower-message-processor-${id}:
-    <<: *message-processor
+    extends:
+      file: docker-compose.message-processor.yaml
+      service: message-processor
+    profiles: !reset []
     container_name: skyfollower-message-processor-${id}
+    env_file: ./message-processors/${id}.env
     volumes:
       - ./data/skyfollower-message-processor-${id}:/app/data
-    environment:
-      <<: *message-processor-environment
-      MESSAGE_PROCESSOR_ID: ${id}
 SERVICE_EOF
-}
-
-existing_receiver_slugs() {
-  # Name-slugs already holding a generated service block, one per line --
-  # empty (not an error) if the file doesn't exist yet.
-  local compose_file="$1"
-  [ -f "$compose_file" ] || return 0
-  grep -E '^  skyfollower-receiver-[a-z0-9_-]+:' "$compose_file" 2>/dev/null \
-    | sed -E 's/^  skyfollower-receiver-([a-z0-9_-]+):.*/\1/' || true
 }
 
 append_receiver_service() {
-  # RECEIVER_NAME keeps the operator's original casing; the sanitized slug
-  # is used only for the service/container name and data directory.
-  local compose_file="$1" name="$2" sources="$3" slug
-  slug="$(sanitize_identifier "$name")"
-  cat >> "$compose_file" <<SERVICE_EOF
+  local role_dir="$1" slug="$2"
+  cat >> "${role_dir}/${INSTANCES_COMPOSE_FILE}" <<SERVICE_EOF
 
   skyfollower-receiver-${slug}:
-    <<: *receiver
+    extends:
+      file: docker-compose.receiver.yaml
+      service: receiver
+    profiles: !reset []
     container_name: skyfollower-receiver-${slug}
+    env_file: ./receivers/${slug}.env
     volumes:
       - ./data/skyfollower-receiver-${slug}:/app/data
-    environment:
-      <<: *receiver-environment
-      RECEIVER_NAME: ${name}
-      RECEIVER_SOURCES: "${sources}"
 SERVICE_EOF
+}
+
+write_receiver_env() {
+  local role_dir="$1" slug="$2" name="$3" sources="$4"
+  write_instance_env "${role_dir}/receivers/${slug}.env" \
+    "RECEIVER_NAME='${name}'" \
+    "RECEIVER_SOURCES='${sources}'"
+}
+
+write_message_processor_env() {
+  write_instance_env "${1}/message-processors/${2}.env" "MESSAGE_PROCESSOR_ID=${2}"
+}
+
+convert_generated_blocks() {
+  local role="$1" role_dir="$2" prefix subdir compose
+  case "$role" in
+    receiver)
+      prefix="skyfollower-receiver-"; subdir="receivers"
+      ;;
+    message-processor)
+      prefix="skyfollower-message-processor-"; subdir="message-processors"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+  compose="${role_dir}/$(role_files "$role")"
+  [ -f "$compose" ] || return 0
+  grep -qE "^  ${prefix}[a-z0-9_-]+:" "$compose" || return 0
+
+  echo "Converting ${compose} to per-instance env files..."
+  [ -e "${compose}.bak" ] || cp -p "$compose" "${compose}.bak"
+  init_instances_compose "$role_dir"
+
+  local slug key value
+  while IFS=$'\t' read -r slug key value; do
+    [ -n "$slug" ] || continue
+    case "$key" in
+      id)
+        [ -e "${role_dir}/${subdir}/${slug}.env" ] || write_message_processor_env "$role_dir" "$slug"
+        ;;
+      receiver)
+        [ -e "${role_dir}/${subdir}/${slug}.env" ] || {
+          local name="${value%%$'\x01'*}" sources="${value#*$'\x01'}"
+          case "${name}${sources}" in
+            *"'"*)
+              echo "Cannot convert ${prefix}${slug}: its name or sources contain a single quote. Edit ${compose} by hand and re-run." >&2
+              exit 1
+              ;;
+          esac
+          write_receiver_env "$role_dir" "$slug" "$name" "$sources"
+        }
+        ;;
+    esac
+    if ! grep -qE "^  ${prefix}${slug}:" "${role_dir}/${INSTANCES_COMPOSE_FILE}"; then
+      mkdir -p "${role_dir}/data/${prefix}${slug}"
+      if [ "$role" = "receiver" ]; then
+        append_receiver_service "$role_dir" "$slug"
+      else
+        append_message_processor_service "$role_dir" "$slug"
+      fi
+    fi
+  done < <(awk -v p="$prefix" -v role="$role" '
+    function unquote(v) {
+      if (v ~ /^".*"$/ || v ~ /^'"'"'.*'"'"'$/) v = substr(v, 2, length(v) - 2)
+      return v
+    }
+    /^[^ ]/ { slug = ""; next }
+    /^  [A-Za-z0-9_-]+:/ {
+      h = $0; sub(/^  /, "", h); sub(/:.*/, "", h)
+      slug = ""; name = ""; sources = ""
+      if (index(h, p) == 1) {
+        slug = substr(h, length(p) + 1)
+        if (role == "message-processor") print slug "\tid\t"
+      }
+      next
+    }
+    slug != "" && role == "receiver" && /^      RECEIVER_NAME: / {
+      name = $0; sub(/^      RECEIVER_NAME: /, "", name); name = unquote(name)
+    }
+    slug != "" && role == "receiver" && /^      RECEIVER_SOURCES: / {
+      sources = $0; sub(/^      RECEIVER_SOURCES: /, "", sources); sources = unquote(sources)
+      print slug "\treceiver\t" name "\001" sources
+    }
+  ' "$compose")
 }
 
 collect_message_processor_env() {
   local role_dir="$1" env_file="${1}/.env"
-  local compose_file="${role_dir}/docker-compose.message-processor.yaml"
   echo "-- ${role_dir} (message-processor) --"
+  init_instances_compose "$role_dir"
 
   local existing_ids
-  existing_ids="$(existing_message_processor_ids "$compose_file")"
+  existing_ids="$(instance_ids "${role_dir}/message-processors")"
 
   local replacing=""
   if [ "$NON_INTERACTIVE" -eq 1 ]; then
@@ -1331,11 +1419,12 @@ collect_message_processor_env() {
   if [ "${#ids_to_add[@]}" -gt 0 ]; then
     for id in "${ids_to_add[@]}"; do
       if printf '%s\n' "$existing_ids" | grep -qx "$id"; then
-        echo "  skyfollower-message-processor-${id} already has a service block in ${compose_file} -- leaving it as-is."
+        echo "  skyfollower-message-processor-${id} is already configured in ${role_dir}/message-processors/${id}.env -- leaving it as-is."
         continue
       fi
       mkdir -p "${role_dir}/data/skyfollower-message-processor-${id}"
-      append_message_processor_service "$compose_file" "$id"
+      write_message_processor_env "$role_dir" "$id"
+      append_message_processor_service "$role_dir" "$id"
       echo "  Added skyfollower-message-processor-${id}."
     done
   fi
@@ -1382,8 +1471,8 @@ collect_message_processor_env() {
   cat >> "$env_file" <<ENV_EOF
 
 # Which processors run on this node -- and each one's MESSAGE_PROCESSOR_ID
-# -- lives in docker-compose.message-processor.yaml as generated service
-# blocks, not here. Re-run install.sh for this role to add more.
+# -- lives in message-processors/{id}.env, not here. Re-run install.sh for
+# this role to add more.
 
 # Receiver's reference position, used to decode locally-referenced CPR
 # positions. Decimal degrees.
@@ -1499,7 +1588,7 @@ ENV_EOF
 write_env_header() {
   local env_file="$1" role_dir="$2"
   local compose_file
-  compose_file="$(role_files "$ROLE_FOR_HEADER" | awk '{print $1}')"
+  compose_file="$(role_compose_files "$ROLE_FOR_HEADER")"
   # umask, not a chmod afterwards: never briefly world-readable.
   (
     umask 077
@@ -2070,16 +2159,22 @@ do_upgrade() {
     # images can never deliver a new service, label, or port mapping to
     # an existing deployment. basename is a reliable way back to the role
     # fetch_role expects, since default_folder_for_role() guarantees
-    # folder name == role name. fetch_role's own no-clobber logic applies
-    # unchanged here.
+    # folder name == role name.
+    # unchanged here. Receiver/message-processor installs that still hold
+    # generated service blocks are converted to env files first, inside
+    # fetch_role, before their compose file is replaced.
     fetch_role "$(basename "$role_dir")" "$role_dir"
     # Rewrite SKYFOLLOWER_VERSION in place; every other line, including
     # operator edits, is left as-is. Also renames the map role's old
     # MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys to MAP_CENTER_LATITUDE/
     # MAP_CENTER_LONGITUDE -- a no-op on every non-map role dir.
-    local tmp
+    local tmp role_compose=""
+    case "$(basename "$role_dir")" in
+      receiver|message-processor) role_compose="$(role_compose_files "$(basename "$role_dir")")" ;;
+    esac
     tmp="$(mktemp)"
-    awk -v v="$IMAGE_VERSION" '
+    awk -v v="$IMAGE_VERSION" -v cf="$role_compose" '
+      cf != "" && /^COMPOSE_FILE=/ { print "COMPOSE_FILE=" cf; next }
       /^SKYFOLLOWER_VERSION=/ { print "SKYFOLLOWER_VERSION=" v; next }
       /^MAP_HOME_LATITUDE=/ { sub(/^MAP_HOME_LATITUDE=/, "MAP_CENTER_LATITUDE="); print; next }
       /^MAP_HOME_LONGITUDE=/ { sub(/^MAP_HOME_LONGITUDE=/, "MAP_CENTER_LONGITUDE="); print; next }

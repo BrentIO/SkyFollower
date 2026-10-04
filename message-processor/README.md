@@ -9,8 +9,7 @@ routes completed flights to the `skyfollower-archive` queue (or a local SQLite f
 RabbitMQ is unavailable). One container equals one message processor instance;
 scale horizontally by adding message processor containers, whether on the
 same host or on separate hosts -- see `MESSAGE_PROCESSOR_ID` below for how
-`scripts/install.sh` generates each instance's service block in
-`docker-compose.message-processor.yaml`.
+`scripts/install.sh` generates each instance's env file and service.
 
 ![Message Processor architecture](./message-processor.svg)
 
@@ -57,10 +56,10 @@ to `/app/data`, a fixed, non-configurable bind mount -- see
 
 `MESSAGE_PROCESSOR_ID` is a single flat, fleet-wide sequential number -- there
 is exactly one ID per processor across the whole deployment, not a per-node
-prefix plus a local index. It's set per-service in
-`docker-compose.message-processor.yaml` as a literal (not read from `.env`
-via interpolation), because `scripts/install.sh` decides it at
-compose-generation time, not the Python process at first boot: the compose
+prefix plus a local index. It's set per instance in
+`message-processors/{id}.env` (referenced by that instance's `env_file`, not
+read from the shared `.env`), because `scripts/install.sh` decides it at
+generation time, not the Python process at first boot: the compose
 service name and container name are static values resolved at `docker
 compose up` time, so they can't depend on something a container only
 discovers after it's already running.
@@ -99,19 +98,30 @@ large RabbitMQ consistent-hash reshuffle (see
 "Remove from the end, never the middle" guidance). A random ID would solve
 cross-node uniqueness just as well but would destroy that property.
 
-`docker-compose.message-processor.yaml`, as fetched from the repo, holds only
-the shared `x-message-processor`/`x-message-processor-environment` anchors --
-no services. `scripts/install.sh`'s `collect_message_processor_env()` asks
+`docker-compose.message-processor.yaml`, as fetched from the repo, is static
+and re-fetched on every install and upgrade: the shared
+`x-message-processor-environment` anchor and one profile-gated
+`message-processor` template service that never runs on its own.
+`scripts/install.sh`'s `collect_message_processor_env()` asks
 whether this run is replacing an existing processor (adopts and confirms one
 specific ID) or adding new ones (asks how many are currently implemented
 fleet-wide and how many this host will add, then computes the new range as
-`existing_count+1` through `existing_count+num_new`), and appends one
-concrete service block per ID -- referencing this file's own anchors, since
-YAML anchors only resolve within the file that defines them -- to this node's
-copy of the file. Re-running it later to add more processors to the same
-node appends new blocks without touching already-running ones; the compose
-file is no-clobber fetched (only written the first time) for exactly this
-reason. See `docker-compose.message-processor.yaml`'s own comments for why
+`existing_count+1` through `existing_count+num_new`), and for each ID writes
+`message-processors/{id}.env` (mode `0600`, containing `MESSAGE_PROCESSOR_ID`)
+and a `skyfollower-message-processor-{id}` service in the generated
+`docker-compose.instances.yaml`, which extends the template with
+`container_name`, `env_file` and the data volume. The role's `.env` sets
+`COMPOSE_FILE` to both compose files. Re-running it later to add more
+processors to the same node only adds IDs with no env file yet and leaves
+already-running ones untouched.
+
+An install that still holds generated service blocks inside
+`docker-compose.message-processor.yaml` is converted by `install.sh --upgrade`
+before that file is replaced: each block becomes an env file and an entry in
+`docker-compose.instances.yaml`, the original is saved as
+`docker-compose.message-processor.yaml.bak`, and service names, container
+names and data directories are unchanged. See
+`docker-compose.message-processor.yaml`'s own comments for why
 `deploy.replicas` can't substitute for any of this (each replica would need
 its own volume and its own derivable ID, and Compose doesn't provide
 either).

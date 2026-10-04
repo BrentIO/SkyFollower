@@ -3,9 +3,8 @@ name: skyfollower-receiver
 # Interpolated from this host's .env (written by scripts/install.sh).
 # Named one variable at a time rather than `env_file: .env`, so a container
 # only ever holds the values it reads. RECEIVER_NAME / RECEIVER_SOURCES are
-# not here: each generated service block below sets them as literals, since
-# they are the only two values that differ per receiver instance and are
-# decided by install.sh at generation time, not read from .env.
+# not here: they differ per instance and come from each instance's own
+# receivers/{name-slug}.env.
 x-receiver-environment: &receiver-environment
   LOG_LEVEL: ${LOG_LEVEL:-info}
   RABBITMQ_HOST: ${RABBITMQ_HOST}
@@ -22,40 +21,28 @@ x-receiver-environment: &receiver-environment
   REDIS_PORT: ${REDIS_PORT:-6379}
   REDIS_PASSWORD: ${REDIS_PASSWORD:-}
 
-# Everything identical across instances on this host. What differs per
-# instance -- RECEIVER_NAME (Home Assistant label + Redis identity) and
-# RECEIVER_SOURCES -- is baked as a literal into each generated service
-# block, along with a per-instance data directory
-# (./data/skyfollower-receiver-{name-slug}) so each instance's fallback
-# queue and receiver_id file stay independent. scripts/install.sh appends
-# one concrete service block below per receiver this node hosts; re-run it
-# for the `receiver` role to add another.
-#
-# deploy.replicas cannot substitute for this: a replica's hostname is its
-# container ID, so there is nothing inside the container to derive a
-# distinct RECEIVER_NAME from, and N replicas would share one /app/data
-# bind mount -- one queue.db and one receiver_id written by N processes.
-x-receiver: &receiver
-  image: ghcr.io/brentio/skyfollower-receiver:${SKYFOLLOWER_VERSION:-latest}
-  restart: unless-stopped
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-  # RAM-backed, not the container's writable layer -- the healthcheck
-  # heartbeat file is rewritten every 15s and must never hit the host's
-  # eMMC/SD storage the way /app/data (the fallback queue) legitimately does.
-  tmpfs:
-    - /app/health
-  healthcheck:
-    test: ["CMD", "python", "/app/healthcheck.py"]
-    interval: 15s
-    timeout: 5s
-    retries: 3
-    start_period: 30s
-
-# No services in this repo-provided template -- it exists only to hold the
-# two anchors above. scripts/install.sh appends one service block per
-# receiver instance immediately below this line the first time it fetches
-# this file for a node, and leaves already-appended blocks untouched on a
-# later re-run that only adds more (delete the file by hand to pick up
-# template/anchor changes).
+# Template every receiver instance extends. scripts/install.sh generates
+# docker-compose.instances.yaml next to this file with one service per
+# instance (container name, ./data/skyfollower-receiver-{name-slug} data
+# directory, env_file ./receivers/{name-slug}.env), so this file holds no
+# per-host content. deploy.replicas cannot substitute: replicas share one
+# /app/data bind mount and have no per-replica RECEIVER_NAME.
 services:
+  receiver:
+    profiles: ["template"]
+    environment: *receiver-environment
+    image: ghcr.io/brentio/skyfollower-receiver:${SKYFOLLOWER_VERSION:-latest}
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # RAM-backed, not the container's writable layer -- the healthcheck
+    # heartbeat file is rewritten every 15s and must never hit the host's
+    # eMMC/SD storage the way /app/data (the fallback queue) legitimately does.
+    tmpfs:
+      - /app/health
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

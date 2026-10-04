@@ -36,6 +36,7 @@ DEV_BUILD=0
 BRANCH=""
 docker() { return 0; }
 fetch_role() { return 0; }
+role_compose_files() { echo "docker-compose.$1.yaml"; }
 """
 
 

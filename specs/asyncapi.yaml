@@ -3300,7 +3300,7 @@ components:
       description: >
         Message processor instance identifier: any unique string, not a
         contiguous ordinal -- commonly ${MESSAGE_PROCESSOR_PREFIX:-<hostname>}-{n},
-        set per service in docker-compose.message-processor.yaml.
+        set per instance in message-processors/{id}.env.
         MESSAGE_PROCESSOR_PREFIX defaults to the node's own hostname,
         keeping IDs unique across nodes with no coordination needed;
         uniqueness itself is enforced via a Redis NX key at startup, not

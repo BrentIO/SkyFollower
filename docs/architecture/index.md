@@ -32,16 +32,17 @@ that one ID is used verbatim — no local/global translation — as the compose
 service name, container name, RabbitMQ queue name, Redis heartbeat key, and
 data directory alike:
 `skyfollower-message-processor-{id}` everywhere. `docker-compose.message-processor.yaml`,
-as fetched from the repo, holds only the shared anchors every instance is
-built from — no service definitions. `scripts/install.sh` generates the
-concrete per-ID service list into each node's own copy of that file: it asks
+as fetched from the repo, is static — a shared environment anchor and a
+profile-gated template service every instance extends. `scripts/install.sh`
+writes each ID to `message-processors/{id}.env` and generates the per-ID
+services into the node's `docker-compose.instances.yaml`: it asks
 whether this run is replacing an existing processor (adopts one specific ID)
 or adding new ones (asks how many are currently implemented fleet-wide and
 how many this host will add, then computes the new IDs as
 `existing_count+1` through `existing_count+num_new`). To add a message
 processor to an existing node, just re-run `scripts/install.sh` for that
-role — it appends the new service block(s) without touching already-running
-instances.
+role — it adds the new env file(s) and service(s) without touching
+already-running instances.
 
 That is the entire procedure — no `COMPOSE_PROFILES` line to write, no block
 to uncomment. Each instance gets its own bind-mounted data directory
