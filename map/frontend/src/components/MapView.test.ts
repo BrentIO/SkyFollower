@@ -1021,6 +1021,14 @@ describe("radar overlay (#1896, #1965)", () => {
     expect(mapViewSource).toContain('map.setPaintProperty(activeId, "raster-opacity", radarOpacity);');
   });
 
+  it("captures an ambient frame immediately when the tab becomes visible and removes the listener on cleanup", () => {
+    const effectIndex = mapViewSource.indexOf("async function captureAmbientFrame()");
+    const body = mapViewSource.slice(effectIndex, mapViewSource.indexOf("radarAmbientLastHashRef.current = null;", effectIndex));
+    expect(body).toContain('if (document.visibilityState === "visible") captureAmbientFrame();');
+    expect(body).toContain('document.addEventListener("visibilitychange", onVisibilityChange);');
+    expect(body).toContain('document.removeEventListener("visibilitychange", onVisibilityChange);');
+  });
+
   it("#1965: plans playback frames from the ambient cache before deciding what to fetch fresh", () => {
     const effectIndex = mapViewSource.indexOf("if (!map || !mapLoaded || !radarOn || !radarPlaying) return;");
     expect(effectIndex).toBeGreaterThan(-1);

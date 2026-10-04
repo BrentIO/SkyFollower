@@ -4,6 +4,7 @@ import {
   isNewRadarContent,
   nextRadarState,
   planRadarPlaybackFrames,
+  RADAR_AMBIENT_MAX_AGE_MS,
   RADAR_AMBIENT_CACHE_CAPACITY,
   RADAR_FETCH_RETRY_COOLDOWN_MS,
   RADAR_MAX_ZOOM,
@@ -106,32 +107,57 @@ describe("planRadarPlaybackFrames", () => {
   });
 
   it("reuses a single held frame for the newest slot and fetches the rest", () => {
-    const plan = planRadarPlaybackFrames([{ slot: 3, timestampMs: 1000 }]);
+    const plan = planRadarPlaybackFrames([{ slot: 3, timestampMs: 1000 }], 2000);
     expect(plan.find((step) => step.offsetMinutes === 0)?.source).toEqual({ kind: "ambient", slot: 3 });
     plan.filter((step) => step.offsetMinutes !== 0).forEach((step) => expect(step.source).toEqual({ kind: "fetch" }));
   });
 
   it("assigns held frames most-recent-first regardless of how far apart in time they were captured", () => {
-    const hour = 60 * 60 * 1000;
-    const plan = planRadarPlaybackFrames([
-      { slot: 0, timestampMs: 1 * hour },
-      { slot: 2, timestampMs: 3 * hour },
-      { slot: 1, timestampMs: 2 * hour },
-    ]);
+    const min = 60 * 1000;
+    const plan = planRadarPlaybackFrames(
+      [
+        { slot: 0, timestampMs: 1 * min },
+        { slot: 2, timestampMs: 20 * min },
+        { slot: 1, timestampMs: 10 * min },
+      ],
+      21 * min,
+    );
     expect(plan.find((step) => step.offsetMinutes === 0)?.source).toEqual({ kind: "ambient", slot: 2 });
     expect(plan.find((step) => step.offsetMinutes === 5)?.source).toEqual({ kind: "ambient", slot: 1 });
     expect(plan.find((step) => step.offsetMinutes === 10)?.source).toEqual({ kind: "ambient", slot: 0 });
     expect(plan.filter((step) => step.source.kind === "fetch").map((step) => step.offsetMinutes)).toEqual([30, 25, 20, 15]);
   });
 
+  it("drops entries older than the playback window and keeps fresh ones", () => {
+    const now = 10 * RADAR_AMBIENT_MAX_AGE_MS;
+    const plan = planRadarPlaybackFrames(
+      [
+        { slot: 0, timestampMs: now - RADAR_AMBIENT_MAX_AGE_MS - 1 },
+        { slot: 1, timestampMs: now - RADAR_AMBIENT_MAX_AGE_MS },
+        { slot: 2, timestampMs: now },
+      ],
+      now,
+    );
+    const ambient = plan.filter((step) => step.source.kind === "ambient").map((step) => step.source);
+    expect(ambient).toEqual([
+      { kind: "ambient", slot: 1 },
+      { kind: "ambient", slot: 2 },
+    ]);
+  });
+
+  it("degrades to fetch-everything when every entry is stale", () => {
+    const now = 10 * RADAR_AMBIENT_MAX_AGE_MS;
+    expect(planRadarPlaybackFrames([{ slot: 0, timestampMs: 0 }, { slot: 1, timestampMs: 1 }], now)).toEqual(fetchAll);
+  });
+
   it("keeps the plan in oldest-to-newest offset order", () => {
-    const plan = planRadarPlaybackFrames([{ slot: 0, timestampMs: 1 }]);
+    const plan = planRadarPlaybackFrames([{ slot: 0, timestampMs: 1 }], 2);
     expect(plan.map((step) => step.offsetMinutes)).toEqual([...RADAR_PLAYBACK_OFFSETS_MINUTES]);
   });
 
   it("uses each held slot at most once and needs no fetch when the cache is full", () => {
     const entries: RadarAmbientCacheEntry[] = RADAR_PLAYBACK_OFFSETS_MINUTES.map((_, slot) => ({ slot, timestampMs: slot }));
-    const plan = planRadarPlaybackFrames(entries);
+    const plan = planRadarPlaybackFrames(entries, RADAR_PLAYBACK_OFFSETS_MINUTES.length);
     plan.forEach((step) => expect(step.source.kind).toBe("ambient"));
     const slots = plan.map((step) => (step.source.kind === "ambient" ? step.source.slot : -1));
     expect(new Set(slots).size).toBe(RADAR_PLAYBACK_OFFSETS_MINUTES.length);

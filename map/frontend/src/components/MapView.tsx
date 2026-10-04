@@ -994,10 +994,15 @@ function MapViewInner({ config }: { config: AppConfig }) {
 
     captureAmbientFrame();
     const interval = setInterval(captureAmbientFrame, RADAR_REFRESH_INTERVAL_MS);
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") captureAmbientFrame();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       disposed = true;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       radarAmbientLastHashRef.current = null;
       for (let slot = 0; slot < RADAR_AMBIENT_CACHE_CAPACITY; slot++) {
         const id = radarAmbientFrameId(slot);
