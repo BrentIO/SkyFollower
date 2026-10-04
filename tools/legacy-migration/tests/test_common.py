@@ -94,6 +94,19 @@ class TestBuildCompletedFlight:
         assert flight.positions == []
         assert flight.receiver_sources == []
 
+    def test_string_origin_and_destination_are_accepted(self):
+        # #2170
+        doc = _make_doc(origin="KATL", destination="KMCO")
+        flight = common.build_completed_flight(doc)
+        assert flight.origin == {"icao_code": "KATL"}
+        assert flight.destination == {"icao_code": "KMCO"}
+        assert doc["origin"] == "KATL"
+
+    def test_absent_origin_and_destination_are_accepted(self):
+        flight = common.build_completed_flight(_make_doc())
+        assert flight.origin is None
+        assert flight.destination is None
+
     def test_extra_legacy_only_fields_are_ignored(self):
         doc = _make_doc(category="Large", adsb_version=2)
         flight = common.build_completed_flight(doc)
