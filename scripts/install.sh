@@ -1467,6 +1467,8 @@ collect_message_processor_env() {
   SHARED_CONN_MQTT_USERNAME="$MQTT_USERNAME"
   SHARED_CONN_MQTT_PASSWORD="$MQTT_PASSWORD"
 
+  local CAPTURE_RAW_FRAMES
+  CAPTURE_RAW_FRAMES="$(existing_env_value_or "$env_file" CAPTURE_RAW_FRAMES false)"
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
 
@@ -1501,6 +1503,9 @@ MAP_UDP_PORT=${MAP_UDP_PORT}
 
 # "info" or "debug".
 LOG_LEVEL=info
+
+# Opt-in forensic raw-frame capture; see message-processor/README.md.
+CAPTURE_RAW_FRAMES=${CAPTURE_RAW_FRAMES}
 ENV_EOF
 }
 
@@ -2181,6 +2186,9 @@ do_upgrade() {
       { print }
     ' "$env_file" > "$tmp"
     (umask 077; mv "$tmp" "$env_file")
+    if [ "$(basename "$role_dir")" = "message-processor" ] && ! grep -q '^CAPTURE_RAW_FRAMES=' "$env_file"; then
+      printf '\n# Opt-in forensic raw-frame capture; see message-processor/README.md.\nCAPTURE_RAW_FRAMES=false\n' >> "$env_file"
+    fi
     # --profile runners on the pull refreshes the runner-* images too (a
     # no-op where the compose file declares no such profile). Deliberately
     # NOT passed to `up -d`: the runner services are one-shot jobs, so
