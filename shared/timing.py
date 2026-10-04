@@ -195,9 +195,20 @@ MAP_HEARTBEAT_INTERVAL_SECONDS = 5
 # How often the message processor unconditionally resends every active
 # flight's `metadata` datagram, regardless of field changes. The map
 # service's own Redis carries no persistence, so this periodic sweep is
-# what lets a map-service restart recover within one MAP_EVICT_SECONDS
+# what lets a map-service restart recover within one flight_ttl_seconds
 # window.
 MAP_METADATA_RESEND_INTERVAL_SECONDS = 60
+
+# Map aircraft lifecycle: TTL on the sentinel whose expiry fades an
+# aircraft (stale) and on the one whose expiry drops it from view (hide).
+# The evict window is not defined here: the map adopts flight_ttl_seconds
+# from the first `metadata` datagram it receives.
+MAP_STALE_TTL_SECONDS = 15
+MAP_HIDE_TTL_SECONDS = 45
+
+# Smallest gap kept between the hide window and the adopted evict window,
+# so a very small flight_ttl_seconds cannot make eviction precede hide.
+MAP_EVICT_AFTER_HIDE_WINDOW_SECONDS = 15
 
 # Per-processor status thresholds the map service applies to
 # now - last_seen (updated by any map UDP message type carrying
@@ -249,6 +260,10 @@ assert HEARTBEAT_TTL_SECONDS > HEARTBEAT_INTERVAL_SECONDS, (
 
 assert ROUTE_TTL_SECONDS < ENRICHMENT_TTL_SECONDS, (
     "ROUTE_TTL_SECONDS is meant to be shorter than ENRICHMENT_TTL_SECONDS"
+)
+
+assert MAP_STALE_TTL_SECONDS < MAP_HIDE_TTL_SECONDS, (
+    "MAP_STALE_TTL_SECONDS must stay below MAP_HIDE_TTL_SECONDS"
 )
 
 assert MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS > MAP_HEARTBEAT_INTERVAL_SECONDS, (

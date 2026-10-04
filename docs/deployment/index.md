@@ -247,9 +247,6 @@ Declining falls through to entering those values by hand. See
 | `MAP_REDIS_HOST` | ✅ | — |
 | `MAP_REDIS_PORT` | ❌ | `6379` |
 | `MAP_REDIS_PASSWORD` | ❌ | — |
-| `MAP_STALE_SECONDS` | ❌ | `15` |
-| `MAP_HIDE_SECONDS` | ❌ | `60` |
-| `MAP_EVICT_SECONDS` | ❌ | `300` |
 | `MAP_CENTER_LATITUDE` | ❌ | — |
 | `MAP_CENTER_LONGITUDE` | ❌ | — |
 | `MQTT_HOST` | ❌ | — |

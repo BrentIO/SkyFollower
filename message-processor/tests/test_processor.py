@@ -3060,6 +3060,23 @@ class TestEmitterCategoryForwarding:
         assert payload["type"] == "metadata"
         assert payload["aircraft"]["emitter_category"] == "A7"
 
+    def test_change_gated_metadata_carries_flight_ttl_seconds(self):
+        p, _ = _make_processor()
+        p._flight_ttl_seconds = 450
+        mock_sock = _enable_map_udp(p)
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.flight_id = "fid-1"
+        f.first_message = f.last_message = 1757000000.0
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.aircraft = {"icao_hex": "A8AE7F"}
+        f.save()
+
+        p._maybe_publish_map_metadata(f, time.time())
+
+        assert _sent_payload(mock_sock)["flight_ttl_seconds"] == 450
+
 
 class TestRulesEngineHwmNanoseconds:
     """rules_engine_hwm_ns measures a single evaluate() call in
@@ -5175,6 +5192,7 @@ class TestMapUdpMetadata:
         expected = p._build_flight_notification_payload(f)
         expected["type"] = "metadata"
         expected["processor_id"] = "0"
+        expected["flight_ttl_seconds"] = p._flight_ttl_seconds
         assert payload == expected
         assert "rule" not in payload
         assert "positions" not in payload
@@ -5449,6 +5467,7 @@ class TestMapMetadataResendLoop:
         assert {s["aircraft"]["icao_hex"] for s in sent} == {"A8AE7F", "B00000"}
         for s in sent:
             assert s["processor_id"] == "0"
+            assert s["flight_ttl_seconds"] == p._flight_ttl_seconds
 
     def test_skips_flights_past_ttl_by_wall_clock(self):
         p, _ = _make_processor()

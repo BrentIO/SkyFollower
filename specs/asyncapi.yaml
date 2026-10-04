@@ -3115,7 +3115,7 @@ components:
         total_messages, and receiver_sources always present -- both are
         built by the same _build_flight_notification_payload), minus that
         schema's `rule` object (this message never carries one), plus this
-        message's own `type` and `processor_id` keys. icao_hex lives nested
+        message's own `type`, `processor_id` and `flight_ttl_seconds` keys. icao_hex lives nested
         at aircraft.icao_hex here, not as a top-level key -- unlike the
         sibling `position` message above, which puts icao_hex at the top
         level. The map service excludes `processor_id` from the fields it
@@ -3133,6 +3133,18 @@ components:
               type: string
               description: MESSAGE_PROCESSOR_ID of the sending instance -- see MapUdpPosition.processor_id
               example: mp-1
+            flight_ttl_seconds:
+              type: integer
+              minimum: 1
+              description: >
+                The sending processor's flight_ttl_seconds. The map service
+                adopts the value from the first `metadata` datagram it
+                receives after start as its evict window (raised to stay
+                above its hide window), ignores later ones, and logs one
+                warning if a later one differs. Absent from processors
+                that predate it; the map then uses the default of 300.
+                Like processor_id, never merged into the aircraft's state.
+              example: 300
 
     MapUdpHeartbeat:
       description: >
@@ -3229,7 +3241,7 @@ components:
       type: object
       description: >
         WebSocket `stale` event -- the aircraft's `flight:live:{icao_hex}`
-        sentinel expired (no message seen for MAP_STALE_SECONDS), but its
+        sentinel expired (no message seen for the stale window, 15 s), but its
         detail record has not yet been evicted. See map/state_store.py's
         `handle_expired_key`.
       required: [type, icao_hex]
@@ -3245,12 +3257,12 @@ components:
       type: object
       description: >
         WebSocket `hide` event -- the aircraft's `flight:visible:{icao_hex}`
-        sentinel expired (no message seen for MAP_HIDE_SECONDS). Unlike
+        sentinel expired (no message seen for the hide window, 45 s). Unlike
         `remove`, the aircraft's detail record and trail are left
         untouched server-side; the client must likewise keep the record
         and its accumulated trail, only omitting it from what's drawn, so
         a resumed flight bridges the gap as one continuous trail if
-        contact resumes before MAP_EVICT_SECONDS. See
+        contact resumes before the evict window elapses. See
         map/state_store.py's `handle_expired_key`.
       required: [type, icao_hex]
       properties:
@@ -3265,7 +3277,7 @@ components:
       type: object
       description: >
         WebSocket `remove` event -- the aircraft's `flight:detail:{icao_hex}`
-        record itself expired (no message seen for MAP_EVICT_SECONDS); the
+        record itself expired (no message seen for the evict window, the flight_ttl_seconds learned from message processors); the
         client should drop the aircraft entirely. See map/state_store.py's
         `handle_expired_key`.
       required: [type, icao_hex]

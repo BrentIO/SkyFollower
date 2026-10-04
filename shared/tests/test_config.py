@@ -655,40 +655,22 @@ class TestBlockHelpers:
         assert cfg["map_center_latitude"] is None
         assert cfg["map_center_longitude"] is None
 
-    def test_map_config_defaults_lifecycle_ttls_in_order(self, monkeypatch):
-        monkeypatch.delenv("MAP_STALE_SECONDS", raising=False)
-        monkeypatch.delenv("MAP_HIDE_SECONDS", raising=False)
-        monkeypatch.delenv("MAP_EVICT_SECONDS", raising=False)
-        monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
-        cfg = map_config()
-        assert cfg["map_stale_seconds"] == 15
-        assert cfg["map_hide_seconds"] == 60
-        assert cfg["map_evict_seconds"] == 300
+    def test_map_config_ignores_deprecated_lifecycle_vars_with_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="shared.config"):
+            cfg = map_config(ConfigLoader({
+                "MAP_LISTEN_PORT": "30500",
+                "MAP_STALE_SECONDS": "9999",
+                "MAP_HIDE_SECONDS": "1",
+                "MAP_EVICT_SECONDS": "2",
+            }))
+        assert not any(k.endswith("_seconds") for k in cfg)
+        for name in ("MAP_STALE_SECONDS", "MAP_HIDE_SECONDS", "MAP_EVICT_SECONDS"):
+            assert sum(name in r.getMessage() for r in caplog.records) == 1
 
-    @pytest.mark.parametrize(
-        "stale,hide,evict",
-        [
-            (30, 30, 300),   # stale >= hide
-            (60, 30, 300),   # stale >= hide
-            (30, 300, 300),  # hide >= evict
-            (30, 400, 300),  # hide >= evict
-        ],
-    )
-    def test_map_config_rejects_misordered_lifecycle_ttls(self, monkeypatch, stale, hide, evict):
-        monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
-        monkeypatch.setenv("MAP_STALE_SECONDS", str(stale))
-        monkeypatch.setenv("MAP_HIDE_SECONDS", str(hide))
-        monkeypatch.setenv("MAP_EVICT_SECONDS", str(evict))
-        with pytest.raises(ConfigError):
-            map_config()
-
-    def test_map_config_accepts_correctly_ordered_lifecycle_ttls(self, monkeypatch):
-        monkeypatch.setenv("MAP_LISTEN_PORT", "30500")
-        monkeypatch.setenv("MAP_STALE_SECONDS", "30")
-        monkeypatch.setenv("MAP_HIDE_SECONDS", "60")
-        monkeypatch.setenv("MAP_EVICT_SECONDS", "300")
-        cfg = map_config()
-        assert (cfg["map_stale_seconds"], cfg["map_hide_seconds"], cfg["map_evict_seconds"]) == (30, 60, 300)
+    def test_map_config_does_not_warn_without_deprecated_vars(self, caplog):
+        with caplog.at_level("WARNING", logger="shared.config"):
+            map_config(ConfigLoader({"MAP_LISTEN_PORT": "30500"}))
+        assert not caplog.records
 
     def test_map_config_reads_center_lat_long(self):
         cfg = map_config(ConfigLoader({

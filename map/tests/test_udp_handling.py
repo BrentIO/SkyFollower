@@ -19,11 +19,15 @@ class _FakeStore:
     def __init__(self):
         self.calls: list[tuple] = []
         self.processor_calls: list[tuple] = []
+        self.adopted: list = []
         self.next_result = {}
 
     def apply_update(self, icao_hex, msg_type, timestamp, fields):
         self.calls.append((icao_hex, msg_type, timestamp, dict(fields)))
         return self.next_result
+
+    def adopt_flight_ttl(self, value):
+        self.adopted.append(value)
 
     def record_processor_seen(self, processor_id, timestamp):
         self.processor_calls.append((processor_id, timestamp))
@@ -275,3 +279,29 @@ def test_handle_packet_without_processor_id_does_not_touch_roster(monkeypatch):
     })
 
     assert store.processor_calls == []
+
+
+def test_metadata_packet_offers_flight_ttl_and_keeps_it_out_of_fields(monkeypatch):
+    store, _conns = _install_fakes(monkeypatch)
+    store.next_result = {"icao_hex": "A8AE7F"}
+
+    map_main._handle_packet({
+        "type": "metadata",
+        "aircraft": {"icao_hex": "A8AE7F"},
+        "flight_ttl_seconds": 450,
+        "last_message": "2026-09-06T00:00:00+00:00",
+    })
+
+    assert store.adopted == [450]
+    assert "flight_ttl_seconds" not in store.calls[0][3]
+
+
+def test_position_packet_never_offers_flight_ttl(monkeypatch):
+    store, _conns = _install_fakes(monkeypatch)
+    store.next_result = {"icao_hex": "A8AE7F", "lat": 1.0}
+
+    map_main._handle_packet({
+        "type": "position", "icao_hex": "A8AE7F", "ts": 1.0, "lat": 1.0, "flight_ttl_seconds": 450,
+    })
+
+    assert store.adopted == []

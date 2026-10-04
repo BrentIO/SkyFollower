@@ -37,6 +37,7 @@ import time
 from typing import Optional
 
 from shared.timing import (
+    MAP_EVICT_AFTER_HIDE_WINDOW_SECONDS,
     MAP_PROCESSOR_AMBER_MAX_AGE_SECONDS,
     MAP_PROCESSOR_GREEN_MAX_AGE_SECONDS,
 )
@@ -147,12 +148,48 @@ class FlightStateStore:
 
     def __init__(
         self, redis_client, stale_seconds: int, hide_seconds: int, evict_seconds: int,
+        evict_min_margin_seconds: Optional[int] = None,
     ) -> None:
         self._redis = redis_client
         self._stale_seconds = stale_seconds
         self._hide_seconds = hide_seconds
-        self._evict_seconds = evict_seconds
+        self._evict_min_margin_seconds = (
+            MAP_EVICT_AFTER_HIDE_WINDOW_SECONDS if evict_min_margin_seconds is None
+            else evict_min_margin_seconds
+        )
+        self._evict_seconds = self._clamp_evict(evict_seconds)
+        self._adopted_flight_ttl: Optional[int] = None
+        self._warned_ttl_mismatch = False
         self._apply_update_sha = redis_client.script_load(_LUA_PATH.read_text())
+
+    def _clamp_evict(self, evict_seconds: int) -> int:
+        return max(evict_seconds, self._hide_seconds + self._evict_min_margin_seconds)
+
+    @property
+    def evict_seconds(self) -> int:
+        return self._evict_seconds
+
+    def adopt_flight_ttl(self, flight_ttl_seconds) -> None:
+        """Takes the evict window from the first valid value a message
+        processor reports and keeps it; a later differing value only logs
+        one warning."""
+        if isinstance(flight_ttl_seconds, bool) or not isinstance(flight_ttl_seconds, (int, float)):
+            return
+        value = int(flight_ttl_seconds)
+        if value <= 0:
+            return
+        if self._adopted_flight_ttl is None:
+            self._adopted_flight_ttl = value
+            self._evict_seconds = self._clamp_evict(value)
+            logger.info(
+                "Adopted flight_ttl_seconds=%s; evict window is %ss.", value, self._evict_seconds,
+            )
+        elif value != self._adopted_flight_ttl and not self._warned_ttl_mismatch:
+            self._warned_ttl_mismatch = True
+            logger.warning(
+                "Message processors report differing flight_ttl_seconds (%s vs adopted %s); "
+                "keeping %s.", value, self._adopted_flight_ttl, self._adopted_flight_ttl,
+            )
 
     def enable_keyspace_notifications(self) -> None:
         """Best-effort -- a CONFIG SET this no-persistence Redis instance

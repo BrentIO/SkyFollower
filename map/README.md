@@ -85,12 +85,6 @@ host's `.env`.
 | `MAP_REDIS_HOST` | ✅ | — | Dedicated Redis instance for this service's own live aircraft state -- **not** core Redis (see the repo root docs' Redis Key Schema for core's schema; this service never reads or writes any of those keys) |
 | `MAP_REDIS_PORT` | ❌ | `6379` | |
 | `MAP_REDIS_PASSWORD` | ❌ | — | Optional, unlike core's `REDIS_PASSWORD` -- see [Why `MAP_REDIS_PASSWORD` is optional](#why-map_redis_password-is-optional) below |
-| `MAP_STALE_SECONDS` | ❌ | `15` | TTL on `flight:live:{icao_hex}`; expiry fades an aircraft client-side (a `stale` WebSocket event) without removing it |
-| `MAP_HIDE_SECONDS` | ❌ | `60` | TTL on `flight:visible:{icao_hex}`; expiry drops the aircraft from view (a `hide` WebSocket event) while leaving its `flight:detail:{icao_hex}`/`flight:trail:{icao_hex}` untouched -- see [Lifecycle](#lifecycle) below |
-| `MAP_EVICT_SECONDS` | ❌ | `300` | TTL on `flight:detail:{icao_hex}` (and its `flight:trail:{icao_hex}`); expiry hard-removes the aircraft (a `remove` WebSocket event). Should equal the deployment's `flight_ttl_seconds` (core Redis's `config:flight_ttl_seconds`, default 300) -- this service never queries core Redis (see [Data boundary](#map-service) above), so keeping the two in agreement is an operator responsibility, not something enforced across services |
-
-`MAP_STALE_SECONDS < MAP_HIDE_SECONDS < MAP_EVICT_SECONDS` must hold --
-`shared/config.py`'s `map_config()` rejects a misordered `.env` at startup.
 | `MAP_CENTER_LATITUDE` | ❌ | — | Centered reference point ("center") for the frontend's on-map marker, initial camera position, and "Return to center" button. Both required together, or neither -- without them the map still renders, just without a center marker/recenter target. Read at runtime and served to the frontend over `GET /api/config` (see [Frontend Configuration](#frontend-configuration) below) -- **not** a Vite build-time value, so changing it takes effect on the next page load with no image rebuild |
 | `MAP_CENTER_LONGITUDE` | ❌ | — | |
 | `MQTT_HOST` | ❌ | — | Leave unset to disable MQTT entirely (see [MQTT and Home Assistant](#mqtt-and-home-assistant) below) |
@@ -239,10 +233,10 @@ tracked aircraft, all TTL'd in seconds, plus two untracked-by-aircraft keys:
 
 | Key | TTL | Contents |
 |---|---|---|
-| `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `stale`. Refreshed only by `position` packets, not `metadata` -- see [Lifecycle](#lifecycle) below |
-| `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | Lightweight sentinel, no meaningful value. Expiry → `hide`. Refreshed by any packet carrying new signal (a `position`, or a `metadata` whose timestamp advances); a metadata resend with an unchanged timestamp does not refresh it, so a silent aircraft hides on schedule |
-| `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove`. Refreshed by any packet carrying new signal, same rule as `flight:visible` |
-| `flight:trail:{icao_hex}` | `MAP_EVICT_SECONDS` | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` (25,000 -- see [Trail History Caps](#trail-history-caps)) after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
+| `flight:live:{icao_hex}` | 15 s | Lightweight sentinel, no meaningful value. Expiry → `stale`. Refreshed only by `position` packets, not `metadata` -- see [Lifecycle](#lifecycle) below |
+| `flight:visible:{icao_hex}` | 45 s | Lightweight sentinel, no meaningful value. Expiry → `hide`. Refreshed by any packet carrying new signal (a `position`, or a `metadata` whose timestamp advances); a metadata resend with an unchanged timestamp does not refresh it, so a silent aircraft hides on schedule |
+| `flight:detail:{icao_hex}` | evict window | A Redis **hash** holding the aircraft's actual merged current-state -- every known field from both `position` and `metadata` messages. This is what `GET /api/flights` and the WebSocket relay read from. Expiry → `remove`. Refreshed by any packet carrying new signal, same rule as `flight:visible` |
+| `flight:trail:{icao_hex}` | evict window | A Redis **list** of JSON `{lat, lon, alt}` snapshots, one `RPUSH` per accepted `position` update (once lat/lon are actually known), `LTRIM`med to the most recent `MAX_TRAIL_POINTS` (25,000 -- see [Trail History Caps](#trail-history-caps)) after each append. Refreshed onto the same TTL/lifecycle as `flight:detail` -- it lives and dies alongside the aircraft's detail record, independent of the stale/hide sentinels above. Served by `GET /api/flights/{icao_hex}` |
 | `map:processors` | none | A Redis **hash** (field = `processor_id`, value = last-seen epoch timestamp) -- see [Processor Roster](#processor-roster) below |
 | `map:range:outline` | 2 days (safety net only) | A Redis **hash** (field = `"{bearing}:{band}"`, value = JSON `{nm, lat, lon, alt, ts}`) holding the current UTC day's reception range outline. The disk snapshots are the real store; this TTL only cleans up after a process that died without rolling over -- see [Range Outline](#range-outline) |
 
@@ -258,13 +252,25 @@ TTL'd keys above expiring:
 
 | Stage | Redis key | TTL | Event | Effect on the map |
 |---|---|---|---|---|
-| Stale | `flight:live:{icao_hex}` | `MAP_STALE_SECONDS` | `stale` | Icon + trail fade to grey |
-| Hidden | `flight:visible:{icao_hex}` | `MAP_HIDE_SECONDS` | `hide` | Icon + trail removed from view; trail data retained |
-| Evicted | `flight:detail:{icao_hex}` | `MAP_EVICT_SECONDS` | `remove` | Everything evicted (detail + trail) |
+| Stale | `flight:live:{icao_hex}` | 15 s | `stale` | Icon + trail fade to grey |
+| Hidden | `flight:visible:{icao_hex}` | 45 s | `hide` | Icon + trail removed from view; trail data retained |
+| Evicted | `flight:detail:{icao_hex}` | evict window | `remove` | Everything evicted (detail + trail) |
+
+The stale and hide windows are fixed (`MAP_STALE_TTL_SECONDS`,
+`MAP_HIDE_TTL_SECONDS` in `shared/timing.py`). The evict window is not
+configured here: each message processor adds its `flight_ttl_seconds` to
+every `metadata` datagram, and this service adopts the value from the first
+one it receives after start and ignores later ones. Until then it uses the
+300 s default. A later datagram carrying a different value (a mixed-version
+fleet) logs one warning and the adopted value stays. The adopted value is
+raised, if necessary, to at least 15 s above the hide window so eviction
+can never precede hide. The former per-deployment stale/hide/evict
+environment variables are ignored with a one-time warning, and
+`install.sh --upgrade` removes them from an existing `.env`.
 
 The hidden stage exists so a briefly-lost aircraft leaves the screen
 quickly without losing its trail history: if contact resumes before
-`MAP_EVICT_SECONDS`, the aircraft reappears with its pre-gap trail intact,
+the evict window, the aircraft reappears with its pre-gap trail intact,
 rendered as one continuous flight -- the gap itself renders as a normal
 trail segment, with no special dashed/faded styling. A `position` event
 always clears both `stale` and `hidden` client-side; a `metadata` event
@@ -441,7 +447,7 @@ per accepted `position` packet, capped at the most recent
 selected so the drawn trail covers the whole flight, not just what that
 browser has seen since it connected -- and so it survives a page reload.
 `HTTP 404` when the aircraft isn't currently tracked (never seen, or
-evicted past `MAP_EVICT_SECONDS` of silence); `trail` is `[]` when the
+evicted after the evict window of silence); `trail` is `[]` when the
 aircraft is known but has only ever sent velocity/heading-only position
 packets.
 
@@ -619,7 +625,7 @@ header.
 
 This Redis instance has no persistence -- killing and restarting the map
 service (or its Redis) loses all state, and the state rebuilds correctly
-from live UDP traffic within one `MAP_EVICT_SECONDS` window. There is no
+from live UDP traffic within one evict window. There is no
 backup file and no migration path, matching the design intent: this
 service caches, it does not store.
 

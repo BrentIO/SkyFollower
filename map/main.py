@@ -46,6 +46,9 @@ from shared.logging_setup import configure_logging  # noqa: E402
 from shared.mqtt_presence import MqttPresence  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.timing import (  # noqa: E402
+    DEFAULT_FLIGHT_TTL_SECONDS,
+    MAP_HIDE_TTL_SECONDS,
+    MAP_STALE_TTL_SECONDS,
     HEALTHCHECK_INTERVAL_SECONDS,
     MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS,
     MAP_RANGE_OUTLINE_TTL_SECONDS,
@@ -201,6 +204,9 @@ def _handle_packet(payload: dict) -> None:
         logger.debug("Ignoring UDP datagram with no icao_hex: %r", payload)
         return
 
+    if msg_type == "metadata":
+        _store.adopt_flight_ttl(payload.get("flight_ttl_seconds"))
+
     timestamp = _extract_timestamp(payload)
     if timestamp is None:
         logger.debug("Ignoring UDP datagram with no usable timestamp: %r", payload)
@@ -211,7 +217,7 @@ def _handle_packet(payload: dict) -> None:
     else:
         # processor_id describes the sender, not the aircraft -- excluded
         # so it never leaks into the per-aircraft merged state.
-        fields = {k: v for k, v in payload.items() if k not in ("type", "icao_hex", "processor_id")}
+        fields = {k: v for k, v in payload.items() if k not in ("type", "icao_hex", "processor_id", "flight_ttl_seconds")}
 
     merged = _store.apply_update(icao_hex, msg_type, timestamp, fields)
     if merged is None:
@@ -344,9 +350,9 @@ async def lifespan(app: FastAPI):
     _redis = build_redis_client(_cfg["map_redis"])
     _store = FlightStateStore(
         _redis,
-        stale_seconds=_cfg["map_stale_seconds"],
-        hide_seconds=_cfg["map_hide_seconds"],
-        evict_seconds=_cfg["map_evict_seconds"],
+        stale_seconds=MAP_STALE_TTL_SECONDS,
+        hide_seconds=MAP_HIDE_TTL_SECONDS,
+        evict_seconds=DEFAULT_FLIGHT_TTL_SECONDS,
     )
     _store.enable_keyspace_notifications()
 
