@@ -161,8 +161,9 @@ rate-limit answer, an image with no release tags yet — is turned into
 matching core-health's best-effort telemetry everywhere else.
 
 State is a single retained JSON blob per component
-(`{"installed_version": ..., "latest_version": ...}`) that Home Assistant
-parses natively, published at `SkyFollower/register/{id}/update` —
+(`{"installed_version": ..., "latest_version": ..., "release_url": ...}`,
+`release_url` being the GitHub release page for the latest version, omitted
+until the first successful poll) that Home Assistant parses natively, published at `SkyFollower/register/{id}/update` —
 right alongside the registration that drives it — re-published on change,
 on every core-health MQTT (re)connect, and on each daily poll. The
 `update` entity's own availability is core-health's, not the owning
@@ -260,7 +261,7 @@ passthrough fields described above:
 | `SkyFollower/core-health/queue/{queue}/statistic/{field}` | Any other SkyFollower-owned queue's stats (e.g. `skyfollower-adsb-unroutable`) |
 | `SkyFollower/message-processor/{id}/statistic/{field}` | Mimicked message-processor counters (exact existing topic) |
 | `SkyFollower/receiver/{name}/statistic/{field}` | Mimicked receiver counters (exact existing topic) |
-| `SkyFollower/register/{id}/update` | Per-component "update available" state blob (`{installed_version, latest_version}`), published by core-health — see [Update-available entities](#update-available-entities) |
+| `SkyFollower/register/{id}/update` | Per-component "update available" state blob (`{installed_version, latest_version, release_url}`), published by core-health — see [Update-available entities](#update-available-entities) |
 | `homeassistant/update/{id}_update/config` | Per-component `update` entity discovery config, published by core-health (empty retained payload clears it) |
 | `SkyFollower/register/{id}` | Self-registration — subscribed here, **published by every other MQTT-enabled component itself**, not core-health (`shared/mqtt_register.py`) |
 
