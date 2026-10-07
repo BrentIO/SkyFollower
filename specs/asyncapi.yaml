@@ -735,7 +735,8 @@ channels:
       core-health MQTT (re)connect, and on each daily registry poll. A
       registry lookup failure leaves the last-known latest_version in
       place rather than blanking the entity; until the first successful
-      poll, latest_version equals installed_version.
+      poll, latest_version equals installed_version and release_url is
+      omitted.
     parameters:
       component_device_id:
         $ref: '#/components/parameters/ComponentDeviceId'
@@ -2570,6 +2571,11 @@ components:
           type: string
           description: Newest YYYY.MM.BB tag of the GHCR image the component's componentRegister message named
           example: "2026.10.01"
+        release_url:
+          type: string
+          format: uri
+          description: GitHub release page for latest_version; Home Assistant shows it as the release-notes link. Omitted until the first successful registry poll
+          example: "https://github.com/BrentIO/SkyFollower/releases/tag/2026.10.01"
 
     ArchiveFlightsArchivedHour:
       type: integer

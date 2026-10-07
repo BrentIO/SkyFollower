@@ -96,6 +96,7 @@ CORE_DEVICE_IDENTIFIER = "SkyFollower_Core"
 # importing or calling into any of them.
 REGISTER_TOPIC_WILDCARD = f"{REGISTER_TOPIC_ROOT}/+"
 HA_UPDATE_PLATFORM_PREFIX = "homeassistant/update/"
+RELEASE_URL_BASE = "https://github.com/BrentIO/SkyFollower/releases/tag"
 
 _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 
@@ -944,6 +945,8 @@ class CoreHealth:
             # "up to date" rather than asserting a spurious update.
             "latest_version": latest or entry.installed_version,
         }
+        if latest:
+            state["release_url"] = f"{RELEASE_URL_BASE}/{latest}"
         self._mqtt.publish(entry.state_topic, json.dumps(state), retain=True)
 
     def _ensure_update_discovery(self, device_ids: str, entry: _TrackedComponent) -> None:

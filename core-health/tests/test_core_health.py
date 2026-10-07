@@ -1443,7 +1443,11 @@ class TestUpdateEntityPublish:
         app._poll_component_versions_once()
 
         blob = json.loads(_state_publishes(app._mqtt)[f"{REGISTER_TOPIC_ROOT}/SkyFollower_map/update"])
-        assert blob == {"installed_version": "2026.09.10", "latest_version": "2026.10.01"}
+        assert blob == {
+            "installed_version": "2026.09.10",
+            "latest_version": "2026.10.01",
+            "release_url": "https://github.com/BrentIO/SkyFollower/releases/tag/2026.10.01",
+        }
 
     def test_equal_registry_tag_shows_equal(self, monkeypatch):
         app = _wired_app()
