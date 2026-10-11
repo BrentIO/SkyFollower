@@ -77,3 +77,4 @@ services:
       <<: *legacy-migration-environment
     volumes:
       - ./logs:/app/logs
+      - ./verify-cache:/app/verify-cache

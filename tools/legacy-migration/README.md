@@ -36,10 +36,10 @@ can detect or wait out on its own.
   (idempotent against redelivery and a deliberately overlapping second
   pass). Once the day's flights are all processed, uploads one compacted
   Parquet index file per day to `index/year={YYYY}/month={MM}/day={DD}/legacy-migration.parquet`.
-- **Verify**: run once, right before deleting the legacy bucket by hand.
-  Reconciles per-day Mongo counts against the destination bucket's object
-  counts, and confirms every copied object is byte-identical to its
-  legacy original via an ETag (MD5) comparison. Read-only.
+- **Verify**: run once, right before deleting the legacy bucket and Mongo
+  by hand. Reconciles every flight `_id` across Mongo, both buckets and the
+  Parquet indexes from cached bulk listings (ETag + size, no per-object
+  requests), and accounts for every Mongo document. Read-only.
 
 **This tool never deletes anything, in either bucket.** Every copy is a
 cross-bucket `CopyObject`; the legacy bucket is deleted by hand, once, by
@@ -157,6 +157,7 @@ Environment variables (see `shared/config.py`'s `mongo`,
 | `DEST_S3_BUCKET` | yes | New archive bucket, provisioned via the `aws-setup` CloudFormation stack |
 | `AWS_DEFAULT_REGION` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | yes | Temporary migration identity -- see IAM below |
 | `RABBITMQ_HOST` / `RABBITMQ_PORT` / `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD` | yes | Dedicated `skyfollower-migration` user -- see below, never the shared application user |
+| `VERIFY_CACHE_DIR` | no | Verify only. Default `/app/verify-cache` (the `./verify-cache` bind mount) |
 | `LOG_LEVEL` | no | Default `info`. `debug` logs every migrated flight's `_id` and destination key -- ~8.6M lines across the full history, opt in deliberately |
 
 ## Mongo credential
@@ -319,11 +320,30 @@ docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-m
 docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env up --build --scale worker=8
 ```
 
-**Step 6 -- verify, before deleting the legacy bucket by hand.**
+**Step 6 -- verify, before deleting the legacy bucket and Mongo by hand.**
+
+Everything fetched (the Mongo snapshot, the bucket listings, each day's Parquet
+file) is cached in `./verify-cache` as it arrives, so a run that dies resumes
+at the last completed page and a re-run fetches nothing it already has. Build
+the Mongo snapshot first; after it finishes, MongoDB is no longer needed and
+can be shut down.
 
 ```bash
-docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env run --rm verify --start-date 2022-07-11 --end-date 2026-09-01
+docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env run --rm verify --start-date 2022-07-11 --end-date 2026-09-26 --snapshot-only
+docker compose -f docker-compose.legacy-migration.yaml --env-file tools/legacy-migration/.env run --rm verify --start-date 2022-07-11 --end-date 2026-09-26
 ```
+
+Verify reconciles every flight `_id` across Mongo, the legacy bucket, the
+new bucket and the Parquet indexes, and reports any outlier in any direction
+(also written in full to `./verify-cache/verify-report.tsv`). It trusts a
+matching ETag + size and never downloads objects. Anything legitimately lost
+(for example documents without `aircraft.icao_hex`) goes in
+`./verify-cache/accepted-loss.txt`, one `<_id> <reason>` per line; those are
+reported separately instead of failing the run.
+
+`--refresh mongo|source|dest|index|parquet|all` discards and re-fetches a
+cached dataset. The cache needs several GB of disk (SQLite). The Mongo
+snapshot is one pass over the whole collection, so run it once, off-hours.
 
 Then drain and review the DLQ (see below) and tear down the RabbitMQ user,
 policy, queues, and IAM identity (see "RabbitMQ setup" and "IAM" above).
