@@ -357,6 +357,21 @@ class TestIncrPeriodCounters:
                 metrics_flights_archived_key("hour"), metrics_flights_archived_key("today"),
             }
 
+    def test_reloads_script_on_noscript(self):
+        # 2195
+        import redis
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = self._make_processor(tmp_dir)
+            from shared.redis_keys import metrics_flights_archived_key
+
+            mock_redis.script_load.reset_mock()
+            mock_redis.evalsha.side_effect = [redis.exceptions.NoScriptError("NOSCRIPT"), 1, 1]
+            processor._incr_period_counters(metrics_flights_archived_key, ("hour", "today"))
+
+            mock_redis.script_load.assert_called_once_with(processor._incr_period_counter_lua)
+            assert mock_redis.evalsha.call_count == 3
+
     def test_hour_boundary_uses_real_utc_top_of_hour(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             processor, mock_redis = self._make_processor(tmp_dir)

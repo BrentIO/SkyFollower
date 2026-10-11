@@ -44,7 +44,7 @@ from shared.archive_index import (
 from shared.config import DATA_DIR, ConfigError, load_config
 from shared.index_cache import INDEX_CACHE_DIR, write_local_index
 from shared.metrics import next_period_boundary
-from shared.redis_client import build_redis_client
+from shared.redis_client import build_redis_client, evalsha_with_reload
 from shared.fallback_queue import FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.models import CompletedFlight
@@ -239,7 +239,8 @@ class ArchiveProcessor:
         _incr_lua_path = (
             pathlib.Path(__file__).parent.parent / "shared" / "lua" / "incr_period_counter.lua"
         )
-        self._incr_period_counter_sha = self._redis.script_load(_incr_lua_path.read_text())
+        self._incr_period_counter_lua = _incr_lua_path.read_text()
+        self._incr_period_counter_sha = self._redis.script_load(self._incr_period_counter_lua)
 
         # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
         # read once at startup and cached. Not hot-reloaded; restart to pick
@@ -554,8 +555,9 @@ class ArchiveProcessor:
         boundary instead of accumulating forever."""
         now = datetime.now(timezone.utc)
         for period in periods:
-            self._redis.evalsha(
-                self._incr_period_counter_sha, 0, key_fn(period), 1, next_period_boundary(period, now),
+            evalsha_with_reload(
+                self._redis, self._incr_period_counter_sha, self._incr_period_counter_lua, 0,
+                key_fn(period), 1, next_period_boundary(period, now),
             )
 
     def _process_flight(self, flight: CompletedFlight) -> None:

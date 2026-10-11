@@ -41,7 +41,7 @@ from pyModeS import PipeDecoder
 from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.config import DATA_DIR, ConfigError, load_config
-from shared.redis_client import build_redis_client
+from shared.redis_client import build_redis_client, evalsha_with_reload
 from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES, FallbackQueue
 from shared.ha_discovery import build_ha_device
 from shared.logging_setup import configure_logging
@@ -918,14 +918,15 @@ class MessageProcessor:
         # Redis
         rc = config["redis"]
         self._redis = build_redis_client(rc)
-        _lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "merge_aircraft.lua"
-        self._merge_sha = self._redis.script_load(_lua_path.read_text())
-        _route_lua_path = pathlib.Path(__file__).parent.parent / "shared" / "lua" / "route_airports.lua"
-        self._route_sha = self._redis.script_load(_route_lua_path.read_text())
-        _incr_lua_path = (
-            pathlib.Path(__file__).parent.parent / "shared" / "lua" / "incr_period_counter.lua"
-        )
-        self._incr_period_counter_sha = self._redis.script_load(_incr_lua_path.read_text())
+        # Script sources are kept so evalsha_with_reload can re-register
+        # them after a Redis restart flushes the script cache.
+        _lua_dir = pathlib.Path(__file__).parent.parent / "shared" / "lua"
+        self._merge_lua = (_lua_dir / "merge_aircraft.lua").read_text()
+        self._merge_sha = self._redis.script_load(self._merge_lua)
+        self._route_lua = (_lua_dir / "route_airports.lua").read_text()
+        self._route_sha = self._redis.script_load(self._route_lua)
+        self._incr_period_counter_lua = (_lua_dir / "incr_period_counter.lua").read_text()
+        self._incr_period_counter_sha = self._redis.script_load(self._incr_period_counter_lua)
 
         # Rules engine
         self._rules_engine = RulesEngine(self._redis)
@@ -1538,7 +1539,7 @@ class MessageProcessor:
 
     def _enrich_aircraft(self, flight: Flight) -> None:
         try:
-            raw = self._redis.evalsha(self._merge_sha, 0, flight.icao_hex)
+            raw = evalsha_with_reload(self._redis, self._merge_sha, self._merge_lua, 0, flight.icao_hex)
             if raw:
                 aircraft = json.loads(raw)
                 # Registry/Mictronics data must never seed wake_turbulence_category —
@@ -1635,8 +1636,9 @@ class MessageProcessor:
             airports = json.loads(flight.route_candidate_airports)
         else:
             try:
-                raw = self._redis.evalsha(
-                    self._route_sha, 0, normalize_flight_ident(flight.ident)
+                raw = evalsha_with_reload(
+                    self._redis, self._route_sha, self._route_lua, 0,
+                    normalize_flight_ident(flight.ident),
                 )
                 airports = json.loads(raw) if raw else []
             except Exception as exc:
@@ -2112,8 +2114,9 @@ class MessageProcessor:
                     if period == "lifetime":
                         self._redis.incrby(key_fn(self._id, period), delta)
                     else:
-                        self._redis.evalsha(
-                            self._incr_period_counter_sha, 0,
+                        evalsha_with_reload(
+                            self._redis, self._incr_period_counter_sha,
+                            self._incr_period_counter_lua, 0,
                             key_fn(self._id, period), delta, next_period_boundary(period, now),
                         )
             except Exception as exc:
