@@ -63,12 +63,17 @@ endif
 
 :**Sanity-check against the observed track**\nfor every position received so far;
 
-if (**Is the position too far off to the side of the route line?**\n""cross_track_distance_nm(position, origin, destination)"" > max(150nm, 30% * route_distance)\n(perpendicular distance to the great-circle line)) then (yes)
+if (**Is the position too far off to the side of the route line?**\n""cross_track_distance_nm(position, origin, destination)"" > min(max(150nm, 30% * route_distance), 300nm)\n(perpendicular distance to the great-circle line)) then (yes)
   :Reject: Leave origin/destination unset;
   stop
 endif
 
 if (**Is the position well outside the stretch between the origin and destination?**\n""along_track_distance_nm(position, origin, destination)"" not in [0, route_distance] (+/-50nm slack)\n(catches a position that's coincidentally near the line's\nbearing but well past one endpoint -- e.g. a holding pattern\nwhose heading matches a different, wrong leg's bearing)) then (yes)
+  :Reject: Leave origin/destination unset;
+  stop
+endif
+
+if (**Is the stable heading pointed away from the destination?**\nlatest heading > 100° off the bearing to the destination\n(skipped below 10,000ft or within 100nm of either endpoint)) then (yes)
   :Reject: Leave origin/destination unset;
   stop
 else (no)

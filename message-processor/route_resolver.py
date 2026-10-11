@@ -35,12 +35,16 @@ HEADING_TOLERANCE_DEG = 30
 # several similarly-plausible candidates.
 HEADING_MARGIN_DEG = 15
 
-# Cross-track sanity check: threshold_nm = max(floor, percentage * route_distance).
-# A flat nm value doesn't work at either end of the route-length spectrum,
-# so the threshold scales with the route's own distance, floored for very
-# short routes.
+# Cross-track sanity check: threshold_nm = min(max(floor, percentage * route), ceiling).
+# Scales with route length, floored for short hops and capped for long ones.
 CROSS_TRACK_FLOOR_NM = 150
 CROSS_TRACK_PERCENTAGE = 0.30
+CROSS_TRACK_CEILING_NM = 300
+
+# Heading sanity check: reject when a stable heading points this far off the
+# bearing to the candidate destination; skipped low or near either endpoint.
+HEADING_AWAY_TOLERANCE_DEG = 100
+HEADING_CHECK_ENDPOINT_EXCLUSION_NM = 100
 
 # Along-track sanity check: a position must project onto the great-circle
 # line between origin and destination (plus this slack) to count as "on
@@ -253,7 +257,10 @@ def _sanity_check_violation(
     route_distance_nm = haversine_nm(a[0], a[1], b[0], b[1])
     if route_distance_nm == 0:
         return "origin and destination resolve to the same coordinates"
-    cross_track_threshold_nm = max(CROSS_TRACK_FLOOR_NM, CROSS_TRACK_PERCENTAGE * route_distance_nm)
+    cross_track_threshold_nm = min(
+        max(CROSS_TRACK_FLOOR_NM, CROSS_TRACK_PERCENTAGE * route_distance_nm),
+        CROSS_TRACK_CEILING_NM,
+    )
 
     for pos in positions:
         point = (pos["latitude"], pos["longitude"])
@@ -272,6 +279,36 @@ def _sanity_check_violation(
     return None
 
 
+def _heading_check_violation(
+    positions: list[dict], velocities: list[dict], origin: dict, destination: dict
+) -> Optional[str]:
+    """Returns a reason if the latest stable heading points clearly away from
+    the destination; None when it agrees or the check doesn't apply (unstable
+    heading, unknown/low altitude, or near either endpoint)."""
+    if not positions or not heading_is_stable(velocities):
+        return None
+    a, b = _coords(origin), _coords(destination)
+    if a is None or b is None:
+        return None
+    pos = positions[-1]
+    altitude = pos.get("altitude")
+    if altitude is None or altitude < LOW_ALTITUDE_FT:
+        return None
+    lat, lon = pos["latitude"], pos["longitude"]
+    if min(haversine_nm(lat, lon, *a), haversine_nm(lat, lon, *b)) <= HEADING_CHECK_ENDPOINT_EXCLUSION_NM:
+        return None
+
+    heading = next(v["heading"] for v in reversed(velocities) if v.get("heading") is not None)
+    bearing = initial_bearing_deg(lat, lon, b[0], b[1])
+    diff = _heading_diff_deg(heading, bearing)
+    if diff > HEADING_AWAY_TOLERANCE_DEG:
+        return (
+            f"heading {heading:.0f}deg at position {(lat, lon)} is {diff:.0f}deg off the "
+            f"bearing to the destination ({bearing:.0f}deg), exceeding {HEADING_AWAY_TOLERANCE_DEG}deg"
+        )
+    return None
+
+
 def passes_cross_track_check(positions: list[dict], origin: dict, destination: dict) -> bool:
     """Rejects a candidate origin/destination pair whose great-circle line
     the flight's actual track never came close to -- the VRS standing-data
@@ -281,7 +318,7 @@ def passes_cross_track_check(positions: list[dict], origin: dict, destination: d
     than trusted unconditionally.
 
     Two independent checks against every recorded position: cross-track
-    (perpendicular distance, capped at max(150nm, 30% of route distance))
+    (perpendicular distance, capped at min(max(150nm, 30% of route), 300nm))
     and along-track (projection must fall within [0, route_distance] plus
     slack), catching a position that's coincidentally near the line's
     bearing but far past the destination."""
@@ -308,7 +345,9 @@ def resolve_origin_destination(
             "either lacked a match within tolerance or wasn't clear of the runner-up)",
         )
     origin, destination = leg
-    violation = _sanity_check_violation(positions, origin, destination)
+    violation = _sanity_check_violation(positions, origin, destination) or _heading_check_violation(
+        positions, velocities, origin, destination
+    )
     if violation is not None:
         reason = (
             f"candidate leg {origin.get('icao_code')}->{destination.get('icao_code')} "

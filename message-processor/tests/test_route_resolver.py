@@ -36,6 +36,8 @@ MMMX = {"icao_code": "MMMX", "latitude": 19.4363, "longitude": -99.0721}
 EGLL = {"icao_code": "EGLL", "latitude": 51.4706, "longitude": -0.4619}
 KMIA = {"icao_code": "KMIA", "latitude": 25.7959, "longitude": -80.2870}
 KMCO = {"icao_code": "KMCO", "latitude": 28.4294, "longitude": -81.3089}
+KSJC = {"icao_code": "KSJC", "latitude": 37.363, "longitude": -121.929}
+KBWI = {"icao_code": "KBWI", "latitude": 39.175, "longitude": -76.668}
 
 
 def _pos(lat: float, lon: float, altitude=None) -> dict:
@@ -283,10 +285,19 @@ class TestCrossTrackCheck:
         assert passes_cross_track_check(positions, KMSP, KMKE) is False
 
     def test_long_haul_generous_threshold_accepts_real_routing_variance(self):
-        # MMMX -> EGLL is ~4800nm; a few hundred nm of real-world routing
-        # deviation is well within the 30%-of-route-distance threshold.
+        # MMMX -> EGLL is ~4800nm; ~270nm off the line is under the 300nm ceiling.
         positions = [_pos(29.0, -83.0)]  # near Orlando -- plausible routing
         assert passes_cross_track_check(positions, MMMX, EGLL) is True
+
+    def test_long_haul_between_ceiling_and_percentage_rejected(self):
+        # #2201: ~564nm off MMMX-EGLL passes 30% (~1440nm) but not the 300nm ceiling.
+        positions = [_pos(32.0, -70.0)]
+        assert passes_cross_track_check(positions, MMMX, EGLL) is False
+
+    def test_swa621_ksjc_kbwi_rejected_by_ceiling(self):
+        # #2201: 618nm off a 2114nm route; passed the old 634nm threshold.
+        positions = [_pos(29.509, -82.100, altitude=20950)]
+        assert passes_cross_track_check(positions, KSJC, KBWI) is False
 
     def test_short_route_tight_threshold_rejects_implausible_deviation(self):
         # KJFK -> KATL (~660nm, threshold ~198nm): ~300nm off the corridor
@@ -395,8 +406,82 @@ class TestResolveOriginDestination:
         assert "KMIA" in reason and "KMCO" in reason
         assert "along-track" in reason
 
+    def test_swa621_first_position_rejected(self):
+        # #2201: KBNA->KMCO flight tagged KSJC->KBWI.
+        positions = [_pos(29.509, -82.100, altitude=20950)]
+        origin, destination, is_final, reason = resolve_origin_destination(
+            [KSJC, KBWI], positions, _vels(170, 170, 170)
+        )
+        assert (origin, destination) == (None, None)
+        assert is_final is True
+        assert "KSJC" in reason and "KBWI" in reason
+
     def test_never_partial_never_guesses(self):
         """Every branch returns either a fully-resolved pair or (None, None) --
         there is no code path that can set one field without the other."""
         origin, destination, _is_final, _reason = resolve_origin_destination([], [], [])
         assert origin is None and destination is None
+
+
+# ---------------------------------------------------------------------------
+# Heading-vs-destination sanity check (#2201)
+# ---------------------------------------------------------------------------
+
+class TestHeadingSanityCheck:
+    # (37.0, -79.0) is ~330nm from both KJFK and KATL; bearing to KATL ~234deg.
+    MIDPOINT = (37.0, -79.0)
+
+    def _resolve(self, airports, lat, lon, altitude, velocities):
+        return resolve_origin_destination(airports, [_pos(lat, lon, altitude=altitude)], velocities)
+
+    def test_heading_toward_destination_accepted(self):
+        origin, destination, _, reason = self._resolve(
+            [KJFK, KATL], *self.MIDPOINT, 35000, _vels(232, 234, 236)
+        )
+        assert (origin, destination) == (KJFK, KATL)
+        assert reason is None
+
+    def test_heading_away_from_destination_rejected(self):
+        origin, destination, is_final, reason = self._resolve(
+            [KJFK, KATL], *self.MIDPOINT, 35000, _vels(50, 52, 54)
+        )
+        assert (origin, destination) == (None, None)
+        assert is_final is True
+        assert "heading" in reason
+
+    def test_unstable_heading_in_hold_not_rejected(self):
+        origin, destination, _, reason = self._resolve(
+            [KJFK, KATL], *self.MIDPOINT, 22000, _vels(54, 144, 234, 324)
+        )
+        assert (origin, destination) == (KJFK, KATL)
+        assert reason is None
+
+    def test_stable_heading_away_below_10000ft_not_rejected(self):
+        origin, destination, _, reason = self._resolve(
+            [KJFK, KATL], *self.MIDPOINT, 8000, _vels(50, 52, 54)
+        )
+        assert (origin, destination) == (KJFK, KATL)
+        assert reason is None
+
+    def test_stable_heading_away_near_destination_not_rejected(self):
+        # Downwind/vectoring ~60nm northeast of KATL, heading away from the field.
+        origin, destination, _, reason = self._resolve(
+            [KJFK, KATL], 34.3, -83.4, 12000, _vels(50, 52, 54)
+        )
+        assert (origin, destination) == (KJFK, KATL)
+        assert reason is None
+
+    def test_stable_heading_away_near_origin_not_rejected(self):
+        # Departure vectoring ~50nm southwest of KJFK before turning on course.
+        origin, destination, _, reason = self._resolve(
+            [KJFK, KATL], 40.1, -74.5, 14000, _vels(40, 42, 44)
+        )
+        assert (origin, destination) == (KJFK, KATL)
+        assert reason is None
+
+    def test_multi_leg_resolved_pair_at_cruise_accepted(self):
+        origin, destination, _, reason = resolve_origin_destination(
+            [KMIA, KJFK, KMIA], [_pos(37.0, -76.0, altitude=35000)], _vels(204, 205, 206)
+        )
+        assert (origin, destination) == (KJFK, KMIA)
+        assert reason is None
