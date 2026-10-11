@@ -1,8 +1,3 @@
-"""
-Guards the management-ui/map HTTPS port defaults and their .env handling in
-scripts/install.sh.
-"""
-
 from __future__ import annotations
 
 import re

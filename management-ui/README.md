@@ -36,8 +36,7 @@ Served over HTTPS on `MANAGEMENT_UI_HTTPS_PORT` (default `18443`, e.g.
 `https://<host>:18443`) with a self-signed certificate by default. There is
 no plain-HTTP listener: a plain `http://` request to that same port gets a
 `301` to `https://` on the same host and port (nginx's `error_page 497`).
-The default avoids 443/80, so management-ui and map (default `19443`) can
-share a host with each other and with anything else already on 443. There is no
+There is no
 authentication either way (see the table above) — TLS here is about
 encrypting traffic on the LAN, not access control.
 

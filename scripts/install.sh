@@ -1072,7 +1072,6 @@ collect_management_ui_env() {
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
 
-# Host port the HTTPS UI is published on; plain HTTP to it redirects to HTTPS.
 MANAGEMENT_UI_HTTPS_PORT=${MANAGEMENT_UI_HTTPS_PORT}
 
 REDIS_HOST=${REDIS_HOST}
@@ -1153,8 +1152,7 @@ collect_map_env() {
 MAP_LISTEN_HOST=${MAP_LISTEN_HOST}
 MAP_LISTEN_PORT=${MAP_LISTEN_PORT}
 
-# REST (\`GET /api/flights\`) + WebSocket (\`/ws\`) on one HTTPS port, bound
-# in the container and published on the host under the same number.
+# REST (\`GET /api/flights\`) + WebSocket (\`/ws\`), same port.
 MAP_HTTP_HOST=${MAP_HTTP_HOST}
 MAP_HTTPS_PORT=${MAP_HTTPS_PORT}
 
@@ -2167,8 +2165,8 @@ do_upgrade() {
     # operator edits, is left as-is. Also renames the map role's old
     # MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys to MAP_CENTER_LATITUDE/
     # MAP_CENTER_LONGITUDE, and drops the retired MAP_STALE_SECONDS/
-    # MAP_HIDE_SECONDS/MAP_EVICT_SECONDS lines, and renames MAP_HTTP_PORT to
-    # MAP_HTTPS_PORT (value kept) -- all no-ops on every non-map role dir.
+    # MAP_HIDE_SECONDS/MAP_EVICT_SECONDS lines -- both no-ops on every
+    # non-map role dir.
     local tmp role_compose="" has_https_port=0
     grep -q '^MAP_HTTPS_PORT=' "$env_file" && has_https_port=1
     case "$(basename "$role_dir")" in
@@ -2192,7 +2190,7 @@ do_upgrade() {
       printf '\n# Opt-in forensic raw-frame capture; see message-processor/README.md.\nCAPTURE_RAW_FRAMES=false\n' >> "$env_file"
     fi
     if [ "$(basename "$role_dir")" = "management-ui" ] && ! grep -q '^MANAGEMENT_UI_HTTPS_PORT=' "$env_file"; then
-      printf '\n# Host port the HTTPS UI is published on; plain HTTP to it redirects to HTTPS.\nMANAGEMENT_UI_HTTPS_PORT=18443\n' >> "$env_file"
+      printf '\nMANAGEMENT_UI_HTTPS_PORT=18443\n' >> "$env_file"
     fi
     # --profile runners on the pull refreshes the runner-* images too (a
     # no-op where the compose file declares no such profile). Deliberately

@@ -80,7 +80,7 @@ host's `.env`.
 | `MAP_LISTEN_HOST` | ❌ | `0.0.0.0` | Bind address for the UDP listener |
 | `MAP_LISTEN_PORT` | ✅ | — | Bind port for the UDP listener. Must match whatever port a message processor's `MAP_UDP_PORT` sends datagrams to -- see [Deliberately distinct variable names](#deliberately-distinct-variable-names) below |
 | `MAP_HTTP_HOST` | ❌ | `0.0.0.0` | Bind address for the REST/WebSocket API |
-| `MAP_HTTPS_PORT` | ❌ | `19443` | Bind (and published) port for the REST/WebSocket API. HTTPS when a TLS cert/key pair is present (see [TLS](#tls) above) — the normal case — plain HTTP otherwise. Defaults to `19443` rather than `443` so map and management-ui coexist on one host. There is no separate plain-HTTP redirect listener; the service binds this one port only |
+| `MAP_HTTPS_PORT` | ❌ | `19443` | Bind (and published) port for the REST/WebSocket API. HTTPS when a TLS cert/key pair is present (see [TLS](#tls) above) — the normal case — plain HTTP otherwise. There is no separate plain-HTTP redirect listener; the service binds this one port only |
 | `MAP_REDIS_HOST` | ✅ | — | Dedicated Redis instance for this service's own live aircraft state -- **not** core Redis (see the repo root docs' Redis Key Schema for core's schema; this service never reads or writes any of those keys) |
 | `MAP_REDIS_PORT` | ❌ | `6379` | |
 | `MAP_REDIS_PASSWORD` | ❌ | — | Optional, unlike core's `REDIS_PASSWORD` -- see [Why `MAP_REDIS_PASSWORD` is optional](#why-map_redis_password-is-optional) below |
