@@ -61,11 +61,14 @@ this job:
    advances past a date once its compaction step actually completes. A
    file's local index-cache copy (if any) is removed the moment its S3
    counterpart is confirmed deleted — see [Local Index
-   Cache](#local-index-cache).
+   Cache](#local-index-cache). Transient per-key S3 errors
+   (`InternalError`, `SlowDown`, `ServiceUnavailable`) and whole-request
+   failures are retried up to 3 attempts total with a 1s/2s backoff;
+   other errors (e.g. `AccessDenied`) are not retried.
 
 A file that's left behind — whether a late straggler or one whose delete
-call failed after being included in a compacted output — is not retried by
-a later run targeting a different date. This is an accepted, self-healing
+still failed after retries, after being included in a compacted output — is
+not picked up by a later run targeting a different date. This is an accepted, self-healing
 edge case (see `specs/data-dictionary.yaml`), not a bug: it costs one extra
 small file in that day's partition, not incorrect query results, except in
 the narrow case of a post-inclusion delete failure, where the row is
@@ -147,7 +150,7 @@ Published once, at the end of a run, to
 | Topic suffix | Value | Format |
 |---|---|---|
 | `files_compacted` | e.g. `142` | Integer as string — per-flight files merged into this run's compacted output(s), summed across every date compacted this run |
-| `files_delete_failed` | e.g. `0` | Integer as string — files that were included in a compacted output but whose delete call failed, and therefore still linger as duplicates, summed across every date compacted this run |
+| `files_delete_failed` | e.g. `0` | Integer as string — files that were included in a compacted output but whose delete still failed after retries, and therefore still linger as duplicates, summed across every date compacted this run |
 | `days_compacted` | e.g. `1` | Integer as string — number of date partitions successfully compacted this run (more than one during catch-up after a gap) |
 | `last_compacted_date` | e.g. `2026-07-23`, or `None` | The watermark after this run — the most recent date whose partition has been fully compacted; `None` only on a fresh deployment before the first successful compaction |
 | `mismatch_date` | e.g. `2026-07-24`, or `None` | The date this run stopped at due to a flight/index parity mismatch; `None` when the run wasn't stopped by one |
