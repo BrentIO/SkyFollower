@@ -372,7 +372,7 @@ class RangeOutlineStore:
     def _cleanup_old_snapshots(self) -> None:
         if not self._dir.is_dir():
             return
-        cutoff = datetime.now(timezone.utc).date()
+        cutoff = datetime.strptime(_utc_today(), _DATE_FMT).date()
         for path in self._dir.glob("*.json"):
             if not _is_date(path.stem):
                 continue
