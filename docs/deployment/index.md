@@ -307,9 +307,12 @@ runner).
 --upgrade` re-resolves the latest release tag, re-fetches each role
 directory's `docker-compose.*.yaml` and any `config/*.example` templates
 (so a service, label, or port mapping added to a compose file since the
-last install/upgrade actually reaches an existing deployment), rewrites
-`SKYFOLLOWER_VERSION` in every role directory found under the install
-root, and runs `docker compose pull && up -d` in each — no prompting. Every
+last install/upgrade actually reaches an existing deployment), and runs
+`docker compose pull && up -d` in every role directory found under the
+install root — no prompting. `SKYFOLLOWER_VERSION` is rewritten only once
+that role's pull and `up -d` succeed; a failed role keeps its old value and
+the run continues with the remaining roles, then prints a per-role summary
+and exits non-zero so you know what to re-run. Every
 compose file is replaced, including `docker-compose.message-processor.yaml`
 and `docker-compose.receiver.yaml`; the per-instance env files and generated
 `docker-compose.instances.yaml` next to them are left alone. An install that
