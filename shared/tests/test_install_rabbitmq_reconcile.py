@@ -1,9 +1,3 @@
-"""
-Guards scripts/install.sh's RabbitMQ user reconcile: missing users
-are created, existing users get change_password so the broker matches
-.env, and an unreachable broker warns without failing.
-"""
-
 from __future__ import annotations
 
 import re
@@ -25,8 +19,6 @@ _FUNCS = "\n".join(
     for n in ("existing_env_value", "reconcile_rabbitmq_user", "provision_rabbitmq_users")
 )
 
-# Fake broker: USERS_FILE holds one "name<TAB>[tags]" line per user;
-# every rabbitmqctl call is logged to CALL_LOG.
 _HARNESS = r"""
 set -euo pipefail
 docker() {

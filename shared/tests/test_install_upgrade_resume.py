@@ -125,7 +125,6 @@ class TestUpgradeResume:
 
 
 class TestUpgradeReconcilesRabbitmqUsers:
-    # #2197
     def _provisioned(self, tmp_path: Path) -> list[str]:
         return [ln for ln in (tmp_path / "docker.log").read_text().splitlines() if ln.startswith("PROVISION ")]
 

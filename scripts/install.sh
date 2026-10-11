@@ -1705,8 +1705,7 @@ offer_up() {
   fi
 }
 
-# Creates the user if the broker lacks it, otherwise resets its password so
-# the broker matches .env. $4 is `list_users` output captured by the caller.
+# $4 is `list_users` output captured by the caller.
 reconcile_rabbitmq_user() {
   local role_dir="$1" user="$2" password="$3" users="$4"
   if grep -q "^${user}[[:space:]]" <<< "$users"; then
@@ -1725,9 +1724,7 @@ provision_rabbitmq_users() {
   # start. This runs once the container is up, demoting the application
   # user to SkyFollower's own resources and creating a separate dashboard
   # administrator, so a compromised host only ever holds a credential
-  # scoped to known queue names. It is a full reconcile against .env
-  # (missing users created, every password reset), safe to re-run, and
-  # also runs on every --upgrade of the core role.
+  # scoped to known queue names. Reconciles against .env, so re-running is safe.
   local role_dir="$1"
   local rabbitmq_username rabbitmq_password rabbitmq_admin_username rabbitmq_admin_password
   local rabbitmq_monitoring_username rabbitmq_monitoring_password
@@ -2219,8 +2216,7 @@ do_upgrade() {
     )
     rc=$?
     set -e
-    # Runs even if this role's upgrade failed: the broker may still be up on
-    # the old images. Never fails the upgrade; unreachable just warns.
+    # Runs even if the role failed: the broker may still be up on the old images.
     if [ "$(basename "$role_dir")" = "core" ]; then
       provision_rabbitmq_users "$role_dir" || echo "  ⚠ RabbitMQ user reconcile did not complete -- continuing." >&2
     fi
