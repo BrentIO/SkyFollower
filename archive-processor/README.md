@@ -430,7 +430,8 @@ each sensor's `state_topic` points directly at its own
 at the real UTC hour/midnight boundary rather than accumulating forever.
 Both increments go through `EVALSHA` against
 `shared/lua/incr_period_counter.lua` (`SCRIPT LOAD`ed once at startup into
-`self._incr_period_counter_sha`), which sets `EXPIREAT` to the real next UTC
+`self._incr_period_counter_sha`, reloaded once on `NoScriptError` after a
+Redis restart), which sets `EXPIREAT` to the real next UTC
 boundary (`shared/metrics.py`'s `next_period_boundary()`) only the instant a
 call creates the key — never on a later increment within the same period, so
 the window can't slide forward. Redis's own TTL expiry deletes the key at

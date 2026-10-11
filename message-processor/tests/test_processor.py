@@ -10,18 +10,21 @@ import json
 import logging
 import math
 import os
+import pathlib
 import signal
 import sqlite3
 import sys
 import tempfile
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pika
 import pyModeS as pms
 import pytest
+import redis
 from pyModeS._altcode import altcode_to_altitude
 from pyModeS._bits import crc_remainder
 from pyModeS.position._cpr import cprNL
@@ -6251,3 +6254,99 @@ class TestArchiveNeverCarriesRawFrames:
         )
         assert b"SECRET-RAW-FRAME" not in archive_body
         assert b"SECRET-RAW-FRAME" in raw_frames_body
+
+
+def _noscript_then(result):
+    calls = {"n": 0}
+
+    def _side_effect(*_args):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise redis.exceptions.NoScriptError("NOSCRIPT No matching script")
+        return result
+
+    return _side_effect
+
+
+class TestLuaScriptReloadOnNoScript:
+    def test_enrich_aircraft_reloads_merge_script(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.side_effect = _noscript_then(
+            json.dumps({"icao_hex": "A8AE7F", "registration": "N659DL"})
+        )
+        mock_redis.script_load.reset_mock()
+
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        p._enrich_aircraft(f)
+
+        assert f.aircraft["registration"] == "N659DL"
+        mock_redis.script_load.assert_called_once_with(p._merge_lua)
+
+    def test_route_resolution_reloads_route_script(self):
+        p, mock_redis = _make_processor()
+        airports = [
+            {"icao_code": "KJFK", "latitude": 40.6398, "longitude": -73.7789},
+            {"icao_code": "KATL", "latitude": 33.6367, "longitude": -84.4281},
+        ]
+        mock_redis.evalsha.side_effect = _noscript_then(json.dumps(airports))
+        mock_redis.script_load.reset_mock()
+        f = TestMaybeResolveRoute()._make_ready_flight(p)
+
+        p._maybe_resolve_route(f)
+
+        mock_redis.script_load.assert_called_once_with(p._route_lua)
+        assert f.origin == airports[0]
+        assert f.destination == airports[1]
+
+    def test_period_counter_flush_reloads_incr_script(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.side_effect = _noscript_then(1)
+        mock_redis.script_load.reset_mock()
+        p._total_messages_processed.record(3)
+
+        p._flush_period_counters()
+
+        mock_redis.script_load.assert_called_once_with(p._incr_period_counter_lua)
+        keys = [c.args[2] for c in mock_redis.evalsha.call_args_list]
+        assert keys.count(metrics_total_messages_processed_key(p._id, "hour")) == 2
+        assert metrics_total_messages_processed_key(p._id, "today") in keys
+
+
+class TestLuaScriptReloadLive:
+    # SCRIPT FLUSH is server-wide; don't share this Redis with a concurrent test run.
+
+    def test_enrichment_survives_script_flush(self):
+        client = redis.Redis(
+            host=os.environ.get("REDIS_TEST_HOST", "localhost"),
+            port=int(os.environ.get("REDIS_TEST_PORT", "6379")),
+            decode_responses=True, socket_connect_timeout=2,
+        )
+        try:
+            client.ping()
+        except (redis.exceptions.RedisError, OSError):
+            pytest.skip("No Redis reachable for live script-reload testing")
+
+        p, _ = _make_processor()
+        p._redis = client
+        p._merge_lua = (pathlib.Path(_REPO_ROOT) / "shared" / "lua" / "merge_aircraft.lua").read_text()
+        p._merge_sha = client.script_load(p._merge_lua)
+
+        hex_ = "FFFD" + uuid.uuid4().hex[:2].upper()
+        key = f"aircraft:registry:{hex_}"
+        client.json().set(key, "$", {"registration": "N5551T"})
+        try:
+            first = Flight(p._db)
+            first.icao_hex = hex_
+            p._enrich_aircraft(first)
+            assert first.aircraft["registration"] == "N5551T"
+
+            client.script_flush()
+
+            second = Flight(p._db)
+            second.icao_hex = hex_
+            p._enrich_aircraft(second)
+            assert second.aircraft["registration"] == "N5551T"
+        finally:
+            client.delete(key)
+            client.close()
