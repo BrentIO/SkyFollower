@@ -237,8 +237,7 @@ def metrics_flights_skipped_key(period: str) -> str:
 
 
 def metrics_fields_backfilled_key(period: str) -> str:
-    """Counter for empty aircraft/registrant/operator fields the archive
-    processor filled from Redis at write time."""
+    """Counter for empty enrichment fields the archive processor filled at write time."""
     if period not in _VALID_ARCHIVE_PERIODS:
         raise ValueError(f"period must be one of {_VALID_ARCHIVE_PERIODS}, got: {period!r}")
     return f"metrics:archive:fields_backfilled:{period}"

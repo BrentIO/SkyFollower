@@ -2053,10 +2053,6 @@ class TestS3PoolSizing:
             assert kwargs["config"].max_pool_connections >= _ARCHIVE_WORKER_COUNT
 
 
-# ---------------------------------------------------------------------------
-# Archive-time enrichment backfill
-# ---------------------------------------------------------------------------
-
 _FRESH_AIRCRAFT = {
     "icao_hex": "A8AE7F",
     "registration": "N659DL",
@@ -2070,8 +2066,6 @@ _FRESH_OPERATOR = {"airline_designator": "DAL", "name": "Delta Air Lines", "sour
 
 
 def _backfill_processor(tmp_dir, aircraft=None, operator=None):
-    """Processor whose Redis serves merge_aircraft.lua/operator lookups from
-    the given dicts (None = miss), with an in-memory S3."""
     processor, mock_redis = _make_processor(tmp_dir)
     processor._s3_client = _FakeS3()
     processor._merge_sha = "mergesha"
@@ -2243,10 +2237,10 @@ class TestArchiveEnrichmentBackfill:
             assert processor._s3_client.read_json(key)["aircraft"]["registration"] == "N659DL"
 
     @pytest.mark.parametrize("ident, aircraft", [
-        ("N12345", {"icao_hex": "A8AE7F"}),             # US tail number
-        ("CGABC", {"icao_hex": "A8AE7F", "registration": "C-GABC"}),  # ident is the registration
-        ("X1234", {"icao_hex": "A8AE7F"}),              # prefix shorter than 2
-        (None, {"icao_hex": "A8AE7F"}),                 # no ident
+        ("N12345", {"icao_hex": "A8AE7F"}),
+        ("CGABC", {"icao_hex": "A8AE7F", "registration": "C-GABC"}),
+        ("X1234", {"icao_hex": "A8AE7F"}),
+        (None, {"icao_hex": "A8AE7F"}),
     ])
     def test_operator_lookup_skip_rules(self, ident, aircraft):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -2351,9 +2345,6 @@ class TestArchiveEnrichmentBackfill:
 
 
 class TestArchiveEnrichmentBackfillLive:
-    """Real merge_aircraft.lua against a live redis-stack; skipped when none
-    is reachable (REDIS_TEST_HOST/PORT)."""
-
     def test_backfills_from_real_merge_script(self):
         import pathlib
         import uuid
@@ -2373,7 +2364,7 @@ class TestArchiveEnrichmentBackfillLive:
         hex_ = "FFFC" + uuid.uuid4().hex[:2].upper()
         key = f"aircraft:registry:{hex_}"
         client.json().set(key, "$", {
-            "source": "us-faa-registry", "registration": "N2203T",
+            "source": "us-faa-registry", "registration": "N5552T",
             "registrant": {"names": ["Test Owner"]},
         })
         try:
@@ -2393,7 +2384,7 @@ class TestArchiveEnrichmentBackfillLive:
                     processor._archive_flight_to_s3(flight)
 
                 record = processor._s3_client.read_json(next(iter(processor._s3_client.objects)))
-                assert record["aircraft"]["registration"] == "N2203T"
+                assert record["aircraft"]["registration"] == "N5552T"
                 assert record["aircraft"]["data_sources"] == ["us-faa-registry"]
                 assert record["registrant"] == {"names": ["Test Owner"]}
         finally:

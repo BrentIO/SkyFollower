@@ -101,8 +101,7 @@ _ARCHIVE_WORKER_COUNT = 12
 # reconnect-loop and index-fallback-drain threads.
 _S3_MAX_POOL_CONNECTIONS = _ARCHIVE_WORKER_COUNT + 4
 
-# Receiver-decoded (or, for data_sources, replaced wholesale), so never
-# leaf-filled by the archive-time backfill.
+# Receiver-decoded, or replaced wholesale (data_sources), so never leaf-filled.
 _BACKFILL_EXCLUDED_AIRCRAFT_FIELDS = frozenset({
     "wake_turbulence_category", "adsb_version", "emitter_category", "data_sources",
 })
@@ -671,13 +670,8 @@ class ArchiveProcessor:
         if backfilled:
             self._record_fields_backfilled(backfilled)
 
-    # ------------------------------------------------------------------
-    # Archive-time enrichment backfill
-    # ------------------------------------------------------------------
-
     def _backfill_enrichment(self, flight: CompletedFlight) -> tuple[CompletedFlight, int]:
-        """One best-effort retry of aircraft/registrant/operator enrichment,
-        filling only empty leaves. Returns (flight, leaves filled); never raises."""
+        """Best-effort fill of empty enrichment leaves from Redis; returns (flight, leaves filled), never raises."""
         try:
             return self._backfill_enrichment_unguarded(flight)
         except Exception as exc:

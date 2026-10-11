@@ -6353,7 +6353,6 @@ class TestLuaScriptReloadLive:
 
 
 class TestSharedEnrichmentHelpers:
-    # 2203
     def test_enrich_aircraft_uses_shared_post_processing(self):
         p, mock_redis = _make_processor()
         mock_redis.evalsha.return_value = '{"icao_hex": "A8AE7F"}'

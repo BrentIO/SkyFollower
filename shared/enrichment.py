@@ -1,8 +1,4 @@
-"""
-Aircraft/registrant/operator enrichment helpers shared by the message
-processor (enrich once per flight) and the archive processor (backfill
-empty fields at write time), so the two can't drift apart.
-"""
+"""Enrichment helpers shared by the message and archive processors so the two can't drift apart."""
 
 from __future__ import annotations
 
@@ -11,26 +7,19 @@ import json
 import re
 from typing import Optional
 
-# US registration (tail number) idents skip the operator lookup.
 US_REG_RE = re.compile(
     r"^[LT]?N[CXR]?[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$"
 )
 
 
 def ident_matches_registration(ident: str, aircraft: dict) -> bool:
-    """True when the broadcast ident is just the aircraft's own tail number
-    (registration) rather than a route-bearing flight identifier/callsign —
-    dash-insensitive, matching SkyFollower-legacy's setIdent()/_getOperator()
-    precedent. Shared by operator enrichment and route-leg resolution, since
-    both need the same "is this really a flight number" judgment call."""
+    """True when the ident is just the aircraft's own registration (dash-insensitive), not a flight number."""
     registration = aircraft.get("registration", "")
     return bool(registration) and registration.replace("-", "") == ident.replace("-", "")
 
 
 def operator_lookup_prefix(ident: Optional[str], aircraft: dict) -> Optional[str]:
-    """ICAO airline prefix to look up as operator:{prefix}, or None when the
-    ident is a US tail number, equals the registration, or has no 2+ letter
-    prefix."""
+    """ICAO airline prefix for operator:{prefix}, or None for tail-number idents or a prefix under 2 letters."""
     if not ident or US_REG_RE.match(ident) or ident_matches_registration(ident, aircraft):
         return None
     prefix = re.split(r"[^a-zA-Z]", ident)[0]
@@ -59,9 +48,7 @@ def _leaf_count(value) -> int:
 
 
 def fill_empty_leaves(stored: dict, fresh: dict, exclude: frozenset = frozenset()) -> int:
-    """Copy each non-empty leaf of `fresh` into `stored` where `stored` is
-    empty, recursing into sub-objects; never overwrites data. Mutates
-    `stored`; returns the number of leaves filled."""
+    """Fill empty leaves of `stored` in place from `fresh`, never overwriting data; returns leaves filled."""
     filled = 0
     for key, fresh_value in fresh.items():
         if key in exclude or is_empty(fresh_value):
