@@ -1065,10 +1065,15 @@ collect_management_ui_env() {
   SHARED_CONN_MQTT_USERNAME="$MQTT_USERNAME"
   SHARED_CONN_MQTT_PASSWORD="$MQTT_PASSWORD"
 
+  MANAGEMENT_UI_HTTPS_PORT="$(prompt_int_range MANAGEMENT_UI_HTTPS_PORT "management-ui HTTPS port on this host" "$(existing_env_value_or "$env_file" MANAGEMENT_UI_HTTPS_PORT 18443)" 1 65535)"
+
   generate_self_signed_cert "${role_dir}/data/management-ui/tls" "management-ui" MANAGEMENT_UI_TLS_EXTRA_SAN
 
   write_env_header "$env_file" "$role_dir"
   cat >> "$env_file" <<ENV_EOF
+
+# Host port the HTTPS UI is published on; plain HTTP to it redirects to HTTPS.
+MANAGEMENT_UI_HTTPS_PORT=${MANAGEMENT_UI_HTTPS_PORT}
 
 REDIS_HOST=${REDIS_HOST}
 REDIS_PORT=${REDIS_PORT}
@@ -1109,7 +1114,8 @@ collect_map_env() {
   MAP_LISTEN_HOST="$(prompt_string MAP_LISTEN_HOST "UDP listener bind address" "$(existing_env_value_or "$env_file" MAP_LISTEN_HOST 0.0.0.0)")"
   MAP_LISTEN_PORT="$(prompt_int_range MAP_LISTEN_PORT "UDP listener bind port (message-processor's MAP_UDP_PORT must point here)" "$(existing_env_value_or "$env_file" MAP_LISTEN_PORT 30500)" 1 65535)"
   MAP_HTTP_HOST="$(prompt_string MAP_HTTP_HOST "REST/WebSocket bind address" "$(existing_env_value_or "$env_file" MAP_HTTP_HOST 0.0.0.0)")"
-  MAP_HTTP_PORT="$(prompt_int_range MAP_HTTP_PORT "REST/WebSocket bind port (HTTPS by default)" "$(existing_env_value_or "$env_file" MAP_HTTP_PORT 443)" 1 65535)"
+  # Falls back to the pre-rename MAP_HTTP_PORT so an existing install keeps its port.
+  MAP_HTTPS_PORT="$(prompt_int_range MAP_HTTPS_PORT "REST/WebSocket HTTPS port" "$(existing_env_value_or "$env_file" MAP_HTTPS_PORT "$(existing_env_value_or "$env_file" MAP_HTTP_PORT 19443)")" 1 65535)"
   # Dedicated map-redis (bundled in docker-compose.map.yaml) -- never core
   # Redis. Defaults to the map-redis service name.
   MAP_REDIS_HOST="$(prompt_string MAP_REDIS_HOST "map-redis host" "$(existing_env_value_or "$env_file" MAP_REDIS_HOST map-redis)")"
@@ -1147,9 +1153,10 @@ collect_map_env() {
 MAP_LISTEN_HOST=${MAP_LISTEN_HOST}
 MAP_LISTEN_PORT=${MAP_LISTEN_PORT}
 
-# REST (\`GET /api/flights\`) + WebSocket (\`/ws\`), same port.
+# REST (\`GET /api/flights\`) + WebSocket (\`/ws\`) on one HTTPS port, bound
+# in the container and published on the host under the same number.
 MAP_HTTP_HOST=${MAP_HTTP_HOST}
-MAP_HTTP_PORT=${MAP_HTTP_PORT}
+MAP_HTTPS_PORT=${MAP_HTTPS_PORT}
 
 # Dedicated Redis (map-redis, in docker-compose.map.yaml) -- never core
 # Redis. MAP_REDIS_PASSWORD is optional; leave blank to match map-redis's
@@ -2160,15 +2167,17 @@ do_upgrade() {
     # operator edits, is left as-is. Also renames the map role's old
     # MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys to MAP_CENTER_LATITUDE/
     # MAP_CENTER_LONGITUDE, and drops the retired MAP_STALE_SECONDS/
-    # MAP_HIDE_SECONDS/MAP_EVICT_SECONDS lines -- both no-ops on every
-    # non-map role dir.
-    local tmp role_compose=""
+    # MAP_HIDE_SECONDS/MAP_EVICT_SECONDS lines, and renames MAP_HTTP_PORT to
+    # MAP_HTTPS_PORT (value kept) -- all no-ops on every non-map role dir.
+    local tmp role_compose="" has_https_port=0
+    grep -q '^MAP_HTTPS_PORT=' "$env_file" && has_https_port=1
     case "$(basename "$role_dir")" in
       receiver|message-processor) role_compose="$(role_compose_files "$(basename "$role_dir")")" ;;
     esac
     tmp="$(mktemp)"
-    awk -v v="$IMAGE_VERSION" -v cf="$role_compose" '
+    awk -v v="$IMAGE_VERSION" -v cf="$role_compose" -v has_https="$has_https_port" '
       cf != "" && /^COMPOSE_FILE=/ { print "COMPOSE_FILE=" cf; next }
+      /^MAP_HTTP_PORT=/ { if (!has_https) { sub(/^MAP_HTTP_PORT=/, "MAP_HTTPS_PORT="); print }; next }
       /^SKYFOLLOWER_VERSION=/ { print "SKYFOLLOWER_VERSION=" v; next }
       /^MAP_(STALE|HIDE|EVICT)_SECONDS=/ { next }
       /^# Lifecycle TTLs, seconds\. MAP_STALE_SECONDS/ { skip_note = 1; next }
@@ -2181,6 +2190,9 @@ do_upgrade() {
     (umask 077; mv "$tmp" "$env_file")
     if [ "$(basename "$role_dir")" = "message-processor" ] && ! grep -q '^CAPTURE_RAW_FRAMES=' "$env_file"; then
       printf '\n# Opt-in forensic raw-frame capture; see message-processor/README.md.\nCAPTURE_RAW_FRAMES=false\n' >> "$env_file"
+    fi
+    if [ "$(basename "$role_dir")" = "management-ui" ] && ! grep -q '^MANAGEMENT_UI_HTTPS_PORT=' "$env_file"; then
+      printf '\n# Host port the HTTPS UI is published on; plain HTTP to it redirects to HTTPS.\nMANAGEMENT_UI_HTTPS_PORT=18443\n' >> "$env_file"
     fi
     # --profile runners on the pull refreshes the runner-* images too (a
     # no-op where the compose file declares no such profile). Deliberately

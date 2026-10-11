@@ -32,10 +32,10 @@ servers:
       below describing the actual contract. Fire-and-forget: no
       acknowledgement, ordering, or delivery guarantee.
   ws:
-    host: 'localhost:80'
-    protocol: ws
+    host: 'localhost:19443'
+    protocol: wss
     description: >
-      The map service's WebSocket API (MAP_HTTP_HOST:MAP_HTTP_PORT).
+      The map service's WebSocket API (MAP_HTTP_HOST:MAP_HTTPS_PORT).
       Browser clients should GET /api/flights (see specs/openapi.yaml) for
       the initial snapshot before or around opening this connection --
       there is no `snapshot` WebSocket message.
