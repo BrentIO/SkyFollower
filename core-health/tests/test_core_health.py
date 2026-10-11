@@ -838,6 +838,34 @@ class TestPollRabbitmqOnce:
         published = _state_publishes(app._mqtt)
         assert published[f"{MQTT_ROOT}/statistic/rabbitmq_connected"] == "False"
 
+    def test_first_failure_after_startup_is_logged_once_even_if_never_connected(self, caplog):
+        app = _wired_app()
+        app._rmq_get = MagicMock(side_effect=Exception("401 Client Error: Unauthorized"))
+
+        with caplog.at_level(logging.WARNING, logger="core-health"):
+            app._poll_rabbitmq_once()
+            app._poll_rabbitmq_once()
+            app._poll_rabbitmq_once()
+
+        failures = [r for r in caplog.records if "Management API poll failed" in r.message]
+        assert len(failures) == 1
+        assert "Unauthorized" in failures[0].getMessage()
+
+    def test_failure_after_success_is_still_logged(self, caplog):
+        app = _wired_app()
+        app._rmq_get = MagicMock(return_value=[])
+        app._redis.smembers.return_value = set()
+        app._poll_rabbitmq_once()
+        assert app._rmq_connected is True
+
+        app._rmq_get = MagicMock(side_effect=Exception("connection refused"))
+        with caplog.at_level(logging.WARNING, logger="core-health"):
+            app._poll_rabbitmq_once()
+            app._poll_rabbitmq_once()
+
+        failures = [r for r in caplog.records if "Management API poll failed" in r.message]
+        assert len(failures) == 1
+
     def test_http_failure_publishes_no_queue_or_broker_stats(self):
         """A failed poll must never publish a queue/broker stat at all --
         retained state simply doesn't update, and expire_after is what

@@ -132,7 +132,7 @@ distributed to whichever hosts run `message-processor`, `archive`, and
 they exist only for logging into the dashboard on 15672, are never
 referenced by any other role's `.env`, and are provisioned automatically
 by `scripts/install.sh`'s `provision_rabbitmq_users` once RabbitMQ
-reports healthy (see [Architecture](/architecture/) and
+reports healthy, on install and on every `--upgrade` of the core role (see [Architecture](/architecture/) and
 `docker-compose.core.yaml`'s comments on the `rabbitmq` service).
 
 ### Management UI
@@ -382,14 +382,16 @@ fails loudly at startup (`shared/config.py` treats it as required), rather
 than connecting unauthenticated or hanging.
 
 **Upgrading an existing host to the split RabbitMQ application/admin
-users** — re-running `scripts/install.sh --role core` against an
-already-running broker is the entire migration: `provision_rabbitmq_users`
-demotes the application user (`RABBITMQ_USERNAME`) to SkyFollower's own
-scoped, tag-less permissions regardless of whether it's still full-admin
-from before this existed, and creates `RABBITMQ_ADMIN_USERNAME` if it
-doesn't already exist. Both steps are idempotent, so this is also just
-what happens on every ordinary re-run — nothing else in this section's
-drain order changes.
+users** — re-running `scripts/install.sh --role core` (or
+`scripts/install.sh --upgrade`) against an already-running broker is the
+entire migration: `provision_rabbitmq_users` demotes the application user
+(`RABBITMQ_USERNAME`) to SkyFollower's own scoped, tag-less permissions
+regardless of whether it's still full-admin from before this existed,
+creates any of the application, admin and monitoring users the broker is
+missing, and resets every existing one's password to the value in `.env`.
+All of it is idempotent, so this is also just what happens on every
+ordinary re-run or `--upgrade` of the core role (an unreachable broker only
+warns) — nothing else in this section's drain order changes.
 
 **A message processor: stopping vs. unbinding.** These look like the same
 action from the operator's side and are not. **Stopping is free** — the

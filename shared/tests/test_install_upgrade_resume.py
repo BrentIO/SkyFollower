@@ -35,6 +35,7 @@ fetch_role() {
   return 0
 }
 role_compose_files() { echo "docker-compose.$1.yaml"; }
+provision_rabbitmq_users() { echo "PROVISION $1" >> "$DOCKER_LOG"; return "${PROVISION_RC:-0}"; }
 """
 
 
@@ -121,3 +122,26 @@ class TestUpgradeResume:
         envs = _roles(tmp_path, "core")
         _upgrade(tmp_path, fail_pull="core")
         assert "LOG_LEVEL=info" in envs["core"].read_text()
+
+
+class TestUpgradeReconcilesRabbitmqUsers:
+    def _provisioned(self, tmp_path: Path) -> list[str]:
+        return [ln for ln in (tmp_path / "docker.log").read_text().splitlines() if ln.startswith("PROVISION ")]
+
+    def test_core_upgrade_reconciles_users(self, tmp_path):
+        _roles(tmp_path, "core", "map")
+        result = _upgrade(tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert self._provisioned(tmp_path) == [f"PROVISION {tmp_path / 'core'}"]
+
+    def test_reconcile_runs_even_when_core_pull_failed(self, tmp_path):
+        _roles(tmp_path, "core")
+        _upgrade(tmp_path, fail_pull="core")
+        assert self._provisioned(tmp_path) == [f"PROVISION {tmp_path / 'core'}"]
+
+    def test_reconcile_failure_never_fails_the_upgrade(self, tmp_path):
+        envs = _roles(tmp_path, "core", "map")
+        result = _upgrade(tmp_path, provision_rc="1")
+        assert result.returncode == 0, result.stderr
+        assert _version(envs["map"]) == "2026.09.99"
+        assert "reconcile did not complete" in result.stderr

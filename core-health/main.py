@@ -325,6 +325,8 @@ class CoreHealth:
         self._mqtt_connected = False
 
         self._rmq_connected = False
+        # So a never-connected first poll still logs its failure once.
+        self._rmq_polled_once = False
         self._redis_connected = False
 
         # Dynamic-discovery dedup, so a queue/counter/receiver's HA
@@ -564,7 +566,7 @@ class CoreHealth:
             exchange = self._rmq_get(f"/api/exchanges/%2F/{ADSB_EXCHANGE}")
             self._rmq_connected = True
         except Exception as exc:
-            if self._rmq_connected:
+            if self._rmq_connected or not self._rmq_polled_once:
                 logger.warning("RabbitMQ Management API poll failed: %s", exc)
             self._rmq_connected = False
             # Recreate on every failure, not just a detected hang -- an
@@ -573,6 +575,7 @@ class CoreHealth:
             # to tell those apart from here.
             self._recreate_session()
             overview = nodes = queues = exchange = None
+        self._rmq_polled_once = True
 
         self._publish_core_discovery()
         self._publish_stat(f"{MQTT_ROOT}/statistic/started_at", self._started_at)

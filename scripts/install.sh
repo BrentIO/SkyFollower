@@ -22,7 +22,8 @@
 # fetched config/compose files, and runs `docker compose pull && up -d` in
 # every role directory under the install root, rewriting SKYFOLLOWER_VERSION
 # only for roles that succeed. A failed role doesn't stop the others; the
-# run ends with a per-role summary and exits non-zero. No prompting.
+# run ends with a per-role summary and exits non-zero. The core role also
+# reconciles RabbitMQ users with its .env. No prompting.
 #
 # Files are fetched from the latest GitHub release tag by default: a
 # docker-compose.*.yaml's image: :latest always matches that tag, not tip
@@ -1704,29 +1705,42 @@ offer_up() {
   fi
 }
 
+# $4 is `list_users` output captured by the caller.
+reconcile_rabbitmq_user() {
+  local role_dir="$1" user="$2" password="$3" users="$4"
+  if grep -q "^${user}[[:space:]]" <<< "$users"; then
+    (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl change_password "$user" "$password" >/dev/null) \
+      || { echo "  ✗ Could not update ${user}'s password -- check manually." >&2; return 1; }
+  else
+    (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$user" "$password" >/dev/null) \
+      || { echo "  ✗ Could not create ${user} -- check manually." >&2; return 1; }
+    echo "  + created ${user}"
+  fi
+}
+
 provision_rabbitmq_users() {
   # RabbitMQ's RABBITMQ_DEFAULT_USER/PASS always creates that user as a
   # full administrator on `/`; there's no env var that scopes it from the
   # start. This runs once the container is up, demoting the application
   # user to SkyFollower's own resources and creating a separate dashboard
   # administrator, so a compromised host only ever holds a credential
-  # scoped to known queue names. Every rabbitmqctl call is idempotent, so
-  # re-running this is always safe.
+  # scoped to known queue names. Reconciles against .env, so re-running is safe.
   local role_dir="$1"
-  local rabbitmq_username rabbitmq_admin_username rabbitmq_admin_password
+  local rabbitmq_username rabbitmq_password rabbitmq_admin_username rabbitmq_admin_password
   local rabbitmq_monitoring_username rabbitmq_monitoring_password
   rabbitmq_username="$(existing_env_value "${role_dir}/.env" RABBITMQ_USERNAME)"
+  rabbitmq_password="$(existing_env_value "${role_dir}/.env" RABBITMQ_PASSWORD)"
   rabbitmq_admin_username="$(existing_env_value "${role_dir}/.env" RABBITMQ_ADMIN_USERNAME)"
   rabbitmq_admin_password="$(existing_env_value "${role_dir}/.env" RABBITMQ_ADMIN_PASSWORD)"
   rabbitmq_monitoring_username="$(existing_env_value "${role_dir}/.env" RABBITMQ_MONITORING_USERNAME)"
   rabbitmq_monitoring_password="$(existing_env_value "${role_dir}/.env" RABBITMQ_MONITORING_PASSWORD)"
-  if [ -z "$rabbitmq_username" ] || [ -z "$rabbitmq_admin_username" ] || [ -z "$rabbitmq_admin_password" ]; then
+  if [ -z "$rabbitmq_username" ] || [ -z "$rabbitmq_password" ] || [ -z "$rabbitmq_admin_username" ] || [ -z "$rabbitmq_admin_password" ]; then
     echo "  ✗ ${role_dir}/.env is missing RabbitMQ credentials -- skipping user provisioning." >&2
     return
   fi
 
   local container_id
-  container_id="$(cd "$role_dir" && docker compose ps -q rabbitmq)"
+  container_id="$(cd "$role_dir" && docker compose ps -q rabbitmq 2>/dev/null || true)"
   if [ -z "$container_id" ]; then
     echo "RabbitMQ isn't running -- skipping user provisioning. Bring it up and" >&2
     echo "re-run this script for the core role to provision it." >&2
@@ -1748,7 +1762,14 @@ provision_rabbitmq_users() {
   fi
 
   echo "Provisioning RabbitMQ users..."
+  local users
+  users="$(cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl list_users 2>/dev/null || true)"
+  if [ -z "$users" ]; then
+    echo "  ✗ Could not list RabbitMQ users -- skipping user provisioning. Re-run this script for the core role once RabbitMQ is reachable." >&2
+    return
+  fi
 
+  reconcile_rabbitmq_user "$role_dir" "$rabbitmq_username" "$rabbitmq_password" "$users" || true
   # configure/write/read, in that order. Keep this pattern in sync by hand
   # with shared/rabbitmq_topology.py's SKYFOLLOWER_RABBITMQ_RESOURCE_PATTERN
   # -- core-health filters RabbitMQ's queue list with that constant, so a
@@ -1761,12 +1782,7 @@ provision_rabbitmq_users() {
     echo "  ✗ Could not scope ${rabbitmq_username}'s tags/permissions -- check manually." >&2
   fi
 
-  # add_user fails if the user already exists; list_users first so a
-  # re-run doesn't print a scary error.
-  if ! (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl list_users 2>/dev/null | grep -q "^${rabbitmq_admin_username}[[:space:]]"); then
-    (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$rabbitmq_admin_username" "$rabbitmq_admin_password" >/dev/null) \
-      || echo "  ✗ Could not create ${rabbitmq_admin_username} -- check manually." >&2
-  fi
+  reconcile_rabbitmq_user "$role_dir" "$rabbitmq_admin_username" "$rabbitmq_admin_password" "$users" || true
   if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_admin_username" administrator) \
     && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_admin_username" '.*' '.*' '.*'); then
     echo "  ✓ ${rabbitmq_admin_username}: administrator (dashboard login only -- see ${role_dir}/.env)"
@@ -1780,10 +1796,7 @@ provision_rabbitmq_users() {
   # match nothing rather than left at a freshly add_user'd account's
   # all-matching default.
   if [ -n "$rabbitmq_monitoring_username" ] && [ -n "$rabbitmq_monitoring_password" ]; then
-    if ! (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl list_users 2>/dev/null | grep -q "^${rabbitmq_monitoring_username}[[:space:]]"); then
-      (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl add_user "$rabbitmq_monitoring_username" "$rabbitmq_monitoring_password" >/dev/null) \
-        || echo "  ✗ Could not create ${rabbitmq_monitoring_username} -- check manually." >&2
-    fi
+    reconcile_rabbitmq_user "$role_dir" "$rabbitmq_monitoring_username" "$rabbitmq_monitoring_password" "$users" || true
     if (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_user_tags "$rabbitmq_monitoring_username" monitoring) \
       && (cd "$role_dir" && docker compose exec -T rabbitmq rabbitmqctl set_permissions --vhost / "$rabbitmq_monitoring_username" '^$' '^$' '^$'); then
       echo "  ✓ ${rabbitmq_monitoring_username}: monitoring tag, no resource permissions (core-health only)"
@@ -2203,6 +2216,10 @@ do_upgrade() {
     )
     rc=$?
     set -e
+    # Runs even if the role failed: the broker may still be up on the old images.
+    if [ "$(basename "$role_dir")" = "core" ]; then
+      provision_rabbitmq_users "$role_dir" || echo "  ⚠ RabbitMQ user reconcile did not complete -- continuing." >&2
+    fi
     if [ "$rc" -eq 0 ]; then
       local tmp
       tmp="$(mktemp)"
