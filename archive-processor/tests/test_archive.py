@@ -2054,7 +2054,7 @@ class TestS3PoolSizing:
 
 
 # ---------------------------------------------------------------------------
-# Archive-time enrichment backfill (#2203)
+# Archive-time enrichment backfill
 # ---------------------------------------------------------------------------
 
 _FRESH_AIRCRAFT = {
