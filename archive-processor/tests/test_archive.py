@@ -358,7 +358,6 @@ class TestIncrPeriodCounters:
             }
 
     def test_reloads_script_on_noscript(self):
-        # 2195
         import redis
 
         with tempfile.TemporaryDirectory() as tmp_dir:

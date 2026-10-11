@@ -6256,12 +6256,7 @@ class TestArchiveNeverCarriesRawFrames:
         assert b"SECRET-RAW-FRAME" in raw_frames_body
 
 
-# ---------------------------------------------------------------------------
-# Lua script reload after a Redis restart
-# ---------------------------------------------------------------------------
-
 def _noscript_then(result):
-    """evalsha side effect: NOSCRIPT on the first call, `result` after."""
     calls = {"n": 0}
 
     def _side_effect(*_args):
@@ -6319,9 +6314,7 @@ class TestLuaScriptReloadOnNoScript:
 
 
 class TestLuaScriptReloadLive:
-    """Against a live redis-stack (REDIS_TEST_HOST/PORT); skipped when none
-    is reachable. SCRIPT FLUSH is server-wide, so don't run it against a
-    Redis shared with a concurrent shared/tests run."""
+    # SCRIPT FLUSH is server-wide; don't share this Redis with a concurrent test run.
 
     def test_enrichment_survives_script_flush(self):
         client = redis.Redis(
@@ -6341,19 +6334,19 @@ class TestLuaScriptReloadLive:
 
         hex_ = "FFFD" + uuid.uuid4().hex[:2].upper()
         key = f"aircraft:registry:{hex_}"
-        client.json().set(key, "$", {"registration": "N2195T"})
+        client.json().set(key, "$", {"registration": "N5551T"})
         try:
             first = Flight(p._db)
             first.icao_hex = hex_
             p._enrich_aircraft(first)
-            assert first.aircraft["registration"] == "N2195T"
+            assert first.aircraft["registration"] == "N5551T"
 
             client.script_flush()
 
             second = Flight(p._db)
             second.icao_hex = hex_
             p._enrich_aircraft(second)
-            assert second.aircraft["registration"] == "N2195T"
+            assert second.aircraft["registration"] == "N5551T"
         finally:
             client.delete(key)
             client.close()

@@ -32,8 +32,7 @@ def build_redis_client(redis_config: dict) -> redis_lib.Redis:
 
 
 def evalsha_with_reload(client: redis_lib.Redis, sha: str, script: str, numkeys: int, *args):
-    """EVALSHA that reloads the script and retries once on NoScriptError,
-    since a Redis restart flushes the script cache."""
+    """EVALSHA that reloads and retries once on NoScriptError (a Redis restart flushes the script cache)."""
     try:
         return client.evalsha(sha, numkeys, *args)
     except redis_lib.exceptions.NoScriptError:

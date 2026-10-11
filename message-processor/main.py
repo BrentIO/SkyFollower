@@ -918,8 +918,6 @@ class MessageProcessor:
         # Redis
         rc = config["redis"]
         self._redis = build_redis_client(rc)
-        # Script sources are kept so evalsha_with_reload can re-register
-        # them after a Redis restart flushes the script cache.
         _lua_dir = pathlib.Path(__file__).parent.parent / "shared" / "lua"
         self._merge_lua = (_lua_dir / "merge_aircraft.lua").read_text()
         self._merge_sha = self._redis.script_load(self._merge_lua)

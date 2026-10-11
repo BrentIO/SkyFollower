@@ -38,7 +38,6 @@ class TestBuildRedisClient:
 
 
 class TestEvalshaWithReload:
-    # 2195
     def test_returns_result_without_reload_when_script_cached(self):
         client = MagicMock()
         client.evalsha.return_value = "ok"
