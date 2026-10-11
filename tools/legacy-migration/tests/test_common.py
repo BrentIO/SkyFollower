@@ -217,3 +217,38 @@ class TestCopyAndVerify:
         client = _FakeS3(dest_head={"ETag": '"abc123"', "ContentLength": 999})
         with pytest.raises(ValueError):
             common.copy_and_verify(client, "src", "id.gz", "dst", "flights/2024/05/31/id.json.gz")
+
+
+class TestBuildS3Client:
+    @pytest.fixture
+    def client(self, monkeypatch):
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+        return common.build_s3_client()
+
+    def test_pool_covers_default_worker_count(self, client):
+        assert client.meta.config.max_pool_connections >= 16
+
+    def test_timestamps_are_not_parsed(self, client):
+        import io
+
+        from botocore.awsrequest import AWSResponse
+        from urllib3.response import HTTPResponse
+
+        body = (
+            b"<?xml version='1.0'?><ListBucketResult xmlns='http://s3.amazonaws.com/doc/2006-03-01/'>"
+            b"<Name>b</Name><KeyCount>1</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>"
+            b"<Contents><Key>a.gz</Key><LastModified>2024-05-31T12:34:56.000Z</LastModified>"
+            b"<ETag>&quot;abc&quot;</ETag><Size>7</Size></Contents></ListBucketResult>"
+        )
+
+        def respond(**_kwargs):
+            raw = HTTPResponse(body=io.BytesIO(body), status=200, preload_content=False)
+            return AWSResponse("https://s3.amazonaws.com/", 200, {}, raw)
+
+        client.meta.events.register("before-send.s3.ListObjectsV2", respond)
+        obj = client.list_objects_v2(Bucket="b")["Contents"][0]
+
+        assert obj["LastModified"] == "2024-05-31T12:34:56.000Z"
+        assert (obj["Key"], obj["ETag"], obj["Size"]) == ("a.gz", '"abc"', 7)

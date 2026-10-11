@@ -263,11 +263,25 @@ def copy_and_verify(s3_client, source_bucket: str, source_key_: str, dest_bucket
         raise ValueError("copy verification failed")
 
 
+S3_MAX_POOL_CONNECTIONS = 64
+
+
 def build_s3_client():
     import boto3
+    import botocore.session
     from botocore.config import Config as BotoConfig
+
+    # Timestamps stay raw strings: no caller reads them, and dateutil parsing
+    # dominated listing CPU.
+    botocore_session = botocore.session.get_session()
+    botocore_session.get_component("response_parser_factory").set_parser_defaults(
+        timestamp_parser=lambda value: value
+    )
 
     # max_attempts=0: s3_retry() above is the single retry loop, so
     # throttling stays visible to it instead of being silently absorbed
     # inside botocore.
-    return boto3.client("s3", config=BotoConfig(retries={"max_attempts": 0}))
+    return boto3.session.Session(botocore_session=botocore_session).client(
+        "s3",
+        config=BotoConfig(retries={"max_attempts": 0}, max_pool_connections=S3_MAX_POOL_CONNECTIONS),
+    )
