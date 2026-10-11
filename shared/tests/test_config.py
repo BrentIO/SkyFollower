@@ -655,6 +655,19 @@ class TestBlockHelpers:
         assert cfg["map_center_latitude"] is None
         assert cfg["map_center_longitude"] is None
 
+    def test_map_config_https_port_defaults_to_19443(self):
+        cfg = map_config(ConfigLoader({"MAP_LISTEN_PORT": "30500"}))
+        assert cfg["map_https_port"] == 19443
+
+    def test_map_config_reads_map_https_port_not_legacy_http_port(self):
+        cfg = map_config(ConfigLoader({
+            "MAP_LISTEN_PORT": "30500",
+            "MAP_HTTPS_PORT": "8443",
+            "MAP_HTTP_PORT": "443",
+        }))
+        assert cfg["map_https_port"] == 8443
+        assert "map_http_port" not in cfg
+
     def test_map_config_ignores_deprecated_lifecycle_vars_with_warning(self, caplog):
         with caplog.at_level("WARNING", logger="shared.config"):
             cfg = map_config(ConfigLoader({

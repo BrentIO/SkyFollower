@@ -394,7 +394,7 @@ def map_config(loader: Optional[ConfigLoader] = None) -> dict:
         "map_listen_host": loader.string("MAP_LISTEN_HOST", "0.0.0.0"),
         "map_listen_port": loader.integer("MAP_LISTEN_PORT"),
         "map_http_host": loader.string("MAP_HTTP_HOST", "0.0.0.0"),
-        "map_http_port": loader.integer("MAP_HTTP_PORT", 443),
+        "map_https_port": loader.integer("MAP_HTTPS_PORT", 19443),
         "map_center_latitude": center_latitude,
         "map_center_longitude": center_longitude,
     }

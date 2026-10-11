@@ -53,8 +53,8 @@ compose up -d`. Get the relevant file(s) onto each host and write its
 | `rabbitmq` | Message broker between receiver, message processors, and archive | 5672, 15672 (mgmt) |
 | `redis` | In-memory enrichment store (aircraft, operators, airports, flight O/D, rules, areas) | 6379 |
 | `ofelia` | Cron scheduler that runs runner containers on a schedule | — |
-| `management-ui` | FastAPI backend + React frontend for rules and areas editing | 443 (HTTPS, self-signed by default), 80 (redirects to 443) |
-| `map` | Backend for the live real-time aircraft map: UDP listener, REST snapshot, WebSocket relay | UDP `MAP_LISTEN_PORT`, HTTPS `MAP_HTTP_PORT` (default 443, self-signed by default; plain HTTP if no cert is present). Single port — no plain-HTTP redirect listener |
+| `management-ui` | FastAPI backend + React frontend for rules and areas editing | HTTPS `MANAGEMENT_UI_HTTPS_PORT` (default 18443, self-signed by default); plain HTTP on that port redirects to HTTPS |
+| `map` | Backend for the live real-time aircraft map: UDP listener, REST snapshot, WebSocket relay | UDP `MAP_LISTEN_PORT`, HTTPS `MAP_HTTPS_PORT` (default 19443, self-signed by default; plain HTTP if no cert is present). Single port — no plain-HTTP redirect listener |
 | `map-redis` | Dedicated, no-persistence Redis instance backing `map`'s live aircraft state — never core Redis | 6379 (not published to the host; reached only by `map` on the same compose file) |
 | `mictronics` runner | Imports global aircraft registration data into Redis | — |
 | `us-faa-registry` runner | Imports US FAA detailed registration data into Redis | — |
@@ -139,6 +139,7 @@ reports healthy (see [Architecture](/architecture/) and
 
 | Variable | Required | Default |
 |---|---|---|
+| `MANAGEMENT_UI_HTTPS_PORT` | ❌ | `18443` |
 | `REDIS_HOST` | ✅ | — |
 | `REDIS_PORT` | ❌ | `6379` |
 | `REDIS_PASSWORD` | ✅ | — |
@@ -243,7 +244,7 @@ Declining falls through to entering those values by hand. See
 | `MAP_LISTEN_HOST` | ❌ | `0.0.0.0` |
 | `MAP_LISTEN_PORT` | ✅ | — |
 | `MAP_HTTP_HOST` | ❌ | `0.0.0.0` |
-| `MAP_HTTP_PORT` | ❌ | `443` |
+| `MAP_HTTPS_PORT` | ❌ | `19443` |
 | `MAP_REDIS_HOST` | ✅ | — |
 | `MAP_REDIS_PORT` | ❌ | `6379` |
 | `MAP_REDIS_PASSWORD` | ❌ | — |

@@ -599,7 +599,7 @@ def main() -> None:  # pragma: no cover -- exercised via `python -m map.main`
     uvicorn.run(
         app,
         host=cfg["map_http_host"],
-        port=cfg["map_http_port"],
+        port=cfg["map_https_port"],
         log_config=None,
         **_uvicorn_tls_kwargs(),
     )

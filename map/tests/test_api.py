@@ -105,7 +105,7 @@ class _Server:
             "MAP_LISTEN_HOST": "127.0.0.1",
             "MAP_LISTEN_PORT": str(self.udp_port),
             "MAP_HTTP_HOST": "127.0.0.1",
-            "MAP_HTTP_PORT": str(self.http_port),
+            "MAP_HTTPS_PORT": str(self.http_port),
             "PYTHONPATH": _REPO_ROOT,
         })
         if extra_env:

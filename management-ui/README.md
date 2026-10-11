@@ -18,9 +18,10 @@ frontend bundle, and the final stage runs both uvicorn (bound to
 `127.0.0.1:8000`, not exposed outside the container) and nginx, started by
 `entrypoint.sh`. nginx serves the built frontend at `/` (with a `try_files`
 fallback to `index.html` for client-side routing) and proxies `/api/*` to
-uvicorn over HTTPS on `443`; `80` is redirect-only (`301` to the same path
-on `443`). `docker-compose.management-ui.yaml` maps both `443:443` and
-`80:80` — see [TLS](#tls) below.
+uvicorn over HTTPS on the container's `443`.
+`docker-compose.management-ui.yaml` publishes it on the host as
+`MANAGEMENT_UI_HTTPS_PORT` (default `18443`, set in `.env` by
+`scripts/install.sh`) — see [TLS](#tls) below.
 
 Both base images (`node:26-slim` for the frontend stage, `python:3.14-slim`
 for the final stage) are pinned to an explicit `@sha256:<digest>` so
@@ -31,9 +32,11 @@ unpinned `FROM` line.
 
 ## TLS
 
-Served over HTTPS on `443` with a self-signed certificate by default; `80`
-only ever answers with a `301` redirect to the same URL on `443` (kept,
-rather than dropped, for old bookmarks/muscle memory). There is no
+Served over HTTPS on `MANAGEMENT_UI_HTTPS_PORT` (default `18443`, e.g.
+`https://<host>:18443`) with a self-signed certificate by default. There is
+no plain-HTTP listener: a plain `http://` request to that same port gets a
+`301` to `https://` on the same host and port (nginx's `error_page 497`).
+There is no
 authentication either way (see the table above) — TLS here is about
 encrypting traffic on the LAN, not access control.
 
@@ -244,6 +247,7 @@ own components use.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
+| `MANAGEMENT_UI_HTTPS_PORT` | ❌ | `18443` | Host port the HTTPS UI is published on (compose only; the container always listens on `443`). Plain HTTP sent to it is redirected to HTTPS on the same port |
 | `REDIS_HOST` | ✅ | — | |
 | `REDIS_PORT` | ❌ | `6379` | |
 | `REDIS_PASSWORD` | ✅ | — | Redis requires authentication; see `shared/redis_client.py`'s `build_redis_client()` |

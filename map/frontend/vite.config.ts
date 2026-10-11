@@ -70,10 +70,7 @@ export default defineConfig({
     proxy: {
       // Proxies both the REST snapshot and the WebSocket (ws: true) during
       // `vite dev` so VITE_MAP_API_BASE_URL can be left unset locally. Targets
-      // an unprivileged plain-HTTP port a local `python -m map.main` can bind
-      // without root and without a TLS cert -- not the production MAP_HTTP_PORT
-      // default (443), which is privileged and HTTPS. Run the dev backend with
-      // MAP_HTTP_PORT=8080.
+      // a plain-HTTP dev backend run with MAP_HTTPS_PORT=8080.
       "/api": "http://localhost:8080",
       "/ws": { target: "ws://localhost:8080", ws: true },
     },

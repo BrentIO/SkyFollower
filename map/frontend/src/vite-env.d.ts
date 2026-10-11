@@ -2,7 +2,7 @@
 
 interface ImportMetaEnv {
   // Base URL of the map backend's REST/WebSocket API, e.g.
-  // "http://map-host:80". Leave unset to use same-origin (the
+  // "https://map-host:19443". Leave unset to use same-origin (the
   // frontend served by the same host as the API) -- see src/lib/config.ts.
   readonly VITE_MAP_API_BASE_URL?: string;
   // DEV-ONLY fallback for the centered reference point ("center"). A real
