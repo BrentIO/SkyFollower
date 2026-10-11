@@ -35,14 +35,11 @@ HEADING_TOLERANCE_DEG = 30
 # several similarly-plausible candidates.
 HEADING_MARGIN_DEG = 15
 
-# Cross-track sanity check: threshold_nm = min(max(floor, percentage * route), ceiling).
-# Scales with route length, floored for short hops and capped for long ones.
+# Cross-track threshold_nm = min(max(floor, percentage * route), ceiling).
 CROSS_TRACK_FLOOR_NM = 150
 CROSS_TRACK_PERCENTAGE = 0.30
 CROSS_TRACK_CEILING_NM = 300
 
-# Heading sanity check: reject when a stable heading points this far off the
-# bearing to the candidate destination; skipped low or near either endpoint.
 HEADING_AWAY_TOLERANCE_DEG = 100
 HEADING_CHECK_ENDPOINT_EXCLUSION_NM = 100
 
@@ -282,9 +279,7 @@ def _sanity_check_violation(
 def _heading_check_violation(
     positions: list[dict], velocities: list[dict], origin: dict, destination: dict
 ) -> Optional[str]:
-    """Returns a reason if the latest stable heading points clearly away from
-    the destination; None when it agrees or the check doesn't apply (unstable
-    heading, unknown/low altitude, or near either endpoint)."""
+    """Reason if the latest stable heading points away from the destination."""
     if not positions or not heading_is_stable(velocities):
         return None
     a, b = _coords(origin), _coords(destination)

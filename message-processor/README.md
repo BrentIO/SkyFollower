@@ -337,11 +337,9 @@ every recorded position, plus a heading check against the latest one:
 - **Cross-track distance** — the perpendicular distance from the position to
   the great-circle line between the candidate origin and destination; if any
   position exceeds `min(max(150nm, 30% × route_distance), 300nm)`, the pair
-  is rejected. The 30% term keeps short hops like KJFK-KATL (~660nm, ~198nm
-  window) tight; the 300nm ceiling stops it growing past real routing
-  variance (jet stream, ATC, weather) on long routes. Without the ceiling,
-  KSJC-KBWI (~2,100nm) allowed 634nm, which let SWA621 actually flying
-  KBNA→KMCO pass at 618nm off the line (#2201).
+  is rejected. The 30% term keeps short hops tight; the 300nm ceiling keeps
+  long routes from allowing more than real routing variance (jet stream, ATC,
+  weather).
 - **Along-track bound** — cross-track distance alone only measures
   perpendicular distance to the *infinite* line through both airports; it
   says nothing about whether the position actually falls *between* the two
@@ -363,8 +361,7 @@ every recorded position, plus a heading check against the latest one:
   most recent heading is compared to the bearing from the latest position to
   the candidate destination; more than 100° off rejects the pair. Skipped
   below 10,000ft and within 100nm of either endpoint, where holds, vectoring
-  and terminal maneuvering legitimately point away. SWA621 above was heading
-  170° with KBWI at a bearing of 23° (147° off).
+  and terminal maneuvering legitimately point away.
 
 Any check failing rejects the pair — treated the same as an unresolvable
 case, never a partial guess. All checks run once, at resolution time; later

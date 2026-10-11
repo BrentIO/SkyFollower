@@ -285,17 +285,16 @@ class TestCrossTrackCheck:
         assert passes_cross_track_check(positions, KMSP, KMKE) is False
 
     def test_long_haul_generous_threshold_accepts_real_routing_variance(self):
-        # MMMX -> EGLL is ~4800nm; ~270nm off the line is under the 300nm ceiling.
         positions = [_pos(29.0, -83.0)]  # near Orlando -- plausible routing
         assert passes_cross_track_check(positions, MMMX, EGLL) is True
 
     def test_long_haul_between_ceiling_and_percentage_rejected(self):
-        # #2201: ~564nm off MMMX-EGLL passes 30% (~1440nm) but not the 300nm ceiling.
+        # #2201
         positions = [_pos(32.0, -70.0)]
         assert passes_cross_track_check(positions, MMMX, EGLL) is False
 
     def test_swa621_ksjc_kbwi_rejected_by_ceiling(self):
-        # #2201: 618nm off a 2114nm route; passed the old 634nm threshold.
+        # #2201
         positions = [_pos(29.509, -82.100, altitude=20950)]
         assert passes_cross_track_check(positions, KSJC, KBWI) is False
 
@@ -407,7 +406,7 @@ class TestResolveOriginDestination:
         assert "along-track" in reason
 
     def test_swa621_first_position_rejected(self):
-        # #2201: KBNA->KMCO flight tagged KSJC->KBWI.
+        # #2201
         positions = [_pos(29.509, -82.100, altitude=20950)]
         origin, destination, is_final, reason = resolve_origin_destination(
             [KSJC, KBWI], positions, _vels(170, 170, 170)
@@ -424,11 +423,10 @@ class TestResolveOriginDestination:
 
 
 # ---------------------------------------------------------------------------
-# Heading-vs-destination sanity check (#2201)
+# Heading-vs-destination sanity check
 # ---------------------------------------------------------------------------
 
 class TestHeadingSanityCheck:
-    # (37.0, -79.0) is ~330nm from both KJFK and KATL; bearing to KATL ~234deg.
     MIDPOINT = (37.0, -79.0)
 
     def _resolve(self, airports, lat, lon, altitude, velocities):
@@ -464,7 +462,6 @@ class TestHeadingSanityCheck:
         assert reason is None
 
     def test_stable_heading_away_near_destination_not_rejected(self):
-        # Downwind/vectoring ~60nm northeast of KATL, heading away from the field.
         origin, destination, _, reason = self._resolve(
             [KJFK, KATL], 34.3, -83.4, 12000, _vels(50, 52, 54)
         )
@@ -472,7 +469,6 @@ class TestHeadingSanityCheck:
         assert reason is None
 
     def test_stable_heading_away_near_origin_not_rejected(self):
-        # Departure vectoring ~50nm southwest of KJFK before turning on course.
         origin, destination, _, reason = self._resolve(
             [KJFK, KATL], 40.1, -74.5, 14000, _vels(40, 42, 44)
         )
