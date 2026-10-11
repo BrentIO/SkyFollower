@@ -1,10 +1,3 @@
-"""
-Guards scripts/install.sh's --upgrade failure handling: a role's
-SKYFOLLOWER_VERSION is written only after its pull and up -d succeed, a
-failed role doesn't stop the rest, and the run ends with a summary and a
-non-zero exit if anything failed.
-"""
-
 from __future__ import annotations
 
 import re
@@ -21,8 +14,6 @@ def _extract_function(name: str) -> str:
     return m.group(0)
 
 
-# docker logs every call (cwd, the SKYFOLLOWER_VERSION it sees, args) and
-# fails when the current dir's basename is listed in FAIL_PULL / FAIL_UP.
 _HARNESS = """
 set -euo pipefail
 DEV_BUILD=0

@@ -2153,8 +2153,7 @@ do_upgrade() {
     old_version="$(grep '^SKYFOLLOWER_VERSION=' "$env_file" | tail -1 | cut -d= -f2- || true)"
     echo
     echo "-- ${role_dir} --"
-    # Each role runs in its own errexit subshell so one failure (e.g. a
-    # transient pull error) fails only that role and the loop continues.
+    # Errexit subshell per role, so one role's failure doesn't stop the loop.
     set +e
     (
       set -e
@@ -2167,13 +2166,7 @@ do_upgrade() {
       # still hold generated service blocks are converted to env files
       # first, inside fetch_role, before their compose file is replaced.
       fetch_role "$(basename "$role_dir")" "$role_dir"
-      # Every line, including operator edits, is left as-is except: renames
-      # the map role's old MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys to
-      # MAP_CENTER_LATITUDE/MAP_CENTER_LONGITUDE, drops the retired
-      # MAP_STALE_SECONDS/MAP_HIDE_SECONDS/MAP_EVICT_SECONDS lines, and
-      # renames MAP_HTTP_PORT to MAP_HTTPS_PORT (value kept) -- all no-ops
-      # on every non-map role dir. SKYFOLLOWER_VERSION is written only after
-      # the pull and up -d below succeed.
+      # SKYFOLLOWER_VERSION is written only after pull and up -d succeed, below.
       local tmp role_compose="" has_https_port=0
       grep -q '^MAP_HTTPS_PORT=' "$env_file" && has_https_port=1
       case "$(basename "$role_dir")" in
@@ -2204,8 +2197,6 @@ do_upgrade() {
       # `up` would kick off every one of them, including the multi-hour
       # uk-caa-registry. Ofelia is recreated by `up -d` and spawns fresh
       # runner containers from the pulled images on its own schedule.
-      # The shell variable overrides .env's SKYFOLLOWER_VERSION for these
-      # two commands only.
       cd "$role_dir"
       SKYFOLLOWER_VERSION="$IMAGE_VERSION" docker compose --parallel 4 --profile runners pull
       SKYFOLLOWER_VERSION="$IMAGE_VERSION" docker compose up -d
