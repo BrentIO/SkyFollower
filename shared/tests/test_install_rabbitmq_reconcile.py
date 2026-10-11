@@ -1,5 +1,5 @@
 """
-Guards scripts/install.sh's RabbitMQ user reconcile (#2197): missing users
+Guards scripts/install.sh's RabbitMQ user reconcile: missing users
 are created, existing users get change_password so the broker matches
 .env, and an unreachable broker warns without failing.
 """

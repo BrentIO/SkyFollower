@@ -839,7 +839,6 @@ class TestPollRabbitmqOnce:
         assert published[f"{MQTT_ROOT}/statistic/rabbitmq_connected"] == "False"
 
     def test_first_failure_after_startup_is_logged_once_even_if_never_connected(self, caplog):
-        # #2197
         app = _wired_app()
         app._rmq_get = MagicMock(side_effect=Exception("401 Client Error: Unauthorized"))
 
