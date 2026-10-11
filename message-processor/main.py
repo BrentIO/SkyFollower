@@ -21,7 +21,6 @@ import logging
 import logging.handlers
 import os
 import pathlib
-import re
 import signal
 import socket
 import sqlite3
@@ -41,6 +40,11 @@ from pyModeS import PipeDecoder
 from message_processor.route_resolver import resolve_origin_destination
 from message_processor.rules_engine import RulesEngine
 from shared.config import DATA_DIR, ConfigError, load_config
+from shared.enrichment import (
+    ident_matches_registration,
+    operator_lookup_prefix,
+    split_merged_aircraft,
+)
 from shared.redis_client import build_redis_client, evalsha_with_reload
 from shared.fallback_queue import DEFAULT_DEAD_LETTER_MAX_BYTES, FallbackQueue
 from shared.ha_discovery import build_ha_device
@@ -109,14 +113,6 @@ _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 # messages would need reprocessing if the connection drops mid-batch.
 _RMQ_PREFETCH_COUNT = 100
 
-# ---------------------------------------------------------------------------
-# US registration regex (skip operator lookup for tail numbers)
-# ---------------------------------------------------------------------------
-_US_REG_RE = re.compile(
-    r"^[LT]?N[CXR]?[1-9]((\d{0,4})|(\d{0,3}[A-HJ-NP-Z])|(\d{0,2}[A-HJ-NP-Z]{2}))$"
-)
-
-
 # Receiver-decode-only -- registry/Mictronics enrichment must never seed
 # this. Collapses both decode paths' 7 raw categories to light/medium/heavy;
 # Super is unreachable from live data and rotorcraft/high-performance are a
@@ -154,16 +150,6 @@ def _emitter_category_code(set_index: int, subcategory: int) -> Optional[str]:
     if not 1 <= subcategory <= 7:
         return None
     return f"{_EMITTER_CATEGORY_SETS[set_index]}{subcategory}"
-
-
-def _ident_matches_registration(ident: str, aircraft: dict) -> bool:
-    """True when the broadcast ident is just the aircraft's own tail number
-    (registration) rather than a route-bearing flight identifier/callsign —
-    dash-insensitive, matching SkyFollower-legacy's setIdent()/_getOperator()
-    precedent. Shared by operator enrichment and route-leg resolution, since
-    both need the same "is this really a flight number" judgment call."""
-    registration = aircraft.get("registration", "")
-    return bool(registration) and registration.replace("-", "") == ident.replace("-", "")
 
 
 # Reserved/emergency squawk codes that corrupted DF5/21 replies
@@ -1539,15 +1525,7 @@ class MessageProcessor:
         try:
             raw = evalsha_with_reload(self._redis, self._merge_sha, self._merge_lua, 0, flight.icao_hex)
             if raw:
-                aircraft = json.loads(raw)
-                # Registry/Mictronics data must never seed wake_turbulence_category —
-                # it's receiver-decode-only (see _WAKE_TURBULENCE_MAP above).
-                aircraft.pop("wake_turbulence_category", None)
-                # registrant describes the aircraft's legal owner, not the
-                # airframe -- same category as flight.operator, so it's its
-                # own sibling field rather than nested here.
-                flight.registrant = aircraft.pop("registrant", None) or {}
-                flight.aircraft = aircraft
+                flight.aircraft, flight.registrant = split_merged_aircraft(raw)
             else:
                 self._registration_misses.record()
                 if not flight.aircraft:
@@ -1558,19 +1536,8 @@ class MessageProcessor:
                 flight.aircraft = {"icao_hex": flight.icao_hex}
 
     def _enrich_operator(self, flight: Flight) -> None:
-        ident = flight.ident
-
-        # Skip US tail numbers
-        if _US_REG_RE.match(ident):
-            return
-
-        # Skip if ident matches registration
-        if _ident_matches_registration(ident, flight.aircraft):
-            return
-
-        # Extract ICAO airline prefix (letters before first digit)
-        prefix = re.split(r"[^a-zA-Z]", ident)[0]
-        if len(prefix) < 2:
+        prefix = operator_lookup_prefix(flight.ident, flight.aircraft)
+        if prefix is None:
             return
 
         try:
@@ -1594,7 +1561,7 @@ class MessageProcessor:
         seen at least once for this flight, in any order -- checked against
         full SQLite history, not just what Flight.load(limit=True) loaded
         into memory for this message."""
-        if not flight.ident or _ident_matches_registration(flight.ident, flight.aircraft):
+        if not flight.ident or ident_matches_registration(flight.ident, flight.aircraft):
             return False
 
         # altitude is the one field sometimes absent from a stored position

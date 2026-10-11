@@ -148,7 +148,7 @@ further to verify it against outside of multi-message/pipe-mode decoding,
 which this message processor doesn't use.
 
 `wake_turbulence_category` is receiver-decode-only — registry/Mictronics
-enrichment is never allowed to seed it (`_enrich_aircraft` strips the key
+enrichment is never allowed to seed it (`shared/enrichment.py`'s `split_merged_aircraft()` strips the key
 from the Redis-merged aircraft document before it reaches flight state),
 and each new live reading simply replaces the last one (no first-wins
 protection; there's only one writer). A single shared mapping table
@@ -251,7 +251,7 @@ following have been seen for the flight (in any order across messages):
 - a route-bearing **ident** — present, not `"00000000"` (both already
   enforced before `flight.ident` is ever set at all — see `_update_flight`),
   and not just the aircraft's own tail number re-broadcast as the callsign
-  (`_ident_matches_registration()`, dash-insensitive — the same check
+  (`shared/enrichment.py`'s `ident_matches_registration()`, dash-insensitive — the same check
   `_enrich_operator()` uses to decide whether to look up an airline operator,
   matching SkyFollower-legacy's `setIdent()`/`_getOperator()` precedent)
 - a **position** (latitude/longitude)

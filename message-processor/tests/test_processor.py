@@ -6350,3 +6350,30 @@ class TestLuaScriptReloadLive:
         finally:
             client.delete(key)
             client.close()
+
+
+class TestSharedEnrichmentHelpers:
+    # 2203
+    def test_enrich_aircraft_uses_shared_post_processing(self):
+        p, mock_redis = _make_processor()
+        mock_redis.evalsha.return_value = '{"icao_hex": "A8AE7F"}'
+        with patch(
+            "message_processor.main.split_merged_aircraft",
+            return_value=({"icao_hex": "A8AE7F", "registration": "N1"}, {"names": ["X"]}),
+        ) as split:
+            f = Flight(p._db)
+            f.icao_hex = "A8AE7F"
+            p._enrich_aircraft(f)
+        split.assert_called_once_with('{"icao_hex": "A8AE7F"}')
+        assert f.aircraft == {"icao_hex": "A8AE7F", "registration": "N1"}
+        assert f.registrant == {"names": ["X"]}
+
+    def test_enrich_operator_uses_shared_skip_rules(self):
+        p, mock_redis = _make_processor()
+        f = Flight(p._db)
+        f.icao_hex = "A8AE7F"
+        f.ident = "DAL659"
+        with patch("message_processor.main.operator_lookup_prefix", return_value=None) as prefix:
+            p._enrich_operator(f)
+        prefix.assert_called_once_with("DAL659", f.aircraft)
+        mock_redis.json.return_value.get.assert_not_called()

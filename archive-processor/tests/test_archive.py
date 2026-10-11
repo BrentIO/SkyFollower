@@ -2051,3 +2051,351 @@ class TestS3PoolSizing:
                 processor._connect_s3()
             _, kwargs = MockSession.return_value.client.call_args
             assert kwargs["config"].max_pool_connections >= _ARCHIVE_WORKER_COUNT
+
+
+# ---------------------------------------------------------------------------
+# Archive-time enrichment backfill (#2203)
+# ---------------------------------------------------------------------------
+
+_FRESH_AIRCRAFT = {
+    "icao_hex": "A8AE7F",
+    "registration": "N659DL",
+    "type_designator": "B763",
+    "manufacturer": "Boeing",
+    "powerplant": {"type": "jet", "model": "CF6-80C2", "count": 2},
+    "data_sources": ["mictronics", "us-faa-registry"],
+    "registrant": {"names": ["Delta Air Lines Inc"], "city": "Atlanta"},
+}
+_FRESH_OPERATOR = {"airline_designator": "DAL", "name": "Delta Air Lines", "source": "mictronics"}
+
+
+def _backfill_processor(tmp_dir, aircraft=None, operator=None):
+    """Processor whose Redis serves merge_aircraft.lua/operator lookups from
+    the given dicts (None = miss), with an in-memory S3."""
+    processor, mock_redis = _make_processor(tmp_dir)
+    processor._s3_client = _FakeS3()
+    processor._merge_sha = "mergesha"
+    processor._incr_period_counter_sha = "incrsha"
+    mock_redis.get.return_value = None
+
+    def _evalsha(sha, numkeys, *args):
+        if sha == "mergesha":
+            return json.dumps(aircraft) if aircraft is not None else None
+        return 1
+
+    mock_redis.evalsha.side_effect = _evalsha
+    mock_redis.json.return_value.get.return_value = operator
+    return processor, mock_redis
+
+
+def _archive_and_read(processor, flight) -> dict:
+    with patch.object(processor, "_write_index_to_s3"):
+        processor._archive_flight_to_s3(flight)
+    key = next(k for k in processor._s3_client.objects if k.startswith("flights/"))
+    return processor._s3_client.read_json(key)
+
+
+class TestArchiveEnrichmentBackfill:
+    def test_empty_fields_populated_from_redis(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, _FRESH_AIRCRAFT, _FRESH_OPERATOR)
+            flight = _make_flight(aircraft={"icao_hex": "A8AE7F"}, ident="DAL659")
+
+            record = _archive_and_read(processor, flight)
+
+            assert record["aircraft"]["registration"] == "N659DL"
+            assert record["aircraft"]["type_designator"] == "B763"
+            assert record["aircraft"]["powerplant"] == {"type": "jet", "model": "CF6-80C2", "count": 2}
+            assert "registrant" not in record["aircraft"]
+            assert record["registrant"] == {"names": ["Delta Air Lines Inc"], "city": "Atlanta"}
+            assert record["operator"] == {"airline_designator": "DAL", "name": "Delta Air Lines"}
+
+    def test_populated_fields_never_changed(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, _FRESH_AIRCRAFT, _FRESH_OPERATOR)
+            flight = _make_flight(
+                aircraft={"icao_hex": "A8AE7F", "registration": "N1OLD", "type_designator": "A320"},
+                registrant={"names": ["Old Owner"], "city": "Miami"},
+                operator={"airline_designator": "DAL", "name": "Old Name"},
+                ident="DAL659",
+            )
+
+            record = _archive_and_read(processor, flight)
+
+            assert record["aircraft"]["registration"] == "N1OLD"
+            assert record["aircraft"]["type_designator"] == "A320"
+            assert record["aircraft"]["manufacturer"] == "Boeing"
+            assert record["registrant"] == {"names": ["Old Owner"], "city": "Miami"}
+            assert record["operator"] == {"airline_designator": "DAL", "name": "Old Name"}
+
+    def test_zero_and_false_count_as_data(self):
+        fresh = {"icao_hex": "A8AE7F", "military": True, "powerplant": {"count": 2}}
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, fresh)
+            flight = _make_flight(
+                aircraft={"icao_hex": "A8AE7F", "military": False, "powerplant": {"count": 0}},
+                ident=None,
+            )
+
+            record = _archive_and_read(processor, flight)
+
+            assert record["aircraft"]["military"] is False
+            assert record["aircraft"]["powerplant"] == {"count": 0}
+
+    def test_partial_sub_object_fills_only_empty_leaves(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, _FRESH_AIRCRAFT)
+            flight = _make_flight(
+                aircraft={"icao_hex": "A8AE7F", "registration": "N659DL",
+                          "powerplant": {"type": "turboprop", "model": ""}},
+                ident=None,
+            )
+
+            record = _archive_and_read(processor, flight)
+
+            assert record["aircraft"]["powerplant"] == {"type": "turboprop", "model": "CF6-80C2", "count": 2}
+
+    def test_live_decoded_fields_untouched(self):
+        fresh = dict(_FRESH_AIRCRAFT, wake_turbulence_category="heavy",
+                     adsb_version=0, emitter_category="A1")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, fresh)
+            flight = _make_flight(
+                aircraft={"icao_hex": "A8AE7F", "wake_turbulence_category": "medium",
+                          "adsb_version": 2, "emitter_category": "A3"},
+                ident=None,
+            )
+            missing = _make_flight(_id="018f1234-5678-7abc-def0-000000000002",
+                                   aircraft={"icao_hex": "A8AE7F"}, ident=None)
+
+            record = _archive_and_read(processor, flight)
+            processor._s3_client = _FakeS3()
+            record_missing = _archive_and_read(processor, missing)
+
+            assert record["aircraft"]["wake_turbulence_category"] == "medium"
+            assert record["aircraft"]["adsb_version"] == 2
+            assert record["aircraft"]["emitter_category"] == "A3"
+            for field in ("wake_turbulence_category", "adsb_version", "emitter_category"):
+                assert field not in record_missing["aircraft"]
+
+    def test_data_sources_replaced_only_when_something_backfilled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, _FRESH_AIRCRAFT)
+            gap = _make_flight(aircraft={"icao_hex": "A8AE7F", "data_sources": ["mictronics"]}, ident=None)
+            record = _archive_and_read(processor, gap)
+            assert record["aircraft"]["data_sources"] == ["mictronics", "us-faa-registry"]
+
+        complete = {k: v for k, v in _FRESH_AIRCRAFT.items() if k != "registrant"}
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, dict(complete, data_sources=["other"]))
+            full = _make_flight(aircraft=dict(complete), ident=None)
+            record = _archive_and_read(processor, full)
+            assert record["aircraft"]["data_sources"] == ["mictronics", "us-faa-registry"]
+
+    def test_military_false_not_backfilled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, dict(_FRESH_AIRCRAFT, military=False))
+            record = _archive_and_read(processor, _make_flight(aircraft={"icao_hex": "A8AE7F"}, ident=None))
+            assert "military" not in record["aircraft"]
+
+    def test_redis_unavailable_archives_unchanged(self):
+        import redis
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _backfill_processor(tmp_dir)
+            mock_redis.evalsha.side_effect = redis.exceptions.ConnectionError("down")
+            mock_redis.json.return_value.get.side_effect = redis.exceptions.ConnectionError("down")
+            flight = _make_flight(aircraft={"icao_hex": "A8AE7F"}, ident="DAL659")
+
+            record = _archive_and_read(processor, flight)
+
+            assert record["aircraft"] == {"icao_hex": "A8AE7F"}
+            assert "operator" not in record
+            assert "registrant" not in record
+            assert processor._fields_backfilled_lifetime == 0
+
+    def test_unexpected_error_archives_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _backfill_processor(tmp_dir)
+            mock_redis.evalsha.side_effect = lambda sha, *a: "not json" if sha == "mergesha" else 1
+            flight = _make_flight(aircraft={"icao_hex": "A8AE7F"}, ident=None)
+
+            record = _archive_and_read(processor, flight)
+
+            assert record["aircraft"] == {"icao_hex": "A8AE7F"}
+
+    def test_fallback_flight_backfilled_on_drain_not_on_queue(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _backfill_processor(tmp_dir)
+            processor._s3_connected = False
+            with patch.object(processor._fallback, "put", wraps=processor._fallback.put) as put:
+                processor._process_flight(_make_flight(aircraft={"icao_hex": "A8AE7F"}, ident=None))
+            assert json.loads(put.call_args.args[0])["aircraft"] == {"icao_hex": "A8AE7F"}
+            assert not any(c.args[0] == "mergesha" for c in mock_redis.evalsha.call_args_list)
+
+            mock_redis.evalsha.side_effect = (
+                lambda sha, *a: json.dumps(_FRESH_AIRCRAFT) if sha == "mergesha" else 1
+            )
+            with patch.object(processor, "_write_index_to_s3"):
+                processor._finish_s3_connect()
+
+            key = next(k for k in processor._s3_client.objects if k.startswith("flights/"))
+            assert processor._s3_client.read_json(key)["aircraft"]["registration"] == "N659DL"
+
+    @pytest.mark.parametrize("ident, aircraft", [
+        ("N12345", {"icao_hex": "A8AE7F"}),             # US tail number
+        ("CGABC", {"icao_hex": "A8AE7F", "registration": "C-GABC"}),  # ident is the registration
+        ("X1234", {"icao_hex": "A8AE7F"}),              # prefix shorter than 2
+        (None, {"icao_hex": "A8AE7F"}),                 # no ident
+    ])
+    def test_operator_lookup_skip_rules(self, ident, aircraft):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _backfill_processor(tmp_dir, None, _FRESH_OPERATOR)
+            _archive_and_read(processor, _make_flight(aircraft=aircraft, ident=ident))
+            mock_redis.json.return_value.get.assert_not_called()
+
+    def test_operator_skip_uses_backfilled_registration(self):
+        fresh = {"icao_hex": "A8AE7F", "registration": "C-GABC"}
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _backfill_processor(tmp_dir, fresh, _FRESH_OPERATOR)
+            _archive_and_read(processor, _make_flight(aircraft={"icao_hex": "A8AE7F"}, ident="CGABC"))
+            mock_redis.json.return_value.get.assert_not_called()
+
+    def test_operator_lookup_uses_airline_prefix(self):
+        from shared.redis_keys import operator_key
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _backfill_processor(tmp_dir, None, _FRESH_OPERATOR)
+            _archive_and_read(processor, _make_flight(aircraft={"icao_hex": "A8AE7F"}, ident="DAL659"))
+            mock_redis.json.return_value.get.assert_called_once_with(operator_key("DAL"))
+
+    def test_backfill_runs_before_stitch(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, _FRESH_AIRCRAFT)
+            seen = []
+            with patch.object(processor, "_try_stitch", side_effect=lambda f: seen.append(f) or None):
+                _archive_and_read(processor, _make_flight(aircraft={"icao_hex": "A8AE7F"}, ident=None))
+            assert seen[0].aircraft["registration"] == "N659DL"
+
+    def test_counter_incremented_by_fields_filled_after_write(self):
+        from shared.redis_keys import metrics_fields_backfilled_key
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _backfill_processor(tmp_dir, {"icao_hex": "A8AE7F", "registration": "N659DL",
+                                                                  "type_designator": "B763"})
+            _archive_and_read(processor, _make_flight(aircraft={"icao_hex": "A8AE7F"}, ident=None))
+
+            calls = [c for c in mock_redis.evalsha.call_args_list
+                     if c.args[0] == "incrsha" and "fields_backfilled" in c.args[2]]
+            assert {c.args[2] for c in calls} == {
+                metrics_fields_backfilled_key("hour"), metrics_fields_backfilled_key("today"),
+            }
+            assert all(c.args[3] == 2 for c in calls)
+            assert processor._fields_backfilled_lifetime == 2
+
+    def test_counter_not_incremented_when_nothing_filled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _backfill_processor(tmp_dir, None, None)
+            _archive_and_read(processor, _make_flight())
+            assert not any("fields_backfilled" in str(c.args[2]) for c in mock_redis.evalsha.call_args_list
+                           if len(c.args) > 2)
+            assert processor._fields_backfilled_lifetime == 0
+
+    def test_counter_not_incremented_when_s3_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _backfill_processor(tmp_dir, _FRESH_AIRCRAFT)
+            with patch.object(processor, "_write_to_s3", side_effect=ConnectionError("s3 down")), \
+                 pytest.raises(ConnectionError):
+                processor._archive_flight_to_s3(_make_flight(aircraft={"icao_hex": "A8AE7F"}, ident=None))
+            assert processor._fields_backfilled_lifetime == 0
+
+    def test_telemetry_publishes_fields_backfilled(self):
+        from shared.redis_keys import metrics_fields_backfilled_key
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, mock_redis = _make_processor(tmp_dir)
+            processor._fields_backfilled_lifetime = 9
+            counts = {metrics_fields_backfilled_key("hour"): "3", metrics_fields_backfilled_key("today"): "5"}
+            mock_redis.get.side_effect = lambda k: counts.get(k)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_telemetry()
+
+            calls = {c.args[0]: c for c in mock_mqtt.publish.call_args_list}
+            base = "SkyFollower/archive/statistic"
+            assert calls[f"{base}/fields_backfilled_hour"].args[1] == "3"
+            assert calls[f"{base}/fields_backfilled_today"].args[1] == "5"
+            assert calls[f"{base}/fields_backfilled_lifetime"].args[1] == "9"
+            assert calls[f"{base}/fields_backfilled_lifetime"].kwargs.get("retain") is True
+
+    def test_ha_discovery_includes_fields_backfilled(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            processor, _ = _make_processor(tmp_dir)
+            mock_mqtt = MagicMock()
+            processor._mqtt = mock_mqtt
+            processor._mqtt_connected = True
+
+            processor._publish_ha_autodiscovery()
+
+            configs = {
+                c.args[0]: json.loads(c.args[1])
+                for c in mock_mqtt.publish.call_args_list
+                if c.args[0].startswith("homeassistant/")
+            }
+            for period in ("hour", "today", "lifetime"):
+                cfg = configs[f"homeassistant/sensor/SkyFollower_archive_fields_backfilled_{period}/config"]
+                assert cfg["state_topic"] == f"SkyFollower/archive/statistic/fields_backfilled_{period}"
+                assert cfg["state_class"] == "total_increasing"
+
+
+class TestArchiveEnrichmentBackfillLive:
+    """Real merge_aircraft.lua against a live redis-stack; skipped when none
+    is reachable (REDIS_TEST_HOST/PORT)."""
+
+    def test_backfills_from_real_merge_script(self):
+        import pathlib
+        import uuid
+
+        import redis
+
+        client = redis.Redis(
+            host=os.environ.get("REDIS_TEST_HOST", "localhost"),
+            port=int(os.environ.get("REDIS_TEST_PORT", "6379")),
+            decode_responses=True, socket_connect_timeout=2,
+        )
+        try:
+            client.ping()
+        except (redis.exceptions.RedisError, OSError):
+            pytest.skip("No Redis reachable for live archive backfill testing")
+
+        hex_ = "FFFC" + uuid.uuid4().hex[:2].upper()
+        key = f"aircraft:registry:{hex_}"
+        client.json().set(key, "$", {
+            "source": "us-faa-registry", "registration": "N2203T",
+            "registrant": {"names": ["Test Owner"]},
+        })
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                processor, _ = _make_processor(tmp_dir)
+                processor._redis = client
+                processor._s3_client = _FakeS3()
+                lua_dir = pathlib.Path(_REPO_ROOT) / "shared" / "lua"
+                processor._merge_lua = (lua_dir / "merge_aircraft.lua").read_text()
+                processor._merge_sha = client.script_load(processor._merge_lua)
+                processor._incr_period_counters = MagicMock()
+
+                flight = _make_flight(_id=str(uuid.uuid4()), aircraft={"icao_hex": hex_}, ident=None)
+                with patch.object(processor, "_write_index_to_s3"), \
+                     patch.object(processor, "_update_stitch_pointer"), \
+                     patch.object(processor, "_try_stitch", return_value=None):
+                    processor._archive_flight_to_s3(flight)
+
+                record = processor._s3_client.read_json(next(iter(processor._s3_client.objects)))
+                assert record["aircraft"]["registration"] == "N2203T"
+                assert record["aircraft"]["data_sources"] == ["us-faa-registry"]
+                assert record["registrant"] == {"names": ["Test Owner"]}
+        finally:
+            client.delete(key)
+            client.close()

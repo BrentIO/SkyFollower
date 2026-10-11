@@ -15,6 +15,7 @@ from shared.redis_keys import (
     config_rules_key,
     config_rules_version_key,
     message_processor_heartbeat_key,
+    metrics_fields_backfilled_key,
     metrics_flights_archived_key,
     metrics_operator_misses_key,
     metrics_registration_misses_key,
@@ -190,6 +191,14 @@ class TestMetricKeys:
     def test_flights_archived_valid_periods(self):
         assert metrics_flights_archived_key("hour") == "metrics:archive:flights_archived:hour"
         assert metrics_flights_archived_key("today") == "metrics:archive:flights_archived:today"
+
+    def test_fields_backfilled_valid_periods(self):
+        assert metrics_fields_backfilled_key("hour") == "metrics:archive:fields_backfilled:hour"
+        assert metrics_fields_backfilled_key("today") == "metrics:archive:fields_backfilled:today"
+
+    def test_fields_backfilled_lifetime_invalid(self):
+        with pytest.raises(ValueError, match="period"):
+            metrics_fields_backfilled_key("lifetime")
 
     def test_flights_archived_lifetime_invalid(self):
         with pytest.raises(ValueError, match="period"):
