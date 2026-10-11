@@ -19,9 +19,10 @@
 # end, not one per restart.
 #
 # --upgrade re-resolves the latest release tag, refreshes each role's
-# fetched config/compose files, rewrites SKYFOLLOWER_VERSION, and runs
-# `docker compose pull && up -d` in every role directory under the install
-# root. No prompting.
+# fetched config/compose files, and runs `docker compose pull && up -d` in
+# every role directory under the install root, rewriting SKYFOLLOWER_VERSION
+# only for roles that succeed. A failed role doesn't stop the others; the
+# run ends with a per-role summary and exits non-zero. No prompting.
 #
 # Files are fetched from the latest GitHub release tag by default: a
 # docker-compose.*.yaml's image: :latest always matches that tag, not tip
@@ -2143,73 +2144,103 @@ do_upgrade() {
   # answer.
   echo "Upgrading every role directory under ${INSTALL_ROOT} to ${IMAGE_VERSION}..."
   echo "(runner-* images are pulled too -- they sit behind the \"runners\" compose profile)"
-  local found=0
+  local found=0 failed=0 summary=""
   for env_file in "${INSTALL_ROOT}"/*/.env; do
     [ -e "$env_file" ] || continue
     found=1
-    local role_dir
+    local role_dir old_version rc
     role_dir="$(dirname "$env_file")"
+    old_version="$(grep '^SKYFOLLOWER_VERSION=' "$env_file" | tail -1 | cut -d= -f2- || true)"
     echo
     echo "-- ${role_dir} --"
-    # Re-fetch this role's compose file (and any config/*.example) via
-    # fetch_role, same as a first install -- an upgrade that only pulls
-    # images can never deliver a new service, label, or port mapping to
-    # an existing deployment. basename is a reliable way back to the role
-    # fetch_role expects, since default_folder_for_role() guarantees
-    # folder name == role name.
-    # unchanged here. Receiver/message-processor installs that still hold
-    # generated service blocks are converted to env files first, inside
-    # fetch_role, before their compose file is replaced.
-    fetch_role "$(basename "$role_dir")" "$role_dir"
-    # Rewrite SKYFOLLOWER_VERSION in place; every other line, including
-    # operator edits, is left as-is. Also renames the map role's old
-    # MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys to MAP_CENTER_LATITUDE/
-    # MAP_CENTER_LONGITUDE, and drops the retired MAP_STALE_SECONDS/
-    # MAP_HIDE_SECONDS/MAP_EVICT_SECONDS lines -- both no-ops on every
-    # non-map role dir.
-    local tmp role_compose="" has_https_port=0
-    grep -q '^MAP_HTTPS_PORT=' "$env_file" && has_https_port=1
-    case "$(basename "$role_dir")" in
-      receiver|message-processor) role_compose="$(role_compose_files "$(basename "$role_dir")")" ;;
-    esac
-    tmp="$(mktemp)"
-    awk -v v="$IMAGE_VERSION" -v cf="$role_compose" -v has_https="$has_https_port" '
-      cf != "" && /^COMPOSE_FILE=/ { print "COMPOSE_FILE=" cf; next }
-      /^MAP_HTTP_PORT=/ { if (!has_https) { sub(/^MAP_HTTP_PORT=/, "MAP_HTTPS_PORT="); print }; next }
-      /^SKYFOLLOWER_VERSION=/ { print "SKYFOLLOWER_VERSION=" v; next }
-      /^MAP_(STALE|HIDE|EVICT)_SECONDS=/ { next }
-      /^# Lifecycle TTLs, seconds\. MAP_STALE_SECONDS/ { skip_note = 1; next }
-      skip_note && /^# / { next }
-      { skip_note = 0 }
-      /^MAP_HOME_LATITUDE=/ { sub(/^MAP_HOME_LATITUDE=/, "MAP_CENTER_LATITUDE="); print; next }
-      /^MAP_HOME_LONGITUDE=/ { sub(/^MAP_HOME_LONGITUDE=/, "MAP_CENTER_LONGITUDE="); print; next }
-      { print }
-    ' "$env_file" > "$tmp"
-    (umask 077; mv "$tmp" "$env_file")
-    if [ "$(basename "$role_dir")" = "message-processor" ] && ! grep -q '^CAPTURE_RAW_FRAMES=' "$env_file"; then
-      printf '\n# Opt-in forensic raw-frame capture; see message-processor/README.md.\nCAPTURE_RAW_FRAMES=false\n' >> "$env_file"
+    # Each role runs in its own errexit subshell so one failure (e.g. a
+    # transient pull error) fails only that role and the loop continues.
+    set +e
+    (
+      set -e
+      # Re-fetch this role's compose file (and any config/*.example) via
+      # fetch_role, same as a first install -- an upgrade that only pulls
+      # images can never deliver a new service, label, or port mapping to
+      # an existing deployment. basename is a reliable way back to the role
+      # fetch_role expects, since default_folder_for_role() guarantees
+      # folder name == role name. Receiver/message-processor installs that
+      # still hold generated service blocks are converted to env files
+      # first, inside fetch_role, before their compose file is replaced.
+      fetch_role "$(basename "$role_dir")" "$role_dir"
+      # Every line, including operator edits, is left as-is except: renames
+      # the map role's old MAP_HOME_LATITUDE/MAP_HOME_LONGITUDE keys to
+      # MAP_CENTER_LATITUDE/MAP_CENTER_LONGITUDE, drops the retired
+      # MAP_STALE_SECONDS/MAP_HIDE_SECONDS/MAP_EVICT_SECONDS lines, and
+      # renames MAP_HTTP_PORT to MAP_HTTPS_PORT (value kept) -- all no-ops
+      # on every non-map role dir. SKYFOLLOWER_VERSION is written only after
+      # the pull and up -d below succeed.
+      local tmp role_compose="" has_https_port=0
+      grep -q '^MAP_HTTPS_PORT=' "$env_file" && has_https_port=1
+      case "$(basename "$role_dir")" in
+        receiver|message-processor) role_compose="$(role_compose_files "$(basename "$role_dir")")" ;;
+      esac
+      tmp="$(mktemp)"
+      awk -v cf="$role_compose" -v has_https="$has_https_port" '
+        cf != "" && /^COMPOSE_FILE=/ { print "COMPOSE_FILE=" cf; next }
+        /^MAP_HTTP_PORT=/ { if (!has_https) { sub(/^MAP_HTTP_PORT=/, "MAP_HTTPS_PORT="); print }; next }
+        /^MAP_(STALE|HIDE|EVICT)_SECONDS=/ { next }
+        /^# Lifecycle TTLs, seconds\. MAP_STALE_SECONDS/ { skip_note = 1; next }
+        skip_note && /^# / { next }
+        { skip_note = 0 }
+        /^MAP_HOME_LATITUDE=/ { sub(/^MAP_HOME_LATITUDE=/, "MAP_CENTER_LATITUDE="); print; next }
+        /^MAP_HOME_LONGITUDE=/ { sub(/^MAP_HOME_LONGITUDE=/, "MAP_CENTER_LONGITUDE="); print; next }
+        { print }
+      ' "$env_file" > "$tmp"
+      (umask 077; mv "$tmp" "$env_file")
+      if [ "$(basename "$role_dir")" = "message-processor" ] && ! grep -q '^CAPTURE_RAW_FRAMES=' "$env_file"; then
+        printf '\n# Opt-in forensic raw-frame capture; see message-processor/README.md.\nCAPTURE_RAW_FRAMES=false\n' >> "$env_file"
+      fi
+      if [ "$(basename "$role_dir")" = "management-ui" ] && ! grep -q '^MANAGEMENT_UI_HTTPS_PORT=' "$env_file"; then
+        printf '\nMANAGEMENT_UI_HTTPS_PORT=18443\n' >> "$env_file"
+      fi
+      # --profile runners on the pull refreshes the runner-* images too (a
+      # no-op where the compose file declares no such profile). Deliberately
+      # NOT passed to `up -d`: the runner services are one-shot jobs, so
+      # `up` would kick off every one of them, including the multi-hour
+      # uk-caa-registry. Ofelia is recreated by `up -d` and spawns fresh
+      # runner containers from the pulled images on its own schedule.
+      # The shell variable overrides .env's SKYFOLLOWER_VERSION for these
+      # two commands only.
+      cd "$role_dir"
+      SKYFOLLOWER_VERSION="$IMAGE_VERSION" docker compose --parallel 4 --profile runners pull
+      SKYFOLLOWER_VERSION="$IMAGE_VERSION" docker compose up -d
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+      local tmp
+      tmp="$(mktemp)"
+      awk -v v="$IMAGE_VERSION" '/^SKYFOLLOWER_VERSION=/ { print "SKYFOLLOWER_VERSION=" v; next } { print }' "$env_file" > "$tmp"
+      (umask 077; mv "$tmp" "$env_file")
+      summary="${summary}  ✓ ${role_dir}: ${IMAGE_VERSION}"$'\n'
+    else
+      failed=$((failed + 1))
+      summary="${summary}  ✗ ${role_dir}: FAILED -- .env still says ${old_version:-(unset)}; re-run install.sh --upgrade"$'\n'
     fi
-    if [ "$(basename "$role_dir")" = "management-ui" ] && ! grep -q '^MANAGEMENT_UI_HTTPS_PORT=' "$env_file"; then
-      printf '\nMANAGEMENT_UI_HTTPS_PORT=18443\n' >> "$env_file"
-    fi
-    # --profile runners on the pull refreshes the runner-* images too (a
-    # no-op where the compose file declares no such profile). Deliberately
-    # NOT passed to `up -d`: the runner services are one-shot jobs, so
-    # `up` would kick off every one of them, including the multi-hour
-    # uk-caa-registry. Ofelia is recreated by `up -d` and spawns fresh
-    # runner containers from the pulled images on its own schedule.
-    (cd "$role_dir" && docker compose --parallel 4 --profile runners pull && docker compose up -d)
   done
   if [ "$found" -eq 0 ]; then
     echo "No role directories found under ${INSTALL_ROOT} (looked for */.env)." >&2
     exit 1
   fi
   echo
-  echo "Upgrade complete."
+  echo "Upgrade summary:"
+  printf '%s' "$summary"
   if [ "$DEV_BUILD" -eq 1 ]; then
     echo
     echo "⚠️  DEVELOPMENT BUILD (${IMAGE_VERSION}, branch '${BRANCH}') -- not a released version."
   fi
+  if [ "$failed" -gt 0 ]; then
+    echo >&2
+    echo "${failed} role(s) failed to upgrade; their containers keep the previous images. Re-run install.sh --upgrade once the cause is fixed." >&2
+    exit 1
+  fi
+  echo
+  echo "Upgrade complete."
 }
 
 # ---------------------------------------------------------------------------
