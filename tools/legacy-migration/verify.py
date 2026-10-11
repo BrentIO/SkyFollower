@@ -6,8 +6,8 @@ Every remote fetch is persisted to a SQLite cache (VERIFY_CACHE_DIR) as it
 arrives, so a run that dies partway resumes at the last completed page and a
 re-run never repeats a fetch it already has:
 
-1. Mongo snapshot: one pass over the whole collection (_id, first_message
-   day, migrated?, guard reason). After this, Mongo is no longer needed.
+1. Mongo snapshot: one natural-order pass over the whole collection (_id,
+   first_message day, migrated?, guard reason). After this, Mongo is no longer needed.
 2. Source and destination bucket listings (ETag + size come with the
    listing, so there is no per-object HEAD), the index/ listing, and each
    day's compacted Parquet file.
@@ -28,6 +28,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable, Iterable, Iterator, Optional
@@ -51,6 +52,7 @@ logger = logging.getLogger("legacy-migration.verify")
 
 PAGE_SIZE = 1000
 MONGO_BATCH = 50_000
+MONGO_RESUME_MARGIN = 10_000
 DEFAULT_CACHE_DIR = "/app/verify-cache"
 DB_FILENAME = "verify-cache.sqlite"
 ACCEPTED_LOSS_FILENAME = "accepted-loss.txt"
@@ -85,7 +87,7 @@ _REFRESH_TABLES = {
     "parquet": ["parquet_days", "parquet_rows"],
 }
 _REFRESH_PROGRESS = {
-    "mongo": "mongo",
+    "mongo": "mongo%",
     "source": "source:%",
     "dest": "dest:%",
     "index": "index",
@@ -235,28 +237,49 @@ _MONGO_PROJECTION = {
 
 
 def _snapshot_mongo(cache: Cache) -> None:
-    state = cache.progress("mongo")
+    state = cache.progress("mongo_scan")
     if state and state[1]:
         logger.info("Mongo snapshot: reusing cached copy")
         return
 
     collection = connect_mongo(load_config("mongo")["mongo"])
-    last = state[0] if state else None
-    total = 0
-    while True:
-        query = {"_id": {"$gt": last}} if last is not None else {}
-        docs = list(collection.find(query, _MONGO_PROJECTION).sort("_id", 1).limit(MONGO_BATCH))
-        if not docs:
-            cache.save_page("mongo", "", [], last, True)
-            break
-        rows = [
-            (str(doc["_id"]), _day_of(doc.get("first_message")), int("migrated" in doc), guard_reason(doc))
-            for doc in docs
-        ]
-        last = str(docs[-1]["_id"])
-        total += len(rows)
-        cache.save_page("mongo", "INSERT OR REPLACE INTO mongo_docs VALUES (?, ?, ?, ?)", rows, last, False)
-        logger.info("Mongo snapshot: %d document(s) this run", total)
+    # Natural order, not an _id walk: _id is a random UUID, so paging by it is a random read per document.
+    processed = int(state[0]) if state and state[0] else 0
+    skip = max(0, processed - MONGO_RESUME_MARGIN)
+    cursor = collection.find({}, _MONGO_PROJECTION, skip=skip, no_cursor_timeout=True, batch_size=MONGO_BATCH)
+    started = time.monotonic()
+    seen = 0
+    rows: list[tuple] = []
+
+    def flush() -> None:
+        nonlocal rows
+        cache.save_page(
+            "mongo_scan", "INSERT OR REPLACE INTO mongo_docs VALUES (?, ?, ?, ?)", rows, str(skip + seen), False
+        )
+        rows = []
+        logger.info(
+            "Mongo snapshot: %d document(s) this run (%.0f docs/s)", seen, seen / max(time.monotonic() - started, 1e-9)
+        )
+
+    try:
+        for doc in cursor:
+            rows.append((str(doc["_id"]), _day_of(doc.get("first_message")), int("migrated" in doc), guard_reason(doc)))
+            seen += 1
+            if len(rows) >= MONGO_BATCH:
+                flush()
+        if rows:
+            flush()
+    finally:
+        cursor.close()
+
+    cached = cache.execute("SELECT COUNT(*) FROM mongo_docs")[0][0]
+    expected = collection.estimated_document_count()
+    if cached != expected:
+        raise SystemExit(
+            f"Mongo snapshot has {cached} document(s) but the collection reports {expected}; "
+            "re-run, or pass --refresh mongo to rescan from scratch"
+        )
+    cache.save_page("mongo_scan", "", [], str(skip + seen), True)
 
 
 # ---------------------------------------------------------------------------
