@@ -246,8 +246,6 @@ class TestDeleteKeys:
 
 
 class TestDeleteKeysRetry:
-    """#2205"""
-
     @staticmethod
     def _scripted_s3(codes_by_key: dict[str, list[str]]):
         """Fails each key with its listed codes in order, then succeeds."""
@@ -478,7 +476,6 @@ class TestCompactPartitionLocalCache:
         assert os.path.exists(local_index_path(key, str(tmp_path)))
 
     def test_local_copy_removed_when_transient_delete_error_retried(self, tmp_path):
-        # 2205
         s3 = _FakeS3()
         key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
         payload = _make_parquet_bytes(_make_row())
@@ -494,7 +491,6 @@ class TestCompactPartitionLocalCache:
         assert not os.path.exists(local_index_path(key, str(tmp_path)))
 
     def test_local_copy_kept_when_retries_exhausted(self, tmp_path):
-        # 2205
         s3 = _FakeS3()
         key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
         payload = _make_parquet_bytes(_make_row())
