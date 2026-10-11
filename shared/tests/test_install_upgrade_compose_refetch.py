@@ -48,6 +48,7 @@ REF="main"
 INSTANCES_COMPOSE_FILE="docker-compose.instances.yaml"
 docker() { return 0; }
 http_get() { echo "FETCHED:${1}"; }
+provision_rabbitmq_users() { return 0; }
 """ + _FUNCS
 
 
