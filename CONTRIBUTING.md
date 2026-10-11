@@ -26,11 +26,10 @@ This runs every component's test suite, discovered from the repo root.
 
 Every pull request to `main` must close an issue: put `Closes #<issue>` in the
 description, once per issue. The `Require linked issue` check blocks the merge
-otherwise, and the `main` ruleset in `.github/rulesets/main.json` has no bypass
-actors. Apply or update it with:
+otherwise, and the `main` ruleset in `.github/rulesets/protect-main.json` has no bypass
+actors. Update the live ruleset from it with:
 
 ```bash
-gh api repos/BrentIO/SkyFollower/rulesets --method POST --input .github/rulesets/main.json
+id=$(gh api repos/BrentIO/SkyFollower/rulesets --jq '.[] | select(.name=="Protect main") | .id')
+gh api repos/BrentIO/SkyFollower/rulesets/$id --method PUT --input .github/rulesets/protect-main.json
 ```
-
-Use `PUT repos/BrentIO/SkyFollower/rulesets/<id>` to update an existing ruleset.
