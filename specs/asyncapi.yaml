@@ -836,6 +836,42 @@ channels:
       ArchiveFlightsSkippedLifetimeMessage:
         $ref: '#/components/messages/ArchiveFlightsSkippedLifetimeMessage'
 
+  archiveFieldsBackfilledHour:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/archive/statistic/fields_backfilled_hour
+    description: >
+      Empty aircraft/registrant/operator fields the archive processor
+      filled from Redis at write time, this hour. Published every
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    messages:
+      ArchiveFieldsBackfilledHourMessage:
+        $ref: '#/components/messages/ArchiveFieldsBackfilledHourMessage'
+
+  archiveFieldsBackfilledToday:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/archive/statistic/fields_backfilled_today
+    description: >
+      Empty aircraft/registrant/operator fields the archive processor
+      filled from Redis at write time, today (UTC). Published every
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    messages:
+      ArchiveFieldsBackfilledTodayMessage:
+        $ref: '#/components/messages/ArchiveFieldsBackfilledTodayMessage'
+
+  archiveFieldsBackfilledLifetime:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/archive/statistic/fields_backfilled_lifetime
+    description: >
+      Empty aircraft/registrant/operator fields the archive processor
+      filled from Redis at write time, since this archive-processor process started; in-memory, resets to zero on restart. Published every
+      MQTT_PUBLISH_INTERVAL_SECONDS, retained.
+    messages:
+      ArchiveFieldsBackfilledLifetimeMessage:
+        $ref: '#/components/messages/ArchiveFieldsBackfilledLifetimeMessage'
+
   archiveS3Connected:
     servers:
       - $ref: '#/servers/mqtt'
@@ -1515,6 +1551,24 @@ operations:
       $ref: '#/channels/archiveFlightsSkippedLifetime'
     summary: Archive processor publishes lifetime external-only flights skipped
 
+  publishArchiveFieldsBackfilledHour:
+    action: send
+    channel:
+      $ref: '#/channels/archiveFieldsBackfilledHour'
+    summary: Archive processor publishes fields backfilled at archive time (hour)
+
+  publishArchiveFieldsBackfilledToday:
+    action: send
+    channel:
+      $ref: '#/channels/archiveFieldsBackfilledToday'
+    summary: Archive processor publishes fields backfilled at archive time (today)
+
+  publishArchiveFieldsBackfilledLifetime:
+    action: send
+    channel:
+      $ref: '#/channels/archiveFieldsBackfilledLifetime'
+    summary: Archive processor publishes fields backfilled at archive time (lifetime)
+
   publishArchiveS3Connected:
     action: send
     channel:
@@ -2024,6 +2078,30 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ArchiveFlightsSkippedLifetime'
+
+    ArchiveFieldsBackfilledHourMessage:
+      name: ArchiveFieldsBackfilledHourMessage
+      title: Archive fields backfilled (hour)
+      summary: Empty enrichment fields filled at archive time, this hour
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFieldsBackfilledHour'
+
+    ArchiveFieldsBackfilledTodayMessage:
+      name: ArchiveFieldsBackfilledTodayMessage
+      title: Archive fields backfilled (today)
+      summary: Empty enrichment fields filled at archive time, today (UTC)
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFieldsBackfilledToday'
+
+    ArchiveFieldsBackfilledLifetimeMessage:
+      name: ArchiveFieldsBackfilledLifetimeMessage
+      title: Archive fields backfilled (lifetime)
+      summary: Empty enrichment fields filled at archive time, since this archive-processor process started; in-memory, resets to zero on restart
+      contentType: text/plain
+      payload:
+        $ref: '#/components/schemas/ArchiveFieldsBackfilledLifetime'
 
     ArchiveS3ConnectedMessage:
       name: ArchiveS3ConnectedMessage
@@ -2616,6 +2694,27 @@ components:
         publishes directly, never Redis-backed, so it resets to zero on
         every archive-processor restart by design.
       example: 41230
+
+    ArchiveFieldsBackfilledHour:
+      type: integer
+      description: >
+        Empty aircraft/registrant/operator fields filled from Redis at
+        archive time, this hour.
+      example: 12
+
+    ArchiveFieldsBackfilledToday:
+      type: integer
+      description: >
+        Empty aircraft/registrant/operator fields filled from Redis at
+        archive time, today (UTC).
+      example: 87
+
+    ArchiveFieldsBackfilledLifetime:
+      type: integer
+      description: >
+        Empty aircraft/registrant/operator fields filled from Redis at
+        archive time, since this archive-processor process started; in-memory, resets to zero on restart.
+      example: 1530
 
     ArchiveS3Connected:
       type: boolean

@@ -126,6 +126,48 @@ external-only flights the user does care about, without having to archive
 every external contact indiscriminately. Skipped flights increment
 `flights_skipped_hour`/`flights_skipped_today` (see Statistics below).
 
+## Enrichment Backfill
+
+The message processor enriches each flight once: aircraft/registrant when
+the flight is created, operator when its ident is confirmed. If Redis was
+down or didn't hold the data yet, the flight carries nothing (or only
+`{icao_hex}`) and nothing revisits it. So immediately before every write,
+`_archive_flight_to_s3` makes one more best-effort attempt
+(`_backfill_enrichment`), before `_try_stitch`:
+
+- **Aircraft/registrant:** `EVALSHA` `shared/lua/merge_aircraft.lua` for
+  `aircraft.icao_hex`, post-processed by `shared/enrichment.py`'s
+  `split_merged_aircraft()` (the same helper the message processor uses).
+- **Operator:** RedisJSON `GET operator:{prefix}`, with the same skip rules
+  as the message processor's `_enrich_operator` (`operator_lookup_prefix()`:
+  US tail number, ident equal to the registration, airline prefix shorter
+  than 2 characters). The registration check sees any registration just
+  backfilled above. The `source` key is stripped, as at publish time.
+
+Only **empty leaves** are filled: missing, `null`, `""`, `{}` or `[]`.
+Sub-objects are recursed into, so a missing `powerplant.model` is filled
+even when `powerplant.type` is set. `0` and `false` are data, and a field
+that already has a value is never changed, even if Redis now disagrees.
+
+- `wake_turbulence_category`, `adsb_version` and `emitter_category` are
+  receiver-decoded and never touched.
+- `aircraft.data_sources` takes the fresh value (a superset) when any
+  aircraft/registrant leaf was filled; otherwise it is left as is.
+- `military: false` from Redis is not added, matching the message
+  processor's archive shape.
+
+A Redis error is logged at debug and the flight is archived as-is: the
+backfill never delays, fails or requeues an archive, and there is no second
+attempt. Nothing is republished to the map or MQTT and rules aren't
+re-evaluated. Flights held in the S3 fallback queue are backfilled when
+they drain, not when queued, so they benefit from Redis having recovered.
+Stitching is unchanged: the backfill runs on the incoming segment only.
+
+The number of leaves filled is counted in `fields_backfilled_{hour,today,lifetime}`
+(see [MQTT Topics Published](#mqtt-topics-published)) after the S3 write
+succeeds, so a steady non-zero value means enrichment is regularly missing
+at flight start.
+
 ## S3 Object Format
 
 Each flight is written to:
@@ -410,6 +452,9 @@ All topics use the root `SkyFollower`.
 | `flights_skipped_today` | Integer as string | External-only flights dropped instead of archived today, UTC |
 | `flights_archived_lifetime` | Integer as string | Flights successfully written to S3 since this process started. In-memory, published directly by the archive processor — resets to 0 on container restart (like the receiver's Lifetime sensors) |
 | `flights_skipped_lifetime` | Integer as string | External-only flights dropped instead of archived since this process started. In-memory, published directly by the archive processor — resets to 0 on container restart (like the receiver's Lifetime sensors) |
+| `fields_backfilled_hour` | Integer as string | Empty aircraft/registrant/operator fields filled at archive time this hour (see [Enrichment Backfill](#enrichment-backfill)) |
+| `fields_backfilled_today` | Integer as string | Empty aircraft/registrant/operator fields filled at archive time today (UTC) |
+| `fields_backfilled_lifetime` | Integer as string | Empty fields filled at archive time since this process started. In-memory, resets to 0 on container restart |
 | `s3_connected` | `True` or `False` | Current S3 connectivity state |
 | `rabbitmq_connected` | `True` or `False` | Whether an active RabbitMQ connection is held |
 | `local_queue_depth` | Integer as string | Flights currently queued in `s3.db` fallback |
@@ -424,9 +469,10 @@ payloads are published to
 each sensor's `state_topic` points directly at its own
 `SkyFollower/archive/statistic/{field}` topic — no `value_template` needed.
 
-`flights_archived_{hour,today}`/`flights_skipped_{hour,today}` are backed by
-`metrics:archive:flights_archived:{hour|today}`/
-`metrics:archive:flights_skipped:{hour|today}` in Redis, and genuinely reset
+`flights_archived_{hour,today}`/`flights_skipped_{hour,today}`/`fields_backfilled_{hour,today}`
+are backed by `metrics:archive:flights_archived:{hour|today}`/
+`metrics:archive:flights_skipped:{hour|today}`/
+`metrics:archive:fields_backfilled:{hour|today}` in Redis, and genuinely reset
 at the real UTC hour/midnight boundary rather than accumulating forever.
 Both increments go through `EVALSHA` against
 `shared/lua/incr_period_counter.lua` (`SCRIPT LOAD`ed once at startup into

@@ -10,6 +10,7 @@ is unavailable.
 
 from __future__ import annotations
 
+import copy
 import gzip
 import json
 import logging
@@ -42,6 +43,7 @@ from shared.archive_index import (
     build_s3_key,
 )
 from shared.config import DATA_DIR, ConfigError, load_config
+from shared.enrichment import fill_empty_leaves, operator_lookup_prefix, split_merged_aircraft
 from shared.index_cache import INDEX_CACHE_DIR, write_local_index
 from shared.metrics import next_period_boundary
 from shared.redis_client import build_redis_client, evalsha_with_reload
@@ -54,8 +56,10 @@ from shared.rabbitmq_topology import ARCHIVE_QUEUE_NAME
 from shared.redis_keys import (
     archive_last_segment_key,
     config_flight_ttl_seconds_key,
+    metrics_fields_backfilled_key,
     metrics_flights_archived_key,
     metrics_flights_skipped_key,
+    operator_key,
 )
 from shared.timing import (
     DEFAULT_FLIGHT_TTL_SECONDS,
@@ -96,6 +100,11 @@ _ARCHIVE_WORKER_COUNT = 12
 # doing a concurrent PutObject/GetObject plus headroom for the
 # reconnect-loop and index-fallback-drain threads.
 _S3_MAX_POOL_CONNECTIONS = _ARCHIVE_WORKER_COUNT + 4
+
+# Receiver-decoded, or replaced wholesale (data_sources), so never leaf-filled.
+_BACKFILL_EXCLUDED_AIRCRAFT_FIELDS = frozenset({
+    "wake_turbulence_category", "adsb_version", "emitter_category", "data_sources",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -231,16 +240,17 @@ class ArchiveProcessor:
         # S3 worker threads, so a lock guards the read-modify-write += 1.
         self._flights_archived_lifetime = 0
         self._flights_skipped_lifetime = 0
+        self._fields_backfilled_lifetime = 0
         self._lifetime_lock = threading.Lock()
 
         # Redis
         rc = config["redis"]
         self._redis = build_redis_client(rc)
-        _incr_lua_path = (
-            pathlib.Path(__file__).parent.parent / "shared" / "lua" / "incr_period_counter.lua"
-        )
-        self._incr_period_counter_lua = _incr_lua_path.read_text()
+        _lua_dir = pathlib.Path(__file__).parent.parent / "shared" / "lua"
+        self._incr_period_counter_lua = (_lua_dir / "incr_period_counter.lua").read_text()
         self._incr_period_counter_sha = self._redis.script_load(self._incr_period_counter_lua)
+        self._merge_lua = (_lua_dir / "merge_aircraft.lua").read_text()
+        self._merge_sha = self._redis.script_load(self._merge_lua)
 
         # flight_ttl_seconds: shared Redis config (config:flight_ttl_seconds),
         # read once at startup and cached. Not hot-reloaded; restart to pick
@@ -549,7 +559,7 @@ class ArchiveProcessor:
                 "Could not schedule ack for delivery_tag %s: %s", delivery_tag, exc
             )
 
-    def _incr_period_counters(self, key_fn, periods: tuple[str, ...]) -> None:
+    def _incr_period_counters(self, key_fn, periods: tuple[str, ...], amount: int = 1) -> None:
         """Atomically increments one or more hour/today period counters via
         shared/lua/incr_period_counter.lua, so each resets at the real UTC
         boundary instead of accumulating forever."""
@@ -557,7 +567,7 @@ class ArchiveProcessor:
         for period in periods:
             evalsha_with_reload(
                 self._redis, self._incr_period_counter_sha, self._incr_period_counter_lua, 0,
-                key_fn(period), 1, next_period_boundary(period, now),
+                key_fn(period), amount, next_period_boundary(period, now),
             )
 
     def _process_flight(self, flight: CompletedFlight) -> None:
@@ -642,6 +652,7 @@ class ArchiveProcessor:
         for the same aircraft; if so, merge into that segment instead of
         writing a second S3 object. Assumes S3 is reachable -- raises on
         failure so the caller can decide fallback handling."""
+        flight, backfilled = self._backfill_enrichment(flight)
         s3_key = build_s3_key(flight)
         stitched = self._try_stitch(flight)
         if stitched is not None:
@@ -656,6 +667,67 @@ class ArchiveProcessor:
         self._write_to_s3(flight, payload_gz, s3_key)
         self._post_write_success(flight, s3_key)
         self._update_stitch_pointer(flight, s3_key)
+        if backfilled:
+            self._record_fields_backfilled(backfilled)
+
+    def _backfill_enrichment(self, flight: CompletedFlight) -> tuple[CompletedFlight, int]:
+        """Best-effort fill of empty enrichment leaves from Redis; returns (flight, leaves filled), never raises."""
+        try:
+            return self._backfill_enrichment_unguarded(flight)
+        except Exception as exc:
+            logger.debug("Archive-time enrichment backfill failed for %s: %s", flight.id, exc)
+            return flight, 0
+
+    def _backfill_enrichment_unguarded(self, flight: CompletedFlight) -> tuple[CompletedFlight, int]:
+        aircraft = copy.deepcopy(flight.aircraft)
+        registrant = copy.deepcopy(flight.registrant or {})
+        operator = copy.deepcopy(flight.operator or {})
+        filled = 0
+
+        icao_hex = aircraft.get("icao_hex")
+        raw = None
+        if icao_hex:
+            try:
+                raw = evalsha_with_reload(self._redis, self._merge_sha, self._merge_lua, 0, icao_hex)
+            except Exception as exc:
+                logger.debug("Archive-time aircraft lookup failed for %s: %s", icao_hex, exc)
+        if raw:
+            fresh_aircraft, fresh_registrant = split_merged_aircraft(raw)
+            # Mirrors the message processor's archive shape, which strips military=False.
+            if fresh_aircraft.get("military") is False:
+                del fresh_aircraft["military"]
+            filled += fill_empty_leaves(aircraft, fresh_aircraft, _BACKFILL_EXCLUDED_AIRCRAFT_FIELDS)
+            filled += fill_empty_leaves(registrant, fresh_registrant)
+            if filled and fresh_aircraft.get("data_sources"):
+                aircraft["data_sources"] = fresh_aircraft["data_sources"]
+
+        prefix = operator_lookup_prefix(flight.ident, aircraft)
+        if prefix:
+            try:
+                fresh_operator = self._redis.json().get(operator_key(prefix))
+            except Exception as exc:
+                logger.debug("Archive-time operator lookup failed for %s: %s", prefix, exc)
+                fresh_operator = None
+            if fresh_operator:
+                filled += fill_empty_leaves(
+                    operator, {k: v for k, v in fresh_operator.items() if k != "source"},
+                )
+
+        if not filled:
+            return flight, 0
+        return flight.model_copy(update={
+            "aircraft": aircraft,
+            "registrant": registrant or None,
+            "operator": operator or None,
+        }), filled
+
+    def _record_fields_backfilled(self, count: int) -> None:
+        try:
+            self._incr_period_counters(metrics_fields_backfilled_key, ("hour", "today"), count)
+        except Exception as exc:
+            logger.warning("Redis counter update failed: %s", exc)
+        with self._lifetime_lock:
+            self._fields_backfilled_lifetime += count
 
     # ------------------------------------------------------------------
     # Split-flight stitching
@@ -848,6 +920,9 @@ class ArchiveProcessor:
             # two reset on restart (in-memory, not Redis-backed).
             ("flights_archived_lifetime", "Flights Archived (Lifetime)", "mdi:counter", "total_increasing", None, None),
             ("flights_skipped_lifetime", "Flights Skipped External-Only (Lifetime)", "mdi:counter", "total_increasing", None, None),
+            ("fields_backfilled_hour", "Fields Backfilled at Archive (Hour)", "mdi:database-refresh", "total_increasing", None, None),
+            ("fields_backfilled_today", "Fields Backfilled at Archive (Today)", "mdi:database-refresh", "total_increasing", None, None),
+            ("fields_backfilled_lifetime", "Fields Backfilled at Archive (Lifetime)", "mdi:counter", "total_increasing", None, None),
             ("s3_connected", "S3 Connected", "mdi:cloud-check", None, None, None),
             ("rabbitmq_connected", "RabbitMQ Connected", "mdi:rabbit", None, None, None),
             ("local_queue_depth", "Local Queue Depth", "mdi:tray-full", "measurement", None, None),
@@ -936,6 +1011,21 @@ class ArchiveProcessor:
         self._mqtt.publish(
             f"{base}/flights_skipped_lifetime",
             str(self._flights_skipped_lifetime),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/fields_backfilled_hour",
+            str(self._redis_counter(metrics_fields_backfilled_key("hour"))),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/fields_backfilled_today",
+            str(self._redis_counter(metrics_fields_backfilled_key("today"))),
+            retain=True,
+        )
+        self._mqtt.publish(
+            f"{base}/fields_backfilled_lifetime",
+            str(self._fields_backfilled_lifetime),
             retain=True,
         )
         self._mqtt.publish(f"{base}/s3_connected", str(s3_connected), retain=True)

@@ -95,6 +95,12 @@ time via a relative path reference in their `requirements.txt`.
   used in the system. Using functions makes key parameters explicit and allows
   the type checker to catch typos.
 
+- **`enrichment.py`** — Aircraft/registrant/operator enrichment helpers used
+  by both the message processor (enrich once per flight) and the archive
+  processor (backfill empty fields at write time): `merge_aircraft.lua`
+  result post-processing, the operator-lookup skip rules, and the
+  leaf-level `fill_empty_leaves()`.
+
 - **`rabbitmq_topology.py`** — The ADS-B exchange's name, type and arguments,
   plus the helpers that declare it and bind a message processor's queue to it.
   The receiver and the message processor both declare this topology on every
