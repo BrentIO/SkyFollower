@@ -26,7 +26,7 @@ This runs every component's test suite, discovered from the repo root.
 
 Every pull request to `main` must close an issue: put `Closes #<issue>` in the
 description, once per issue. The `Require linked issue` check blocks the merge
-otherwise, and the `main` ruleset in `.github/rulesets/protect-main.json` has no bypass
+otherwise, and the `Protect main` ruleset (`.github/rulesets/protect-main.json`) has no bypass
 actors. Update the live ruleset from it with:
 
 ```bash
