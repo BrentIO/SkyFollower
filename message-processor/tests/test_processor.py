@@ -6257,7 +6257,7 @@ class TestArchiveNeverCarriesRawFrames:
 
 
 # ---------------------------------------------------------------------------
-# Lua script reload after a Redis restart (#2195)
+# Lua script reload after a Redis restart
 # ---------------------------------------------------------------------------
 
 def _noscript_then(result):
