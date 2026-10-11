@@ -44,30 +44,34 @@ def _index_key(day: str = DAY) -> str:
 
 
 class _FakeCollection:
-    def __init__(self, docs: list[dict]):
+    def __init__(self, docs: list[dict], fail_after: int | None = None):
         self.docs = docs
         self.find_calls = 0
+        self.skips: list[int] = []
+        self._fail_after = fail_after
 
-    def find(self, query, projection=None):
+    def find(self, query, projection=None, skip=0, no_cursor_timeout=False, batch_size=0):
         self.find_calls += 1
-        floor = (query.get("_id") or {}).get("$gt")
-        rows = sorted((d for d in self.docs if floor is None or d["_id"] > floor), key=lambda d: d["_id"])
-        return _FakeCursor(rows)
+        self.skips.append(skip)
+        return _FakeCursor(self.docs[skip:], self._fail_after)
+
+    def estimated_document_count(self):
+        return len(self.docs)
 
 
 class _FakeCursor:
-    def __init__(self, rows):
+    def __init__(self, rows, fail_after):
         self._rows = rows
-
-    def sort(self, field, direction):
-        return self
-
-    def limit(self, n):
-        self._rows = self._rows[:n]
-        return self
+        self._fail_after = fail_after
 
     def __iter__(self):
-        return iter(self._rows)
+        for index, row in enumerate(self._rows):
+            if self._fail_after is not None and index >= self._fail_after:
+                raise RuntimeError("simulated crash")
+            yield row
+
+    def close(self):
+        pass
 
 
 class _FakeBody:
@@ -133,6 +137,7 @@ def _world(ids=("id1", "id2"), day: str = DAY):
 def _small_pages(monkeypatch):
     monkeypatch.setattr(verify, "PAGE_SIZE", 2)
     monkeypatch.setattr(verify, "MONGO_BATCH", 2)
+    monkeypatch.setattr(verify, "MONGO_RESUME_MARGIN", 1)
 
 
 def _args(tmp_path, **overrides) -> argparse.Namespace:
@@ -359,6 +364,33 @@ class TestCache:
         verify.run(_args(tmp_path, workers=1))  # no raise
         assert crashing.list_calls
         assert not set(crashing.list_calls) & set(resumed.list_calls)
+
+    def test_killed_mongo_snapshot_resumes_near_where_it_stopped(self, monkeypatch, tmp_path):
+        docs, source, dest, files = _world(ids=("id1", "id2", "id3", "id4", "id5"))
+        _wire(monkeypatch, _FakeCollection(docs, fail_after=4), _FakeS3(source, dest, files))
+        with pytest.raises(RuntimeError):
+            verify.run(_args(tmp_path))
+
+        collection = _FakeCollection(docs)
+        _wire(monkeypatch, collection, _FakeS3(source, dest, files))
+        verify.run(_args(tmp_path))  # no raise
+        assert collection.skips == [3]
+
+    def test_snapshot_count_mismatch_fails(self, monkeypatch, tmp_path):
+        docs, source, dest, files = _world()
+        collection = _FakeCollection(docs)
+        collection.estimated_document_count = lambda: len(docs) + 1
+        _wire(monkeypatch, collection, _FakeS3(source, dest, files))
+        with pytest.raises(SystemExit):
+            verify.run(_args(tmp_path))
+
+    def test_refresh_mongo_rescans_from_the_start(self, monkeypatch, tmp_path):
+        docs, source, dest, files = _world()
+        collection = _FakeCollection(docs)
+        _wire(monkeypatch, collection, _FakeS3(source, dest, files))
+        verify.run(_args(tmp_path))
+        verify.run(_args(tmp_path, refresh=["mongo"]))
+        assert collection.find_calls == 2 and collection.skips == [0, 0]
 
     def test_refresh_refetches_only_that_dataset(self, monkeypatch, tmp_path):
         docs, source, dest, files = _world()
