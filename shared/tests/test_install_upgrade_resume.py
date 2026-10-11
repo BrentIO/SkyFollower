@@ -1,5 +1,5 @@
 """
-Guards scripts/install.sh's --upgrade failure handling (#2196): a role's
+Guards scripts/install.sh's --upgrade failure handling: a role's
 SKYFOLLOWER_VERSION is written only after its pull and up -d succeed, a
 failed role doesn't stop the rest, and the run ends with a summary and a
 non-zero exit if anything failed.
