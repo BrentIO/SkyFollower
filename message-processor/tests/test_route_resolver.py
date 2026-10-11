@@ -289,12 +289,10 @@ class TestCrossTrackCheck:
         assert passes_cross_track_check(positions, MMMX, EGLL) is True
 
     def test_long_haul_between_ceiling_and_percentage_rejected(self):
-        # #2201
         positions = [_pos(32.0, -70.0)]
         assert passes_cross_track_check(positions, MMMX, EGLL) is False
 
     def test_swa621_ksjc_kbwi_rejected_by_ceiling(self):
-        # #2201
         positions = [_pos(29.509, -82.100, altitude=20950)]
         assert passes_cross_track_check(positions, KSJC, KBWI) is False
 
@@ -406,7 +404,6 @@ class TestResolveOriginDestination:
         assert "along-track" in reason
 
     def test_swa621_first_position_rejected(self):
-        # #2201
         positions = [_pos(29.509, -82.100, altitude=20950)]
         origin, destination, is_final, reason = resolve_origin_destination(
             [KSJC, KBWI], positions, _vels(170, 170, 170)
