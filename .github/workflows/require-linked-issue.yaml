@@ -1,0 +1,38 @@
+name: 🔗 Require Linked Issue
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  require-linked-issue:
+    name: 🔗 Require linked issue
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - name: Check the pull request closes at least one issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            count=$(gh api graphql \
+              -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){closingIssuesReferences(first:1){totalCount}}}}' \
+              -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" \
+              --jq '.data.repository.pullRequest.closingIssuesReferences.totalCount')
+            if [ "$count" -gt 0 ]; then
+              echo "Linked issue found."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::This pull request has no linked issue. Add 'Closes #<issue>' to the description or link one in the sidebar."
+          exit 1

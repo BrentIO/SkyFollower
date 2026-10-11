@@ -945,7 +945,7 @@ channels:
     address: SkyFollower/archive-compaction/statistic/files_delete_failed
     description: >
       Count of files included in a compacted output whose source delete
-      call failed, and therefore still linger as duplicates, summed across
+      still failed after retries, and therefore still linger as duplicates, summed across
       every date compacted this run. Published once per run, retained.
     messages:
       ArchiveCompactionFilesDeleteFailedMessage:

@@ -21,3 +21,15 @@ python -m pytest
 ```
 
 This runs every component's test suite, discovered from the repo root.
+
+## Pull requests
+
+Every pull request to `main` must close an issue: put `Closes #<issue>` in the
+description, once per issue. The `Require linked issue` check blocks the merge
+otherwise, and the `Protect main` ruleset (`.github/rulesets/protect-main.json`) has no bypass
+actors. Update the live ruleset from it with:
+
+```bash
+id=$(gh api repos/BrentIO/SkyFollower/rulesets --jq '.[] | select(.name=="Protect main") | .id')
+gh api repos/BrentIO/SkyFollower/rulesets/$id --method PUT --input .github/rulesets/protect-main.json
+```
