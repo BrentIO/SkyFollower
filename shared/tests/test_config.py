@@ -656,7 +656,6 @@ class TestBlockHelpers:
         assert cfg["map_center_longitude"] is None
 
     def test_map_config_https_port_defaults_to_19443(self):
-        # #2194
         cfg = map_config(ConfigLoader({"MAP_LISTEN_PORT": "30500"}))
         assert cfg["map_https_port"] == 19443
 
