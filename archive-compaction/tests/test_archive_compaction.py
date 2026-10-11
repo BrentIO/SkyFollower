@@ -114,6 +114,7 @@ class _FakeS3:
         self.deleted: list[str] = []
         self.fail_get_for: set[str] = set()
         self.fail_delete_for: set[str] = set()
+        self.delete_error_codes: dict[str, list[str]] = {}
         self.get_calls: list[str] = []
         self.get_errors: dict[str, Exception] = {}
 
@@ -143,6 +144,10 @@ class _FakeS3:
         errors = []
         for obj in Delete["Objects"]:
             key = obj["Key"]
+            if self.delete_error_codes.get(key):
+                code = self.delete_error_codes[key].pop(0)
+                errors.append({"Key": key, "Code": code, "Message": "simulated"})
+                continue
             if key in self.fail_delete_for:
                 errors.append({"Key": key, "Message": "simulated delete failure"})
                 continue
@@ -234,9 +239,79 @@ class TestDeleteKeys:
             raise RuntimeError("boom")
 
         s3.delete_objects = _raise
-        failed, deleted = delete_keys(s3, "bucket", ["a", "b", "c"])
+        with patch("archive_compaction_main.time.sleep"):
+            failed, deleted = delete_keys(s3, "bucket", ["a", "b", "c"])
         assert failed == 3
         assert deleted == []
+
+
+class TestDeleteKeysRetry:
+    @staticmethod
+    def _scripted_s3(codes_by_key: dict[str, list[str]]):
+        """Fails each key with its listed codes in order, then succeeds."""
+        calls: list[list[str]] = []
+
+        def _delete_objects(Bucket, Delete, **kwargs):
+            batch = [o["Key"] for o in Delete["Objects"]]
+            calls.append(batch)
+            errors = []
+            for key in batch:
+                codes = codes_by_key.get(key)
+                if codes:
+                    errors.append({"Key": key, "Code": codes.pop(0), "Message": "simulated"})
+            return {"Errors": errors}
+
+        s3 = MagicMock()
+        s3.delete_objects.side_effect = _delete_objects
+        return s3, calls
+
+    def test_transient_error_succeeds_on_retry(self):
+        s3, calls = self._scripted_s3({"b": ["InternalError"]})
+        with patch("archive_compaction_main.time.sleep") as sleep:
+            failed, deleted = delete_keys(s3, "bucket", ["a", "b"])
+        assert failed == 0
+        assert set(deleted) == {"a", "b"}
+        assert calls == [["a", "b"], ["b"]]
+        sleep.assert_called_once_with(1)
+
+    def test_key_failing_every_attempt_counted_once(self, caplog):
+        s3, calls = self._scripted_s3({"b": ["InternalError", "SlowDown", "ServiceUnavailable"]})
+        with patch("archive_compaction_main.time.sleep") as sleep:
+            with caplog.at_level("WARNING", logger="archive-compaction"):
+                failed, deleted = delete_keys(s3, "bucket", ["a", "b"])
+        assert failed == 1
+        assert deleted == ["a"]
+        assert calls == [["a", "b"], ["b"], ["b"]]
+        assert [c.args[0] for c in sleep.call_args_list] == [1, 2]
+        assert "after 3 attempt(s)" in caplog.text
+
+    def test_access_denied_not_retried(self):
+        s3, calls = self._scripted_s3({"b": ["AccessDenied"]})
+        with patch("archive_compaction_main.time.sleep") as sleep:
+            failed, deleted = delete_keys(s3, "bucket", ["a", "b"])
+        assert failed == 1
+        assert deleted == ["a"]
+        assert calls == [["a", "b"]]
+        sleep.assert_not_called()
+
+    def test_request_level_exception_retries_whole_chunk(self):
+        s3 = _FakeS3()
+        s3.objects = {"a": b"x", "b": b"y"}
+        real = s3.delete_objects
+        attempts = []
+
+        def _flaky(**kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("boom")
+            return real(**kwargs)
+
+        s3.delete_objects = _flaky
+        with patch("archive_compaction_main.time.sleep"):
+            failed, deleted = delete_keys(s3, "bucket", ["a", "b"])
+        assert failed == 0
+        assert set(deleted) == {"a", "b"}
+        assert len(attempts) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +470,36 @@ class TestCompactPartitionLocalCache:
         write_local_index(key, payload, base_dir=str(tmp_path))
 
         result = compact_partition(s3, "bucket", self._PREFIX, str(tmp_path))
+
+        assert result == {"files_compacted": 1, "files_delete_failed": 1}
+        assert key in s3.objects
+        assert os.path.exists(local_index_path(key, str(tmp_path)))
+
+    def test_local_copy_removed_when_transient_delete_error_retried(self, tmp_path):
+        s3 = _FakeS3()
+        key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
+        payload = _make_parquet_bytes(_make_row())
+        s3.objects[key] = payload
+        s3.delete_error_codes = {key: ["InternalError"]}
+        write_local_index(key, payload, base_dir=str(tmp_path))
+
+        with patch("archive_compaction_main.time.sleep"):
+            result = compact_partition(s3, "bucket", self._PREFIX, str(tmp_path))
+
+        assert result == {"files_compacted": 1, "files_delete_failed": 0}
+        assert key not in s3.objects
+        assert not os.path.exists(local_index_path(key, str(tmp_path)))
+
+    def test_local_copy_kept_when_retries_exhausted(self, tmp_path):
+        s3 = _FakeS3()
+        key = f"{self._PREFIX}0198abcd-0000-7000-8000-000000000000.parquet"
+        payload = _make_parquet_bytes(_make_row())
+        s3.objects[key] = payload
+        s3.delete_error_codes = {key: ["InternalError"] * 3}
+        write_local_index(key, payload, base_dir=str(tmp_path))
+
+        with patch("archive_compaction_main.time.sleep"):
+            result = compact_partition(s3, "bucket", self._PREFIX, str(tmp_path))
 
         assert result == {"files_compacted": 1, "files_delete_failed": 1}
         assert key in s3.objects

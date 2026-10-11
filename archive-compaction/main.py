@@ -163,30 +163,50 @@ def build_compacted_key(prefix: str) -> str:
     return f"{prefix}{_COMPACTED_PREFIX}{uuid.uuid4()}.parquet"
 
 
+_DELETE_ATTEMPTS = 3
+_DELETE_BACKOFF_SECONDS = (1, 2)
+_RETRYABLE_DELETE_CODES = {"InternalError", "SlowDown", "ServiceUnavailable"}
+
+
 def delete_keys(s3_client, bucket: str, keys: list[str]) -> tuple[int, list[str]]:
-    """Batch-delete `keys` (up to 1000 per API call, the S3 limit).
-    Returns the failure count and the list of keys actually confirmed
-    deleted, so the caller knows which local index-cache copies are safe
-    to remove too."""
+    """Batch-delete `keys` (up to 1000 per API call), retrying transient
+    errors. Returns the failure count and the keys confirmed deleted."""
     failed = 0
     deleted: list[str] = []
     for i in range(0, len(keys), 1000):
-        chunk = keys[i:i + 1000]
-        try:
-            response = s3_client.delete_objects(
-                Bucket=bucket,
-                Delete={"Objects": [{"Key": k} for k in chunk], "Quiet": True},
-            )
-        except Exception as exc:
-            logger.warning("Batch delete failed for %d keys: %s", len(chunk), exc)
-            failed += len(chunk)
-            continue
-        errors = response.get("Errors", [])
-        for err in errors:
-            logger.warning("Failed to delete %s: %s", err.get("Key"), err.get("Message"))
-        failed += len(errors)
-        failed_keys = {err.get("Key") for err in errors}
-        deleted.extend(k for k in chunk if k not in failed_keys)
+        pending = keys[i:i + 1000]
+        for attempt in range(1, _DELETE_ATTEMPTS + 1):
+            if attempt > 1:
+                time.sleep(_DELETE_BACKOFF_SECONDS[attempt - 2])
+            final = attempt == _DELETE_ATTEMPTS
+            try:
+                response = s3_client.delete_objects(
+                    Bucket=bucket,
+                    Delete={"Objects": [{"Key": k} for k in pending], "Quiet": True},
+                )
+            except Exception as exc:
+                if final:
+                    logger.warning(
+                        "Batch delete failed for %d keys after %d attempts: %s",
+                        len(pending), attempt, exc,
+                    )
+                    failed += len(pending)
+                continue
+            errors = {err.get("Key"): err for err in response.get("Errors", [])}
+            deleted.extend(k for k in pending if k not in errors)
+            retry: list[str] = []
+            for key, err in errors.items():
+                if not final and err.get("Code") in _RETRYABLE_DELETE_CODES:
+                    retry.append(key)
+                    continue
+                logger.warning(
+                    "Failed to delete %s after %d attempt(s): %s",
+                    key, attempt, err.get("Message"),
+                )
+                failed += 1
+            pending = retry
+            if not pending:
+                break
     return failed, deleted
 
 
