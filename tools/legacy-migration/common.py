@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterator, Optional
 
 import pika
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectionError as BotoConnectionError, HTTPClientError, IncompleteReadError
 
 from shared.models import CompletedFlight
 from shared.timing import RABBITMQ_BLOCKED_CONNECTION_TIMEOUT_SECONDS, RECONNECT_BACKOFF_SECONDS
@@ -44,6 +44,7 @@ _THROTTLE_ERROR_CODES = {
     "TooManyRequests",
 }
 _NOT_FOUND_ERROR_CODES = {"404", "NoSuchKey", "NotFound"}
+_TRANSIENT_ERRORS = (BotoConnectionError, HTTPClientError, IncompleteReadError)
 _MAX_S3_ATTEMPTS = 5
 
 
@@ -205,9 +206,9 @@ def is_not_found(exc: ClientError) -> bool:
 
 def s3_retry(fn, *args, **kwargs):
     """
-    Retries a boto3 S3 call with exponential backoff on throttling only (a
-    404 is never retried -- see is_not_found). Backoff base delay reuses
-    RECONNECT_BACKOFF_SECONDS.
+    Retries a boto3 S3 call with exponential backoff on throttling and on
+    transient connection errors (a 404 is never retried -- see is_not_found).
+    Backoff base delay reuses RECONNECT_BACKOFF_SECONDS.
     """
     delay = RECONNECT_BACKOFF_SECONDS
     for attempt in range(1, _MAX_S3_ATTEMPTS + 1):
@@ -217,12 +218,14 @@ def s3_retry(fn, *args, **kwargs):
             code = exc.response.get("Error", {}).get("Code", "")
             if code not in _THROTTLE_ERROR_CODES or attempt == _MAX_S3_ATTEMPTS:
                 raise
-            logger.warning(
-                "S3 throttled (%s), retrying in %ss (attempt %s/%s)",
-                code, delay, attempt, _MAX_S3_ATTEMPTS,
-            )
-            time.sleep(delay)
-            delay *= 2
+            reason = code
+        except _TRANSIENT_ERRORS as exc:
+            if attempt == _MAX_S3_ATTEMPTS:
+                raise
+            reason = type(exc).__name__
+        logger.warning("S3 call failed (%s), retrying in %ss (attempt %s/%s)", reason, delay, attempt, _MAX_S3_ATTEMPTS)
+        time.sleep(delay)
+        delay *= 2
 
 
 def dest_object_exists(s3_client, dest_bucket: str, dest_key: str) -> bool:

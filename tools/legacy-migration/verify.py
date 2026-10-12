@@ -422,7 +422,7 @@ def _list_index(s3_client, bucket: str, cache: Cache) -> None:
 
 
 def _fetch_parquet_day(s3_client, bucket: str, cache: Cache, day: str, key: str) -> None:
-    body = s3_retry(s3_client.get_object, Bucket=bucket, Key=key)["Body"].read()
+    body = s3_retry(lambda: s3_client.get_object(Bucket=bucket, Key=key)["Body"].read())
     problems: list[str] = []
     rows: list[tuple] = []
     row_count = 0
