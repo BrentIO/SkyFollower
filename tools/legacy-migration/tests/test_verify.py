@@ -443,3 +443,29 @@ class TestDeferredIndexes:
         cache.build_indexes()
         verify._list_dest(_FakeS3(source, dest, files), "dst", cache, 2, DAY, DAY)
         assert "dest_objects_id" in self._index_names(cache)
+
+
+class TestTransientErrors:
+    def test_interrupted_parquet_body_read_is_retried(self, monkeypatch, tmp_path):
+        from botocore.exceptions import ResponseStreamingError
+
+        monkeypatch.setattr("common.time.sleep", lambda *_: None)
+        docs, source, dest, files = _world()
+        s3 = _FakeS3(source, dest, files)
+        real_get = s3.get_object
+        failures = {"left": 1}
+
+        class _FlakyBody:
+            def __init__(self, body):
+                self._body = body
+
+            def read(self):
+                if failures["left"]:
+                    failures["left"] -= 1
+                    raise ResponseStreamingError(error="interrupted")
+                return self._body.read()
+
+        s3.get_object = lambda Bucket, Key: {"Body": _FlakyBody(real_get(Bucket, Key)["Body"])}
+        _wire(monkeypatch, _FakeCollection(docs), s3)
+        verify.run(_args(tmp_path))  # no raise
+        assert failures["left"] == 0

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectionClosedError, EndpointConnectionError
 
 import common
 
@@ -154,6 +154,32 @@ class TestS3Retry:
 
         with pytest.raises(ClientError):
             common.s3_retry(always_throttled)
+
+
+    def test_retries_on_dropped_connection_then_succeeds(self, monkeypatch):
+        monkeypatch.setattr(common.time, "sleep", lambda *_: None)
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise ConnectionClosedError(endpoint_url="https://s3.amazonaws.com/")
+            return "ok"
+
+        assert common.s3_retry(flaky) == "ok"
+        assert calls["n"] == 3
+
+    def test_connection_error_raises_after_exhausting_attempts(self, monkeypatch):
+        monkeypatch.setattr(common.time, "sleep", lambda *_: None)
+        calls = {"n": 0}
+
+        def always_dropped():
+            calls["n"] += 1
+            raise EndpointConnectionError(endpoint_url="https://s3.amazonaws.com/")
+
+        with pytest.raises(EndpointConnectionError):
+            common.s3_retry(always_dropped)
+        assert calls["n"] == common._MAX_S3_ATTEMPTS
 
 
 class _FakeS3:
