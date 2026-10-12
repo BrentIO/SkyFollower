@@ -413,3 +413,33 @@ class TestCache:
         )
         with pytest.raises(SystemExit):
             verify.run(_args(tmp_path))
+
+
+class TestDeferredIndexes:
+    @staticmethod
+    def _index_names(cache) -> set:
+        return {r[0] for r in cache.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+
+    def test_indexes_exist_after_a_full_run(self, monkeypatch, tmp_path):
+        docs, source, dest, files = _world()
+        _wire(monkeypatch, _FakeCollection(docs), _FakeS3(source, dest, files))
+        verify.run(_args(tmp_path))
+        cache = verify.Cache(str(tmp_path / verify.DB_FILENAME))
+        assert {"dest_objects_id", "parquet_rows_id"} <= self._index_names(cache)
+
+    def test_existing_index_is_dropped_before_listing_and_not_rebuilt_until_the_end(self, tmp_path):
+        docs, source, dest, files = _world()
+        cache = verify.Cache(str(tmp_path / "old.sqlite"))
+        cache.execute("CREATE INDEX dest_objects_id ON dest_objects (id)")
+        verify._list_dest(_FakeS3(source, dest, files), "dst", cache, 2, DAY, DAY)
+        assert "dest_objects_id" not in self._index_names(cache)
+        cache.build_indexes()
+        assert "dest_objects_id" in self._index_names(cache)
+
+    def test_finished_listing_keeps_its_index(self, tmp_path):
+        docs, source, dest, files = _world()
+        cache = verify.Cache(str(tmp_path / "done.sqlite"))
+        verify._list_dest(_FakeS3(source, dest, files), "dst", cache, 2, DAY, DAY)
+        cache.build_indexes()
+        verify._list_dest(_FakeS3(source, dest, files), "dst", cache, 2, DAY, DAY)
+        assert "dest_objects_id" in self._index_names(cache)

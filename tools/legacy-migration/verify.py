@@ -59,6 +59,7 @@ ACCEPTED_LOSS_FILENAME = "accepted-loss.txt"
 REPORT_FILENAME = "verify-report.tsv"
 REFRESH_TARGETS = ("mongo", "source", "dest", "index", "parquet")
 EXAMPLES_PER_CATEGORY = 10
+CACHE_SIZE_KIB = 1024 * 1024
 
 _DEST_KEY_RE = re.compile(r"^flights/(\d{4})/(\d{2})/(\d{2})/([^/]+)\.json\.gz$")
 _INDEX_KEY_RE = re.compile(r"^index/year=(\d{4})/month=(\d{2})/day=(\d{2})/" + re.escape(COMPACTED_INDEX_FILENAME) + r"$")
@@ -72,12 +73,15 @@ CREATE TABLE IF NOT EXISTS mongo_docs (id TEXT PRIMARY KEY, day TEXT, migrated I
 CREATE INDEX IF NOT EXISTS mongo_docs_day ON mongo_docs (day);
 CREATE TABLE IF NOT EXISTS source_objects (id TEXT PRIMARY KEY, etag TEXT, size INTEGER) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS dest_objects (key TEXT PRIMARY KEY, id TEXT, day TEXT, etag TEXT, size INTEGER) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS dest_objects_id ON dest_objects (id);
 CREATE TABLE IF NOT EXISTS index_files (day TEXT PRIMARY KEY, key TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS parquet_days (day TEXT PRIMARY KEY, rows INTEGER NOT NULL, problems TEXT) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS parquet_rows (s3_key TEXT PRIMARY KEY, id TEXT, day TEXT) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS parquet_rows_id ON parquet_rows (id);
 """
+
+_DEFERRED_INDEXES = {
+    "dest_objects_id": "CREATE INDEX IF NOT EXISTS dest_objects_id ON dest_objects (id)",
+    "parquet_rows_id": "CREATE INDEX IF NOT EXISTS parquet_rows_id ON parquet_rows (id)",
+}
 
 _REFRESH_TABLES = {
     "mongo": ["mongo_docs"],
@@ -132,12 +136,24 @@ class Cache:
         self._lock = threading.Lock()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute(f"PRAGMA cache_size=-{CACHE_SIZE_KIB}")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
     def execute(self, sql: str, params: Iterable = ()) -> list:
         with self._lock:
             return self._conn.execute(sql, tuple(params)).fetchall()
+
+    def drop_index(self, name: str) -> None:
+        with self._lock:
+            self._conn.execute(f"DROP INDEX IF EXISTS {name}")
+            self._conn.commit()
+
+    def build_indexes(self) -> None:
+        with self._lock:
+            for sql in _DEFERRED_INDEXES.values():
+                self._conn.execute(sql)
+            self._conn.commit()
 
     def meta(self, key: str) -> Optional[str]:
         rows = self.execute("SELECT value FROM meta WHERE key = ?", (key,))
@@ -379,6 +395,10 @@ def _months(start_date: str, end_date: str) -> list[str]:
     return seen
 
 
+def _any_pending(cache: Cache, names: list[str]) -> bool:
+    return any(not (cache.progress(name) or (None, False))[1] for name in names)
+
+
 def _list_dest(s3_client, bucket: str, cache: Cache, workers: int, start_date: str, end_date: str) -> None:
     sql = "INSERT OR REPLACE INTO dest_objects VALUES (?, ?, ?, ?, ?)"
     tasks = [
@@ -389,6 +409,8 @@ def _list_dest(s3_client, bucket: str, cache: Cache, workers: int, start_date: s
         for month in _months(start_date, end_date)
     ]
     logger.info("Listing destination bucket (%d month(s))", len(tasks))
+    if _any_pending(cache, [f"dest:{month}" for month in _months(start_date, end_date)]):
+        cache.drop_index("dest_objects_id")
     _run_parallel(tasks, workers)
 
 
@@ -443,6 +465,8 @@ def _fetch_parquet(s3_client, bucket: str, cache: Cache, workers: int, start_dat
         if day not in done
     ]
     logger.info("Reading %d Parquet index file(s) (%d already cached)", len(pending), len(done))
+    if pending:
+        cache.drop_index("parquet_rows_id")
     _run_parallel(
         [(lambda d=d, k=k: _fetch_parquet_day(s3_client, bucket, cache, d, k)) for d, k in pending],
         workers,
@@ -590,6 +614,9 @@ def run(args: argparse.Namespace) -> None:
     _list_dest(s3_client, cfg["dest_bucket"], cache, args.workers, args.start_date, args.end_date)
     _list_index(s3_client, cfg["dest_bucket"], cache)
     _fetch_parquet(s3_client, cfg["dest_bucket"], cache, args.workers, args.start_date, args.end_date)
+
+    logger.info("Building lookup indexes")
+    cache.build_indexes()
 
     report_path = os.path.join(cache_dir, REPORT_FILENAME)
     clean = _reconcile(cache, args.start_date, args.end_date, accepted, report_path)
