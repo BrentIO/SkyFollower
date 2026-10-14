@@ -19,7 +19,7 @@
     "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.4",
     "terra-draw": "^1.35.0",
-    "terra-draw-maplibre-gl-adapter": "^1.4.1"
+    "terra-draw-maplibre-gl-adapter": "^1.5.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
