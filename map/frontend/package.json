@@ -28,7 +28,7 @@
     "@types/node": "^26.6.4",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.1",
+    "@vitejs/plugin-react": "^6.1.2",
     "svg-path-bbox": "^2.1.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~7.0.2",
