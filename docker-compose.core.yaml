@@ -37,7 +37,7 @@ services:
   # ---------------------------------------------------------------------------
 
   rabbitmq:
-    image: rabbitmq:4.3-management-alpine@sha256:ce634665a8e7262384a793581c20cb8a46343887446eb391b77c814febeca4b2
+    image: rabbitmq:4.3-management-alpine@sha256:3ef7f7e89fed709a78f79b8b5f4e30e1312a1d4089da752e23595566d9d61a95
     extra_hosts: *extra-hosts
     restart: unless-stopped
     ports:
