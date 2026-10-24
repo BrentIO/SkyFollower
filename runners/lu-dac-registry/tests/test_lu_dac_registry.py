@@ -189,17 +189,43 @@ class TestValidateRecords:
 # Tests: download_register
 # ---------------------------------------------------------------------------
 
+def _api_response(resources, status=200):
+    return MagicMock(status_code=status, json=lambda: {"resources": resources})
+
+
 class TestDownloadRegister:
-    def test_downloads_from_permalink(self):
+    def test_downloads_newest_pdf(self):
         session = MagicMock()
-        session.get.return_value = MagicMock(status_code=200, content=b"%PDF-1.7")
+        session.get.side_effect = [
+            _api_response([
+                {"format": "pdf", "url": "https://x/old.pdf", "last_modified": "2026-09-15T06:00:00"},
+                {"format": "pdf", "url": "https://x/new.pdf", "last_modified": "2026-10-15T06:00:00"},
+                {"format": "csv", "url": "https://x/new.csv", "last_modified": "2026-10-20T06:00:00"},
+            ]),
+            MagicMock(status_code=200, content=b"%PDF-1.7"),
+        ]
         assert download_register(session) == b"%PDF-1.7"
-        assert session.get.call_args[0][0] == _mod.DOWNLOAD_URL
-        assert "data.public.lu" in _mod.DOWNLOAD_URL
+        assert session.get.call_args_list[0][0][0] == _mod.DATASET_API_URL
+        assert session.get.call_args_list[1][0][0] == "https://x/new.pdf"
+
+    def test_no_pdf_resource_raises(self):
+        session = MagicMock()
+        session.get.return_value = _api_response([{"format": "csv", "url": "https://x/a.csv"}])
+        with pytest.raises(RuntimeError, match="no PDF resource"):
+            download_register(session)
+
+    def test_api_failure_raises(self):
+        session = MagicMock()
+        session.get.return_value = _api_response([], status=503)
+        with pytest.raises(RuntimeError, match="Dataset API.*HTTP 503"):
+            download_register(session)
 
     def test_non_200_raises(self):
         session = MagicMock()
-        session.get.return_value = MagicMock(status_code=404, content=b"")
+        session.get.side_effect = [
+            _api_response([{"format": "pdf", "url": "https://x/a.pdf", "last_modified": "2026-10-15"}]),
+            MagicMock(status_code=404, content=b""),
+        ]
         with pytest.raises(RuntimeError, match="HTTP 404"):
             download_register(session)
 

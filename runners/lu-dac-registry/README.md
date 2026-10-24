@@ -7,15 +7,17 @@
 | **Registration prefix** | `LX-` |
 | **Data source** | https://data.public.lu/en/datasets/releve-luxembourgeois-des-immatriculations/ |
 | **Licence** | [Open Data Commons Attribution (`odc-by`)](https://opendatacommons.org/licenses/by/1-0/) — attribution to the Direction de l'Aviation Civile / data.public.lu is required |
-| **Format** | PDF (portal resource permalink) |
+| **Format** | PDF (newest resource on the dataset) |
 | **Run frequency** | Weekly (Wednesday, 10:10 UTC) |
 | **Depends on Mictronics for ICAO hex** | Yes — the Luxembourg DAC register does not publish ICAO hex (Mode S) addresses; registrations are resolved via RediSearch against Mictronics records (`idx:aircraft:mictronics`). Must run after the `mictronics` runner. |
 
 ## How it works
 
-The register PDF is downloaded from the open-data portal's resource permalink
-(`https://data.public.lu/fr/datasets/r/78d14c57-dee5-4903-9216-c33a0da06647`),
-which redirects to the current monthly file. Any non-200 response fails the run.
+The runner queries the open-data portal's dataset API
+(`https://data.public.lu/api/1/datasets/releve-luxembourgeois-des-immatriculations/`),
+picks the PDF resource with the latest `last_modified`, and downloads it. The
+publisher uploads each month's file as a new resource, so no resource ID is
+hardcoded. Any non-200 response, or a dataset with no PDF resource, fails the run.
 The PDF is parsed by grouping `pdfplumber.extract_words()` output into rows by
 `top` coordinate (5-point tolerance) and then into named columns by x0
 boundaries derived from each page's header row, since
