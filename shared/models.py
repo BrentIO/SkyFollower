@@ -178,8 +178,8 @@ class AirportRecord(BaseModel):
 
 class CompletedFlight(BaseModel):
     """Completed flight record published to the RabbitMQ archive queue by
-    the message processor. Matches the legacy MongoDB document shape,
-    with `_id` now UUID-v7 and `receiver_sources`/`force_archive` added.
+    the message processor. `_id` is a UUID-v7; `receiver_sources` and
+    `force_archive` are carried alongside the flight fields.
 
     origin/destination carry the full resolved airport object here; the
     archive processor reduces each to its bare ICAO code string before

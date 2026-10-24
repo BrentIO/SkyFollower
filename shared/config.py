@@ -217,37 +217,6 @@ def s3_config(loader: Optional[ConfigLoader] = None) -> dict:
     return block
 
 
-def mongo_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """Read-only legacy MongoDB connection, used only by
-    tools/legacy-migration -- no other component ever talks to Mongo."""
-    loader, own = _own_loader(loader)
-    block = {
-        "uri": loader.string("MONGO_URI"),
-        "database": loader.string("MONGO_DATABASE", "SkyFollower"),
-        "collection": loader.string("MONGO_COLLECTION", "flights"),
-    }
-    if own:
-        loader.raise_for_problems()
-    return block
-
-
-def legacy_migration_s3_config(loader: Optional[ConfigLoader] = None) -> dict:
-    """Two buckets: tools/legacy-migration copies objects from the legacy
-    flat-key bucket to the new dated-key bucket, so it needs both names at
-    once."""
-    loader, own = _own_loader(loader)
-    block = {
-        "source_bucket": loader.string("SOURCE_S3_BUCKET"),
-        "dest_bucket": loader.string("DEST_S3_BUCKET"),
-    }
-    loader.present("AWS_DEFAULT_REGION")
-    loader.present("AWS_ACCESS_KEY_ID")
-    loader.present("AWS_SECRET_ACCESS_KEY")
-    if own:
-        loader.raise_for_problems()
-    return block
-
-
 def athena_config(loader: Optional[ConfigLoader] = None) -> dict:
     loader, own = _own_loader(loader)
     block = {
@@ -414,8 +383,6 @@ _NESTED_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {
     "redis": redis_config,
     "s3": s3_config,
     "athena": athena_config,
-    "mongo": mongo_config,
-    "legacy_migration_s3": legacy_migration_s3_config,
 }
 
 _FLAT_BLOCKS: dict[str, Callable[[ConfigLoader], dict]] = {

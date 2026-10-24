@@ -31,6 +31,3 @@ data/
 
 # Claude Code's local working directory (worktrees, settings, task locks).
 .claude/
-
-# legacy-migration verify cache
-verify-cache/

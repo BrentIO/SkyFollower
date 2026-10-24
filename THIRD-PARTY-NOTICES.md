@@ -74,7 +74,7 @@ obligation on SkyFollower, and all are compatible with `GPL-3.0-or-later`.
 - **License:** MPL-2.0
 - **Used by:** transitively, wherever `requests` / `boto3` are present
   (`management-ui` backend, `archive-processor`, `archive-compaction`,
-  `core-health`, `aws-setup`, every data runner, `tools/legacy-migration`)
+  `core-health`, `aws-setup`, every data runner)
 - **How:** a CA-certificate bundle, imported transitively. Not modified; not vendored.
 
 ## Basemap data and styles

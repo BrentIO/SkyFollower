@@ -178,9 +178,7 @@ def _merge_airport_field(prev_value: Optional[str], new_value: Optional[dict]) -
 
 
 # ---------------------------------------------------------------------------
-# S3 key / Parquet index helpers -- shared/archive_index.py (also used by
-# tools/legacy-migration, which needs the identical key format and column
-# layout to backfill legacy flights into this same S3 archive).
+# S3 key / Parquet index helpers -- shared/archive_index.py
 # ---------------------------------------------------------------------------
 
 def _drop_default_value_fields(payload_dict: dict) -> None:

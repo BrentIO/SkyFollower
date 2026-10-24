@@ -330,9 +330,8 @@ components:
       type: object
       description: >
         shared/models.py's CompletedFlight — published by the message
-        processor to skyfollower-archive on flight completion. Same shape
-        as the legacy MongoDB document, plus _id/receiver_sources/
-        force_archive. See specs/data-dictionary.yaml's `flight` record for
+        processor to skyfollower-archive on flight completion, including
+        _id/receiver_sources/force_archive. See specs/data-dictionary.yaml's `flight` record for
         the exhaustive field-by-field reference of the same document once
         the archive processor has written it gzipped to S3; everything
         below is present at the moment it's queued and unchanged by the S3
