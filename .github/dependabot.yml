@@ -438,13 +438,6 @@ updates:
       time: "23:20"
       timezone: "Etc/UTC"
   - package-ecosystem: "pip"
-    directory: "/tools/legacy-migration"
-    schedule:
-      interval: "weekly"
-      day: "saturday"
-      time: "23:40"
-      timezone: "Etc/UTC"
-  - package-ecosystem: "pip"
     directory: "/tools/map-load-generator"
     schedule:
       interval: "weekly"
@@ -884,13 +877,6 @@ updates:
       interval: "weekly"
       day: "saturday"
       time: "23:00"
-      timezone: "Etc/UTC"
-  - package-ecosystem: "docker"
-    directory: "/tools/legacy-migration"
-    schedule:
-      interval: "weekly"
-      day: "saturday"
-      time: "23:40"
       timezone: "Etc/UTC"
   - package-ecosystem: "npm"
     directory: "/docs"

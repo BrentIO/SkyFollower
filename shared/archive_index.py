@@ -1,12 +1,9 @@
 """
 S3 key/Parquet index construction for completed flights.
 
-Shared between archive-processor (one row per flight, written at archive
-time) and tools/legacy-migration (many rows compacted into one Parquet file
-per day, written once per calendar day of backfilled history) so there is
-exactly one implementation of the destination key format and the index
-column layout, never a second one drifting from
-specs/data-dictionary.yaml's archive_parquet_index record.
+Used by archive-processor (one row per flight, written at archive time) so
+the destination key format and index column layout have one implementation,
+matching specs/data-dictionary.yaml's archive_parquet_index record.
 """
 
 from __future__ import annotations
@@ -72,14 +69,14 @@ def build_index_s3_key(flight: CompletedFlight) -> str:
     return f"index/year={yyyy}/month={mm}/day={dd}/{flight.id}.parquet"
 
 
-def flight_index_row(flight: CompletedFlight, s3_key: str) -> dict:
+def build_parquet_index_row(flight: CompletedFlight, s3_key: str) -> bytes:
     """
-    Build one Parquet index row (as a plain dict matching
-    PARQUET_INDEX_SCHEMA's column set/order) for a completed flight.
-    s3_key is the flight object's own key (from build_s3_key), copied in
-    so a search hit can be resolved to its full flight record.
+    Build the single-row Parquet file (in-memory bytes) for one completed
+    flight's index entry. s3_key is the flight object's own key (from
+    build_s3_key), copied in so a search hit can be resolved to its full
+    flight record.
     """
-    return {
+    row = {
         "icao_hex": flight.aircraft.get("icao_hex", "") or "",
         "registration": flight.aircraft.get("registration", "") or "",
         "type_designator": flight.aircraft.get("type_designator", "") or "",
@@ -92,16 +89,7 @@ def flight_index_row(flight: CompletedFlight, s3_key: str) -> dict:
         "last_message": flight.last_message,
         "s3_key": s3_key,
     }
-
-
-def build_parquet_index_row(flight: CompletedFlight, s3_key: str) -> bytes:
-    """
-    Build the single-row Parquet file (in-memory bytes) for one completed
-    flight's index entry. tools/legacy-migration instead accumulates
-    flight_index_row() dicts across a day and writes one compacted table,
-    calling flight_index_row() directly rather than this function.
-    """
-    table = pa.Table.from_pylist([flight_index_row(flight, s3_key)], schema=PARQUET_INDEX_SCHEMA)
+    table = pa.Table.from_pylist([row], schema=PARQUET_INDEX_SCHEMA)
     sink = io.BytesIO()
     pq.write_table(table, sink)
     return sink.getvalue()
