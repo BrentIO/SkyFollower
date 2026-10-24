@@ -4,5 +4,5 @@ pyModeS==3.6.0
 pyModeS978==2026.9.1
 pika==1.4.4
 paho-mqtt==2.1.0
-shapely==2.1.2
+shapely==2.2.0
 redis==8.1.0
