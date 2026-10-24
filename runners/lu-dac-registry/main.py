@@ -57,8 +57,8 @@ from shared.country_flags import country_flag
 
 logger = logging.getLogger("lu-dac-registry")
 
-DOWNLOAD_URL = (
-    "https://data.public.lu/fr/datasets/r/78d14c57-dee5-4903-9216-c33a0da06647"
+DATASET_API_URL = (
+    "https://data.public.lu/api/1/datasets/releve-luxembourgeois-des-immatriculations/"
 )
 MQTT_ROOT = "SkyFollower/runner/lu-dac-registry"
 BATCH_SIZE = 100
@@ -85,10 +85,25 @@ _ROW_TOLERANCE = 5
 # Download
 # ---------------------------------------------------------------------------
 
+def resolve_download_url(session: requests.Session) -> str:
+    """URL of the newest PDF resource listed on the dataset."""
+    resp = session.get(DATASET_API_URL, timeout=60)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Dataset API request failed with HTTP {resp.status_code}")
+    pdfs = [
+        r for r in resp.json().get("resources", [])
+        if (r.get("format") or "").lower() == "pdf" and r.get("url")
+    ]
+    if not pdfs:
+        raise RuntimeError("Dataset lists no PDF resource")
+    return max(pdfs, key=lambda r: r.get("last_modified") or "")["url"]
+
+
 def download_register(session: requests.Session) -> bytes:
-    """Download the Luxembourg DAC register PDF via the open-data portal permalink."""
+    """Download the newest Luxembourg DAC register PDF listed on the dataset."""
     logger.info("Downloading Luxembourg DAC aircraft register PDF.")
-    resp = session.get(DOWNLOAD_URL, timeout=120)
+    url = resolve_download_url(session)
+    resp = session.get(url, timeout=120)
     if resp.status_code != 200:
         raise RuntimeError(f"PDF download failed with HTTP {resp.status_code}")
     logger.info("Download complete (%d bytes).", len(resp.content))
