@@ -2,7 +2,7 @@ fastapi==0.142.2
 uvicorn==0.54.0
 boto3==1.43.114
 cryptography==50.0.2
-shapely==2.1.2
+shapely==2.2.0
 redis==8.1.0
 paho-mqtt==2.1.0
 sqlglot==30.21.0
