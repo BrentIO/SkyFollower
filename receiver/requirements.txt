@@ -1,4 +1,4 @@
-pyModeS==3.6.0
+pyModeS==3.6.1
 pika==1.4.4
 paho-mqtt==2.1.0
 pydantic==2.14.1
