@@ -6,7 +6,7 @@
 # inside the Python stage's own app tree (map/frontend/dist/) rather than
 # an nginx html root, since this image serves them itself via FastAPI
 # rather than nginx.
-FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS frontend-build
+FROM node:26-slim@sha256:36793bcbb160a6a16cede1e62b93f84e26b78a972a8a4c0b879c1c12f22761ec AS frontend-build
 
 WORKDIR /frontend
 
