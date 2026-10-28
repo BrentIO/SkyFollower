@@ -18,6 +18,13 @@ updates:
       - dependency-name: "redis"
         update-types: ["version-update:semver-major"]
   - package-ecosystem: "pip"
+    directory: "/.github"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "23:20"
+      timezone: "Etc/UTC"
+  - package-ecosystem: "pip"
     directory: "/archive-compaction"
     schedule:
       interval: "weekly"
