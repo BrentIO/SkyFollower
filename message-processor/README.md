@@ -659,14 +659,23 @@ content reasons) still dead-letters at the threshold exactly as above.
 ### Active flight store durability & crash recovery
 
 `active_flights.db` (SQLite, WAL mode, `data_dir`) holds every currently
-tracked flight and is committed to disk after every message. A process end —
-whether a deliberate stop (`SIGTERM`/`SIGINT`) or an ungraceful one (OOM-kill,
-`docker kill`, host crash) — is recovered identically on the next startup;
-there is no special "flush everything" shutdown path for either of those,
-since nothing needs force-archiving when the store already survives on its
-own. That assumes the store itself survives, though — see "Decommissioning
-a Message Processor" below for the one case where it deliberately won't
-(permanently destroying the container and its volume together).
+tracked flight. Updates are committed to disk every 15 seconds
+(`_DB_COMMIT_INTERVAL_SECONDS`), not after every message: committing per
+message rewrote the same pages hundreds of times a second and caused
+multi-terabyte write volumes and disk stalls. Completing a flight (eviction or
+a TTL gap) still commits immediately.
+
+- **Graceful stop** (`SIGTERM`/`SIGINT`, `docker stop`): the final batch is
+  committed and the WAL checkpointed before exit, so nothing is lost.
+- **Ungraceful stop** (OOM-kill, `docker kill`, power loss, host crash): up
+  to the last 15 seconds of updates are lost. Those messages were already
+  acknowledged to RabbitMQ, so they are not redelivered.
+
+Either way, nothing is force-archived on shutdown; the next startup recovers
+whatever was committed. That assumes the store itself survives — see
+"Decommissioning a Message Processor" below for the one case where it
+deliberately won't (permanently destroying the container and its volume
+together).
 
 On startup, the message processor reopens `active_flights.db` and recovers whatever
 flights were still tracked. Recovery is driven by message timestamps, not by

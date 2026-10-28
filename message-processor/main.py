@@ -113,6 +113,8 @@ _HEALTHCHECK_HEARTBEAT_PATH = "/app/health/heartbeat"
 # messages would need reprocessing if the connection drops mid-batch.
 _RMQ_PREFETCH_COUNT = 100
 
+_DB_COMMIT_INTERVAL_SECONDS = 15
+
 # Receiver-decode-only -- registry/Mictronics enrichment must never seed
 # this. Collapses both decode paths' 7 raw categories to light/medium/heavy;
 # Super is unreachable from live data and rotorcraft/high-performance are a
@@ -698,7 +700,6 @@ class Flight:
                 self.map_metadata_hash,
             ),
         )
-        self._db.commit()
 
     def delete(self) -> None:
         cur = self._db.cursor()
@@ -854,6 +855,7 @@ class MessageProcessor:
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(_SCHEMA)
         _migrate_schema(self._db)
+        self._last_db_commit = time.monotonic()
 
         # Drives eviction instead of wall-clock time, so a backlog replayed
         # after a restart isn't archived just because real time passed.
@@ -1121,6 +1123,7 @@ class MessageProcessor:
         elapsed_ms = (time.monotonic() - t_start) * 1000
         self._processing_time.record(elapsed_ms)
         self._processing_time.record_hwm(elapsed_ms)
+        self._commit_if_due()
 
         # Receipt-through-processed, including RabbitMQ wait time -- must
         # use wall-clock time.time(), not time.monotonic(), since
@@ -1659,6 +1662,19 @@ class MessageProcessor:
                 self._decommission()
                 return
             self._evict_stale()
+            self._commit_if_due()
+
+    def _commit_if_due(self) -> None:
+        with self._db_lock:
+            if time.monotonic() - self._last_db_commit >= _DB_COMMIT_INTERVAL_SECONDS:
+                self._db.commit()
+                self._last_db_commit = time.monotonic()
+
+    def close_store(self) -> None:
+        with self._db_lock:
+            self._db.commit()
+            self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._db.close()
 
     def _evict_stale(self) -> None:
         ttl = self._flight_ttl_seconds
@@ -2338,9 +2354,6 @@ class MessageProcessor:
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
-        # No eager flush: the active store is durable, so a stop and a
-        # crash recover identically on next startup. (SIGUSR1's
-        # decommission path force-archives everything itself first.)
         logger.info("Shutdown requested…")
         self._shutdown.set()
         if self._rmq_channel:
@@ -2365,7 +2378,6 @@ class MessageProcessor:
             )
             self._mqtt.loop_stop()
         self._map_udp.close()
-        self._db.close()
         logger.info("Shutdown complete.")
 
 
@@ -2399,7 +2411,10 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGUSR1, _handle_decommission)
 
-    processor.start()
+    try:
+        processor.start()
+    finally:
+        processor.close_store()
 
 
 if __name__ == "__main__":
