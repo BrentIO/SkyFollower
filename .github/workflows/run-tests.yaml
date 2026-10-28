@@ -126,7 +126,8 @@ jobs:
 
           # Same `find` pattern used by this workflow's own `discover` job
           # and by build-container-images.yaml's discover-images job.
-          pip_actual=$(find . -maxdepth 3 -name requirements.txt -not -path './.venv/*' -print0 \
+          pip_actual=$( { find . -maxdepth 3 -name requirements.txt -not -path './.venv/*' -print0; \
+            printf '%s\0' ./.github/requirements-test.txt; } \
             | xargs -0 -n1 dirname | sed 's|^\./|/|' | sort -u)
           docker_actual=$(find . -name Dockerfile -not -path './.venv/*' -not -path './node_modules/*' -print0 \
             | xargs -0 -n1 dirname | sed 's|^\./|/|' | sort -u)
@@ -270,6 +271,11 @@ jobs:
             exit 0
           fi
 
+          if echo "$changed_files" | grep -qxF '.github/requirements-test.txt'; then
+            use_full_matrix "the shared test-tool pins changed"
+            exit 0
+          fi
+
           changed_json=$(printf '%s\n' "$changed_files" | jq -R -s -c 'split("\n") | map(select(length > 0))')
           filtered=$(echo "$full_matrix" | jq -c --argjson changed "$changed_json" \
             'map(select(. as $dir | $changed | any(startswith($dir + "/"))))')
@@ -324,14 +330,8 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          # pytest + pytest-xdist + pyyaml + httpx2 are test-only, installed
-          # uniformly for every component rather than special-cased per
-          # directory (httpx2 in particular is only actually exercised by
-          # management-ui/backend/tests/, as FastAPI TestClient's HTTP
-          # transport) -- keeping the step identical across all 58 jobs is
-          # simpler than tracking which components need which test-only
-          # extra, and none of these four are heavyweight.
-          python -m pip install pytest pytest-xdist pyyaml httpx2
+          # Test-only tools, installed identically for every component.
+          python -m pip install -r .github/requirements-test.txt
           python -m pip install -r "${{ matrix.dir }}/requirements.txt"
 
       - name: Run tests

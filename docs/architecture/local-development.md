@@ -52,13 +52,13 @@ reachable — see Prerequisites above.
 Every component's tests live under its own `<component>/tests/` and are
 discovered from the repo root via the root `pytest.ini`
 (`--import-mode=importlib`, so components don't collide on a shared
-top-level `tests` module name). `pytest` itself is a test-only dependency
-— it's intentionally not in any `requirements.txt` — so install it (and
-the other test-only extras CI uses) into whichever venv you're testing
-with:
+top-level `tests` module name). `pytest` and the other test-only tools are
+pinned in `.github/requirements-test.txt` (tracked by Dependabot, not in any
+component's `requirements.txt`) — install them into whichever venv you're
+testing with, so you get the same versions CI uses:
 
 ```bash
-pip install pytest pytest-xdist pyyaml httpx2
+pip install -r .github/requirements-test.txt
 ```
 
 Then, with that component's own `requirements.txt` also installed:
