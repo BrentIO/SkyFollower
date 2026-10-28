@@ -61,6 +61,7 @@ from message_processor.main import (  # noqa: E402  (after sys.path/package setu
     _MapUdpPublisher,
     _RateTracker,
     _TimeTracker,
+    _DB_COMMIT_INTERVAL_SECONDS,
     _SCHEMA,
     _flight_metadata_snapshot,
     _migrate_schema,
@@ -4582,6 +4583,83 @@ class TestShutdownUnchangedForOrdinaryTermination:
         assert not errors
         mock_channel.stop_consuming.assert_not_called()
         mock_connection.add_callback_threadsafe.assert_called_once_with(mock_channel.stop_consuming)
+
+
+class TestBatchedCommits:
+    def _save_flight(self, p, icao_hex: str = "A8AE7F") -> None:
+        f = Flight(p._db)
+        f.icao_hex = icao_hex
+        f.flight_id = "fid-1"
+        f.first_message = p._message_clock - 10
+        f.last_message = p._message_clock
+        f.total_messages = 1
+        f.receiver_sources = ["1090"]
+        f.save()
+
+    def _persisted_count(self, data_dir: str) -> int:
+        db = sqlite3.connect(os.path.join(data_dir, "active_flights.db"))
+        try:
+            return db.execute("SELECT COUNT(*) FROM flights").fetchone()[0]
+        finally:
+            db.close()
+
+    def test_save_does_not_commit(self):
+        data_dir = tempfile.mkdtemp()
+        p, _ = _make_processor(data_dir=data_dir)
+        self._save_flight(p)
+        assert self._persisted_count(data_dir) == 0
+
+    def test_commit_waits_for_interval(self):
+        data_dir = tempfile.mkdtemp()
+        p, _ = _make_processor(data_dir=data_dir)
+        self._save_flight(p)
+
+        p._commit_if_due()
+        assert self._persisted_count(data_dir) == 0
+
+        p._last_db_commit -= _DB_COMMIT_INTERVAL_SECONDS
+        p._commit_if_due()
+        assert self._persisted_count(data_dir) == 1
+
+    def test_close_store_persists_uncommitted_updates(self):
+        data_dir = tempfile.mkdtemp()
+        p, _ = _make_processor(data_dir=data_dir)
+        self._save_flight(p)
+
+        p.shutdown()
+        p.close_store()
+
+        assert self._persisted_count(data_dir) == 1
+        wal = os.path.join(data_dir, "active_flights.db-wal")
+        assert not os.path.exists(wal) or os.path.getsize(wal) == 0
+
+    def test_hard_kill_loses_only_uncommitted_updates(self):
+        data_dir = tempfile.mkdtemp()
+        p, _ = _make_processor(data_dir=data_dir)
+        self._save_flight(p)
+        p._last_db_commit -= _DB_COMMIT_INTERVAL_SECONDS
+        p._commit_if_due()
+
+        self._save_flight(p, "4CA123")
+        p._db.close()
+
+        recovered, _ = _make_processor(data_dir=data_dir)
+        cur = recovered._db.cursor()
+        cur.execute("SELECT icao_hex FROM flights")
+        assert [row[0] for row in cur.fetchall()] == ["A8AE7F"]
+
+    def test_main_closes_store_when_start_exits(self):
+        cfg = _minimal_config()
+        cfg["message_processor_id"] = "7"
+        with patch("message_processor.main.load_config", return_value=cfg), \
+             patch("message_processor.main.MessageProcessor") as MockProcessor, \
+             patch("message_processor.main.signal.signal"):
+            mock_processor = MockProcessor.return_value
+            mock_processor.start.side_effect = SystemExit(0)
+            with pytest.raises(SystemExit):
+                processor_main()
+
+        mock_processor.close_store.assert_called_once()
 
 
 class TestMainRegistersSigusr1Handler:
