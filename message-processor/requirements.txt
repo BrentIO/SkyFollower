@@ -1,4 +1,4 @@
-pydantic==2.14.1
+pydantic==2.14.2
 uuid7==0.1.0
 pyModeS==3.6.1
 pyModeS978==2026.9.1
