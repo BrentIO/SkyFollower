@@ -162,14 +162,17 @@ services:
   # leading "0" (or whatever second is actually wanted). Don't drop back
   # to 5 fields when adding a job.
   ofelia:
-    image: mcuadros/ofelia:v3.0.8@sha256:c36048db84b0b54d47a689f723f6f5d19281ac4b87d90fa6433a4582b93f1a5b
+    image: mcuadros/ofelia:0.3.22@sha256:efcbe2c5cf658a25de6443c1462d653f9cc03791d642e01fc6c638a00f97e492
     extra_hosts: *extra-hosts
     restart: unless-stopped
-    command: ["daemon", "--docker"]
+    # Ofelia reads job labels from every ofelia.enabled container on the
+    # host; the filter keeps it from also running the archive host's jobs.
+    command: ["daemon", "--docker", "--docker-filter", "label=skyfollower.ofelia-scope=core"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
       ofelia.enabled: "true"
+      skyfollower.ofelia-scope: "core"
 
       # The only job with a volume at all: the runners config directory,
       # mounted whole so an optional phonic_overrides.json can be added or
@@ -423,13 +426,13 @@ services:
       ofelia.job-run.runner-us-faa-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-us-faa-registry.delete: *ofelia-runner-delete
 
-      ofelia.job-run.runner-ca-transport-canada-registry.schedule: "0 10 5 * * 7"
+      ofelia.job-run.runner-ca-transport-canada-registry.schedule: "0 10 5 * * 0"
       ofelia.job-run.runner-ca-transport-canada-registry.image: "ghcr.io/brentio/skyfollower-runner-ca-transport-canada-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-ca-transport-canada-registry.network: *ofelia-runner-network
       ofelia.job-run.runner-ca-transport-canada-registry.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ca-transport-canada-registry.delete: *ofelia-runner-delete
 
-      ofelia.job-run.runner-ba-bhdca-registry.schedule: "0 10 6 * * 7"
+      ofelia.job-run.runner-ba-bhdca-registry.schedule: "0 10 6 * * 0"
       ofelia.job-run.runner-ba-bhdca-registry.image: "ghcr.io/brentio/skyfollower-runner-ba-bhdca-registry:${SKYFOLLOWER_VERSION:-latest}"
       ofelia.job-run.runner-ba-bhdca-registry.network: *ofelia-runner-network
       ofelia.job-run.runner-ba-bhdca-registry.environment: *ofelia-runner-environment
