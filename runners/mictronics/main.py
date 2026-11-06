@@ -439,9 +439,14 @@ def publish_completion_stats(
     client = build_mqtt_client(mc)
     connected = False
 
+    refused = None
+
     def _on_connect(c, userdata, flags, reason_code, properties):
-        nonlocal connected
-        connected = True
+        nonlocal connected, refused
+        if getattr(reason_code, "is_failure", False):
+            refused = reason_code
+        else:
+            connected = True
 
     client.on_connect = _on_connect
 
@@ -451,11 +456,14 @@ def publish_completion_stats(
 
         import time
         deadline = time.monotonic() + 5
-        while not connected and time.monotonic() < deadline:
+        while not connected and refused is None and time.monotonic() < deadline:
             time.sleep(0.05)
 
         if not connected:
-            logger.warning("MQTT connect timed out; skipping stats publish.")
+            if refused is not None:
+                logger.warning("MQTT connection refused (%s); skipping stats publish.", refused)
+            else:
+                logger.warning("MQTT connect timed out; skipping stats publish.")
             client.loop_stop()
             return
 
