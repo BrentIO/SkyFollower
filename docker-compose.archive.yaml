@@ -120,15 +120,18 @@ services:
   # well after midnight UTC -- there's no upstream data source to wait on,
   # unlike the core host's runners.
   ofelia:
-    image: mcuadros/ofelia:v3.0.8@sha256:c36048db84b0b54d47a689f723f6f5d19281ac4b87d90fa6433a4582b93f1a5b
+    image: mcuadros/ofelia:0.3.22@sha256:efcbe2c5cf658a25de6443c1462d653f9cc03791d642e01fc6c638a00f97e492
     restart: unless-stopped
-    command: ["daemon", "--docker"]
+    # Ofelia reads job labels from every ofelia.enabled container on the
+    # host; the filter keeps it from also running the core host's jobs.
+    command: ["daemon", "--docker", "--docker-filter", "label=skyfollower.ofelia-scope=archive"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     labels:
       ofelia.enabled: "true"
+      skyfollower.ofelia-scope: "archive"
       ofelia.job-run.archive-compaction.schedule: "0 50 4 * * *"
       ofelia.job-run.archive-compaction.image: "ghcr.io/brentio/skyfollower-archive-compaction:${SKYFOLLOWER_VERSION:-latest}"
       # Ofelia's job-run creates its container through the Docker Engine

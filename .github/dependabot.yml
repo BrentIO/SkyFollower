@@ -17,6 +17,9 @@ updates:
     ignore:
       - dependency-name: "redis"
         update-types: ["version-update:semver-major"]
+      # v3.0.8 is a stray 2023 Docker Hub tag older than 0.3.22, not a real release.
+      - dependency-name: "mcuadros/ofelia"
+        versions: [">= 1.0.0"]
   - package-ecosystem: "pip"
     directory: "/.github"
     schedule:
