@@ -27,6 +27,10 @@ updates:
       day: "monday"
       time: "23:20"
       timezone: "Etc/UTC"
+    ignore:
+      # pytest 9.2.0 breaks pytest-xdist's --dist=loadgroup grouping until xdist releases a fix.
+      - dependency-name: "pytest"
+        versions: [">= 9.2.0"]
   - package-ecosystem: "pip"
     directory: "/archive-compaction"
     schedule:
