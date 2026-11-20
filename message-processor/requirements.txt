@@ -1,6 +1,6 @@
 pydantic==2.14.3
 uuid7==0.1.0
-pyModeS==3.6.1
+pyModeS==3.7.0
 pyModeS978==2026.9.1
 pika==1.4.4
 paho-mqtt==2.2.0
