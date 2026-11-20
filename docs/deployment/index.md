@@ -312,7 +312,13 @@ last install/upgrade actually reaches an existing deployment), and runs
 install root — no prompting. `SKYFOLLOWER_VERSION` is rewritten only once
 that role's pull and `up -d` succeed; a failed role keeps its old value and
 the run continues with the remaining roles, then prints a per-role summary
-and exits non-zero so you know what to re-run. Every
+and exits non-zero so you know what to re-run. When every role succeeds, the
+upgrade then removes superseded `ghcr.io/brentio/skyfollower-*` images (any tag
+other than the one just deployed) to reclaim disk, and reports how many it
+removed; when any role failed it leaves them in place. Other images on the
+host (RabbitMQ, Redis, Ofelia, unrelated workloads) are never touched, and an
+image still used by a container is skipped. Rolling back means re-pulling the
+earlier version. Every
 compose file is replaced, including `docker-compose.message-processor.yaml`
 and `docker-compose.receiver.yaml`; the per-instance env files and generated
 `docker-compose.instances.yaml` next to them are left alone. An install that
