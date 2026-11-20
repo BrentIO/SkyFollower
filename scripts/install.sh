@@ -23,7 +23,9 @@
 # every role directory under the install root, rewriting SKYFOLLOWER_VERSION
 # only for roles that succeed. A failed role doesn't stop the others; the
 # run ends with a per-role summary and exits non-zero. The core role also
-# reconciles RabbitMQ users with its .env. No prompting.
+# reconciles RabbitMQ users with its .env. No prompting. When every role
+# succeeds, superseded ghcr.io/brentio/skyfollower-* images (any tag other
+# than the one just deployed) are removed; if any role failed they're kept.
 #
 # Files are fetched from the latest GitHub release tag by default: a
 # docker-compose.*.yaml's image: :latest always matches that tag, not tip
@@ -2151,6 +2153,32 @@ offer_ofelia_and_bulk_load() {
 # Upgrade mode
 # ---------------------------------------------------------------------------
 
+# Removes superseded ghcr.io/brentio/skyfollower-* images once every role has
+# upgraded. Matched by repository name, never `docker image prune -a`, so
+# unrelated images on a shared host (and rabbitmq/redis/ofelia) are left
+# alone. No `-f`: docker refuses to remove an image a container still uses.
+# Best-effort -- never changes the upgrade's exit code. Sets
+# PRUNED_IMAGE_COUNT.
+prune_superseded_images() {
+  PRUNED_IMAGE_COUNT=0
+  local image
+  while IFS= read -r image; do
+    [ -n "$image" ] || continue
+    if docker rmi "$image" >/dev/null 2>&1; then
+      PRUNED_IMAGE_COUNT=$((PRUNED_IMAGE_COUNT + 1))
+    fi
+  done < <(
+    docker image ls --format '{{.Repository}}:{{.Tag}}' \
+      --filter 'reference=ghcr.io/brentio/skyfollower-*' 2>/dev/null \
+      | grep -v ":${IMAGE_VERSION}\$" || true
+  )
+  # A dev build's floating dev-<branch> tag is re-pointed by every pull,
+  # leaving the previous layers untagged rather than under an old tag.
+  if [ "$DEV_BUILD" -eq 1 ]; then
+    docker image prune -f >/dev/null 2>&1 || true
+  fi
+}
+
 do_upgrade() {
   # REF/IMAGE_VERSION are already resolved by main() before dispatching
   # here -- resolving again would mean two GitHub API calls for the same
@@ -2235,9 +2263,17 @@ do_upgrade() {
     echo "No role directories found under ${INSTALL_ROOT} (looked for */.env)." >&2
     exit 1
   fi
+  local cleanup_note=""
+  if [ "$failed" -gt 0 ]; then
+    cleanup_note="Old images kept: ${failed} role(s) failed, so superseded images were not removed."
+  else
+    prune_superseded_images
+    cleanup_note="Old images removed: ${PRUNED_IMAGE_COUNT}"
+  fi
   echo
   echo "Upgrade summary:"
   printf '%s' "$summary"
+  echo "  ${cleanup_note}"
   if [ "$DEV_BUILD" -eq 1 ]; then
     echo
     echo "⚠️  DEVELOPMENT BUILD (${IMAGE_VERSION}, branch '${BRANCH}') -- not a released version."
