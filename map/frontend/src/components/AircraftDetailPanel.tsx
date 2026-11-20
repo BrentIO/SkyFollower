@@ -81,6 +81,7 @@ export function AircraftDetailPanel({
   onToggleTracePoints,
 }: AircraftDetailPanelProps) {
   const data = useMemo(() => buildAircraftDetail(aircraft, center), [aircraft, center]);
+  const [collapsed, setCollapsed] = useState(false);
 
   // Live-ticking clock for the Last Message Received row -- re-renders the
   // formatted relative age while the panel stays open (e.g. "3s ago" ->
@@ -112,7 +113,7 @@ export function AircraftDetailPanel({
     // always-present tab (24 -- this panel's container is narrower than
     // 100vw by that much) + icon column footprint (52) + 8px gap.
     <div
-      className="absolute top-4 left-4 max-h-[80vh] w-80 max-w-[calc(100vw-100px)] overflow-y-auto rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
+      className="absolute top-4 left-4 flex max-h-[80vh] w-80 max-w-[calc(100vw-100px)] flex-col overflow-hidden rounded-md bg-white text-slate-900 shadow-md dark:bg-slate-900 dark:text-slate-100"
       style={{ zIndex: MAX_LABEL_Z_INDEX + 1 }}
     >
       <div className="flex items-start justify-between gap-3 p-3">
@@ -154,6 +155,27 @@ export function AircraftDetailPanel({
         </div>
       )}
 
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        title={collapsed ? "Show details" : "Hide details"}
+        aria-label={collapsed ? "Show details" : "Hide details"}
+        aria-expanded={!collapsed}
+        className={`${DIVIDER} flex h-6 w-full items-center justify-center text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800`}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path
+            d={collapsed ? "M4 6L8 10L12 6" : "M4 10L8 6L12 10"}
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+
+      {!collapsed && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
       {data.route && (
         <div className={DIVIDER}>
           <div className={SECTION_BAR}>Route</div>
@@ -201,6 +223,8 @@ export function AircraftDetailPanel({
         <div className={SECTION_BAR}>Flight</div>
         <FlightRows data={data} lastMessageReceived={lastMessageReceived} />
       </div>
+        </div>
+      )}
 
       <div className={`${DIVIDER} flex items-center justify-center gap-2 px-4 py-2.5`}>
         <IconButton label="Isolate" icon={ISOLATE_ICON} active={isolateActive} onClick={onToggleIsolate} />

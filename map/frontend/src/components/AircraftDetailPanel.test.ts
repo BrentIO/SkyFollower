@@ -154,11 +154,12 @@ describe("panel size cap and scroll (#2003, width fix #2010, icon-column collisi
     expect(outerDivClassName).not.toContain("max-w-[calc(100vw-2rem)]");
   });
 
-  it("scrolls overflowing content on the panel itself instead of clipping it (overflow-hidden removed)", () => {
+  it("scrolls only the Route-through-Flight section so the header and action buttons stay pinned", () => {
     const outerDivIndex = panelSource.indexOf("<div\n      className=\"absolute top-4 left-4");
     const outerDivClassName = panelSource.slice(outerDivIndex, panelSource.indexOf("\"", outerDivIndex + 40) + 1);
-    expect(outerDivClassName).toContain("overflow-y-auto");
-    expect(outerDivClassName).not.toContain("overflow-hidden");
+    expect(outerDivClassName).toContain("flex-col");
+    expect(outerDivClassName).not.toContain("overflow-y-auto");
+    expect(panelSource).toContain('<div className="min-h-0 flex-1 overflow-y-auto">');
   });
 
   it("does not add a competing min-width floor that would fight the max-width safety net", () => {
