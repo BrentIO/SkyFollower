@@ -206,7 +206,7 @@ class TestFetchDetail:
         with patch("cz_caa_registry_main.time.sleep"):
             assert _fetch_detail(session, 1) is None
 
-    def test_retry_uses_exponential_backoff(self):
+    def test_retry_uses_extended_backoff(self):
         session = MagicMock()
         session.get.side_effect = [
             requests.exceptions.ConnectionError("dropped"),
@@ -215,8 +215,8 @@ class TestFetchDetail:
         ]
         with patch("cz_caa_registry_main.time.sleep") as mock_sleep:
             _fetch_detail(session, 1)
-        assert mock_sleep.call_args_list[0] == call(1)
-        assert mock_sleep.call_args_list[1] == call(2)
+        assert mock_sleep.call_args_list[0] == call(2)
+        assert mock_sleep.call_args_list[1] == call(5)
 
     def test_logs_detail_url(self):
         session = MagicMock()
@@ -232,7 +232,7 @@ class TestFetchDetail:
         session.get.return_value = _detail_response()
         _fetch_detail(session, 99)
         session.get.assert_called_once_with(
-            _DETAIL_URL.format(id=99), timeout=30
+            _DETAIL_URL.format(id=99), timeout=8
         )
 
     def test_retries_on_403(self):
@@ -272,7 +272,7 @@ class TestFetchDetail:
         assert _fetch_detail(session, 1) is None
         assert session.get.call_count == 1
 
-    def test_retriable_http_uses_exponential_backoff(self):
+    def test_retriable_http_uses_extended_backoff(self):
         session = MagicMock()
         session.get.side_effect = [
             _make_response(status_code=429),
@@ -281,8 +281,16 @@ class TestFetchDetail:
         ]
         with patch("cz_caa_registry_main.time.sleep") as mock_sleep:
             _fetch_detail(session, 1)
-        assert mock_sleep.call_args_list[0] == call(1)
-        assert mock_sleep.call_args_list[1] == call(2)
+        assert mock_sleep.call_args_list[0] == call(2)
+        assert mock_sleep.call_args_list[1] == call(5)
+
+
+class TestFetchDetailTimeout:
+    def test_uses_short_read_timeout(self):
+        session = MagicMock()
+        session.get.return_value = _detail_response()
+        _fetch_detail(session, 1)
+        assert session.get.call_args.kwargs["timeout"] == 8
 
 
 class TestFirstDisplayName:
@@ -431,12 +439,13 @@ class TestDownloadAndParse:
     def test_continues_on_detail_error(self):
         session = MagicMock()
         session.get.side_effect = [
-            _list_response([_list_record(id=1), _list_record(id=2)]),
+            _list_response([_list_record(id=i) for i in range(1, 41)]),
             _make_response(status_code=404),
-            _detail_response(transponder="AAAAAA"),
+            *[_detail_response(transponder="AAAAAA") for _ in range(39)],
+            _make_response(status_code=404),
         ]
         records = self._collect(session)
-        assert len(records) == 1
+        assert len(records) == 39
         assert records[0]["icao_hex"] == "AAAAAA"
 
     def test_rate_limiting_applied(self):
@@ -775,3 +784,28 @@ class TestPublishCompletionStats:
 
     def test_mqtt_root_topic(self):
         assert MQTT_ROOT == "SkyFollower/runner/cz-caa-registry"
+
+
+class TestDroppedRecordHandling:
+    @staticmethod
+    def _run(list_records, detail_responses):
+        session = MagicMock()
+        session.get.side_effect = [_list_response(list_records)] + detail_responses
+        with patch("cz_caa_registry_main.time.sleep"):
+            return list(download_and_parse(session, delay=0))
+
+    def test_dropped_record_recovered_on_second_pass(self):
+        fail = [_make_response(status_code=502)] * 4
+        rows = self._run([{"id": 1, "deletion_date": None}], fail + [_detail_response()])
+        assert len(rows) == 1
+
+    def test_raises_when_too_many_still_dropped(self):
+        fail = [_make_response(status_code=502)] * 8
+        with pytest.raises(RuntimeError, match="could not be fetched"):
+            self._run([{"id": 1, "deletion_date": None}], fail)
+
+    def test_tolerates_dropped_fraction_under_threshold(self):
+        recs = [{"id": i, "deletion_date": None} for i in range(1, 41)]
+        resps = [_detail_response() for _ in range(39)]
+        resps += [_make_response(status_code=502)] * 8
+        assert len(self._run(recs, resps)) == 39
