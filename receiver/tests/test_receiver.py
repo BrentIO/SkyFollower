@@ -335,6 +335,30 @@ class TestReconnectCounter:
 
         assert r._reconnect_counts[key] == 3  # never reset mid-flap
 
+    def test_published_count_clears_while_connection_stays_up(self):
+        """Once a live connection has held past the reset threshold the
+        count reads 0 without waiting for the next drop."""
+        from receiver.main import RECONNECT_COUNT_RESET_AGE_SECONDS
+        r = self._make_receiver()
+        key = ("localhost", 1)
+        r._reconnect_counts[key] = 5
+        r._connected[key] = True
+        r._connected_since[key] = 1000.0
+
+        with patch("receiver.main.time.monotonic", lambda: 1000.0 + RECONNECT_COUNT_RESET_AGE_SECONDS - 1):
+            assert r._current_reconnect_count(key) == 5
+        with patch("receiver.main.time.monotonic", lambda: 1000.0 + RECONNECT_COUNT_RESET_AGE_SECONDS):
+            assert r._current_reconnect_count(key) == 0
+        assert r._reconnect_counts[key] == 0
+
+    def test_published_count_not_cleared_while_disconnected(self):
+        r = self._make_receiver()
+        key = ("localhost", 1)
+        r._reconnect_counts[key] = 5
+        r._connected[key] = False
+        r._connected_since[key] = None
+        assert r._current_reconnect_count(key) == 5
+
     def test_never_resets_when_the_connection_never_succeeds(self):
         """An endpoint that refuses every attempt has no _connected_since
         timestamp, so no reset ever fires -- the count just accumulates."""

@@ -548,6 +548,18 @@ class Receiver:
                 self._reconnect_counts[key] = self._reconnect_counts.get(key, 0) + 1
                 time.sleep(RECONNECT_BACKOFF_SECONDS)
 
+    def _current_reconnect_count(self, key: tuple[str, int]) -> int:
+        # Clear the flap count once a live connection has held long enough,
+        # rather than waiting for the next drop to notice.
+        up_since = self._connected_since.get(key)
+        if (
+            self._connected.get(key)
+            and up_since is not None
+            and time.monotonic() - up_since >= RECONNECT_COUNT_RESET_AGE_SECONDS
+        ):
+            self._reconnect_counts[key] = 0
+        return self._reconnect_counts.get(key, 0)
+
     def _read_1090_stream(
         self, sock: socket.socket, host: str, port: int, source: str, rate_tracker: _RateTracker
     ) -> None:
@@ -1098,7 +1110,7 @@ class Receiver:
             )
             self._mqtt.publish(
                 f"{base}/{mqtt_host}_{mqtt_port}_reconnect_count",
-                str(self._reconnect_counts.get((host, port), 0)),
+                str(self._current_reconnect_count((host, port))),
                 retain=True,
             )
             last_message_at = self._last_message_at.get((host, port))
