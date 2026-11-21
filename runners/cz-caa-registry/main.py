@@ -67,6 +67,9 @@ _DETAIL_URL = "https://lr.caa.gov.cz/api/avreg/{id}"
 MQTT_ROOT = "SkyFollower/runner/cz-caa-registry"
 REQUEST_DELAY = 0.25  # seconds between detail requests
 _DETAIL_MAX_RETRIES = 3
+_DETAIL_TIMEOUT = 8
+_RETRY_BACKOFF = (2, 5, 15)  # outlasts the CAA gateway's multi-second bad windows
+_MAX_DROPPED_FRACTION = 0.05
 _RETRIABLE_HTTP = frozenset({403, 429})
 
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -112,12 +115,12 @@ def _fetch_detail(session: requests.Session, record_id: int) -> dict | None:
 
     for attempt in range(_DETAIL_MAX_RETRIES + 1):
         try:
-            resp = session.get(url, timeout=30)
+            resp = session.get(url, timeout=_DETAIL_TIMEOUT)
             if resp.ok:
                 return resp.json()
             if resp.status_code in _RETRIABLE_HTTP or resp.status_code >= 500:
                 if attempt < _DETAIL_MAX_RETRIES:
-                    wait = 2 ** attempt
+                    wait = _RETRY_BACKOFF[attempt]
                     logger.warning(
                         "Detail request for id=%d returned HTTP %d; retrying in %ds (attempt %d/%d).",
                         record_id, resp.status_code, wait, attempt + 1, _DETAIL_MAX_RETRIES,
@@ -133,7 +136,7 @@ def _fetch_detail(session: requests.Session, record_id: int) -> dict | None:
             return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
             if attempt < _DETAIL_MAX_RETRIES:
-                wait = 2 ** attempt
+                wait = _RETRY_BACKOFF[attempt]
                 logger.warning(
                     "Detail request for id=%d failed (%s); retrying in %ds (attempt %d/%d).",
                     record_id, exc, wait, attempt + 1, _DETAIL_MAX_RETRIES,
@@ -147,9 +150,35 @@ def _fetch_detail(session: requests.Session, record_id: int) -> dict | None:
                 return None
 
 
+def _parse_detail(detail: dict) -> dict | None:
+    transponder = (detail.get("transponder") or "").strip().upper()
+    if not transponder:
+        return None
+
+    raw_reg = (detail.get("registration_number") or "").strip()
+    return {
+        "icao_hex": transponder,
+        "registration": f"OK-{raw_reg}" if raw_reg else "",
+        "category": detail.get("category"),
+        "manufacturer": (detail.get("manufacturer") or "").strip(),
+        "model": (detail.get("model") or "").strip(),
+        "serial": (detail.get("serial_number") or "").strip(),
+        "manufacture_year": detail.get("manufacture_year"),
+        "engine_type": detail.get("engine_type"),
+        "engine_count": detail.get("engine_count"),
+        "seats": detail.get("max_on_board"),
+        "owners": _all_display_names(detail.get("owners")),
+    }
+
+
 def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY):
-    """Yield enrichment-ready dicts one at a time as each detail record is fetched."""
+    """Yield enrichment-ready dicts as each detail record is fetched.
+
+    Records that fail every retry get one more pass at the end; if more than
+    _MAX_DROPPED_FRACTION are still missing, raises after yielding the rest.
+    """
     ids = _fetch_active_ids(session)
+    dropped: list[int] = []
 
     for i, record_id in enumerate(ids):
         if i > 0:
@@ -160,28 +189,35 @@ def download_and_parse(session: requests.Session, delay: float = REQUEST_DELAY):
 
         detail = _fetch_detail(session, record_id)
         if detail is None:
+            dropped.append(record_id)
             continue
 
-        transponder = (detail.get("transponder") or "").strip().upper()
-        if not transponder:
+        row = _parse_detail(detail)
+        if row:
+            yield row
+
+    if dropped:
+        logger.info("Retrying %d dropped records.", len(dropped))
+    still_dropped: list[int] = []
+    for record_id in dropped:
+        time.sleep(delay)
+        detail = _fetch_detail(session, record_id)
+        if detail is None:
+            still_dropped.append(record_id)
             continue
+        row = _parse_detail(detail)
+        if row:
+            yield row
 
-        raw_reg = (detail.get("registration_number") or "").strip()
-        registration = f"OK-{raw_reg}" if raw_reg else ""
-
-        yield {
-            "icao_hex": transponder,
-            "registration": registration,
-            "category": detail.get("category"),
-            "manufacturer": (detail.get("manufacturer") or "").strip(),
-            "model": (detail.get("model") or "").strip(),
-            "serial": (detail.get("serial_number") or "").strip(),
-            "manufacture_year": detail.get("manufacture_year"),
-            "engine_type": detail.get("engine_type"),
-            "engine_count": detail.get("engine_count"),
-            "seats": detail.get("max_on_board"),
-            "owners": _all_display_names(detail.get("owners")),
-        }
+    if still_dropped:
+        logger.warning(
+            "%d of %d records could not be fetched: %s",
+            len(still_dropped), len(ids), still_dropped,
+        )
+        if len(still_dropped) > _MAX_DROPPED_FRACTION * len(ids):
+            raise RuntimeError(
+                f"{len(still_dropped)} of {len(ids)} detail records could not be fetched"
+            )
 
 
 def _first_display_name(entries) -> str:
