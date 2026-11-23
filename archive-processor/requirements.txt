@@ -1,6 +1,6 @@
 pydantic==2.14.3
 uuid7==0.1.0
-pika==1.4.4
+pika==1.5.0
 paho-mqtt==2.2.0
 boto3==1.44.4
 pyarrow==26.0.1
