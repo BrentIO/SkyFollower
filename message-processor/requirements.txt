@@ -2,7 +2,7 @@ pydantic==2.14.3
 uuid7==0.1.0
 pyModeS==3.7.0
 pyModeS978==2026.9.1
-pika==1.4.4
+pika==1.5.0
 paho-mqtt==2.2.0
 shapely==2.2.0
 redis==8.1.0
