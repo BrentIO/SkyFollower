@@ -64,6 +64,16 @@ rather than durations omit the `_SECONDS` suffix
 | `STITCH_POINTER_TTL_SECONDS` | 86 400 s (1 day) | TTL on the `archive:last_segment:{icao_hex}` pointer used for split-flight stitching. |
 | `ENRICHMENT_TTL_SECONDS` | 1 209 600 s (14 days) | TTL every data runner sets on the enrichment keys it writes — registration, operator, type, airport, livery. Long enough that a single missed weekly run never expires live data. |
 | `ROUTE_TTL_SECONDS` | 259 200 s (3 days) | TTL the `vrs-standing-data` runner sets on `route:{ident}`. Deliberately shorter than `ENRICHMENT_TTL_SECONDS`: the upstream route data refreshes daily, so a 3-day ceiling keeps it from silently going stale for over a week if a run or two is missed. Import-time assertion: must be less than `ENRICHMENT_TTL_SECONDS`. |
+| `UK_CAA_SEARCH_INTERVAL_SECONDS` | 604 800 s (7 days) | How often the `uk-caa-registry` search job is due. |
+| `UK_CAA_DETAILS_REFRESH_INTERVAL_SECONDS` | 2 419 200 s (28 days) | How long after a details fetch an aircraft is due again. |
+| `UK_CAA_DETAILS_RETRY_BACKOFF_SECONDS` | 86 400 s (1 day) | Delay before retrying a failed details request. |
+| `UK_CAA_QUEUE_TTL_SECONDS` | 1 555 200 s (18 days) | TTL on `uk_caa:aircraft:{AircraftID}`. Import-time assertion: expires between the second and third missed search. |
+| `UK_CAA_REGISTRY_TTL_SECONDS` | 6 048 000 s (70 days) | TTL `uk-caa-registry` sets on its `aircraft:registry:{hex}` keys, in place of `ENRICHMENT_TTL_SECONDS`. Import-time assertion: outlasts two missed refreshes. |
+| `UK_CAA_SEARCH_RUN_TIMEOUT_SECONDS` | 43 200 s (12 h) | Longest a search run may take, including waiting for the lock. |
+| `UK_CAA_DETAILS_RUN_TIMEOUT_SECONDS` | 36 000 s (10 h) | Longest a details run may take, including waiting for the lock. |
+| `UK_CAA_LOCK_TTL_SECONDS` | 300 s | TTL on `uk_caa:lock`, which keeps the two UK jobs from calling CAA at once. Import-time assertion: more than two refresh intervals. |
+| `UK_CAA_LOCK_REFRESH_INTERVAL_SECONDS` | 60 s | How often a running UK job renews the lock. |
+| `UK_CAA_LOCK_POLL_INTERVAL_SECONDS` | 60 s | How often a waiting UK job retries the lock. |
 | `RULE_TRIGGER_DAY_TTL_SECONDS` | 2 678 400 s (31 days) | TTL the message processor sets on each `rule_triggers:{identifier}:{YYYY-MM-DD}` day key. One day of margin past the 30-day window the management-ui backend sums for a rule's rolling-30-day trigger count, so a day key can't expire mid-read at the boundary. The lifetime key never expires. |
 | `DEFAULT_FLIGHT_TTL_SECONDS` | 300 s | Fallback for `flight_ttl_seconds` when `config:flight_ttl_seconds` is unset. The one value behind the sole remaining operator knob — see above. |
 

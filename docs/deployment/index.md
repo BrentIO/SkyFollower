@@ -124,6 +124,11 @@ format, and the multiple-receiver-instance pattern.
 | `MQTT_PORT` | ❌ | `1883` |
 | `MQTT_USERNAME` | ❌ | — |
 | `MQTT_PASSWORD` | ❌ | — |
+| `UK_CAA_REQUEST_INTERVAL_SECONDS` | ❌ | `1` |
+| `UK_CAA_DETAILS_LIMIT` | ❌ | `1000` |
+
+The two `UK_CAA_*` variables tune the
+[UK CAA registry runner](/runners/uk-caa-registry).
 
 `RABBITMQ_USERNAME`/`PASSWORD` and `REDIS_PASSWORD` are also what every
 other role's `.env` authenticates with, so the same values must be
@@ -330,6 +335,12 @@ never clobbered — same no-clobber behavior a first install uses.
 Rolling back is the same operation in reverse: edit `SKYFOLLOWER_VERSION`
 to an older release tag by hand and run `docker compose pull && docker
 compose up -d` in that role's directory.
+
+On the core role, the upgrade also stops any `uk-caa-registry` run left over
+from another version and, if no UK search has completed yet, starts one in the
+background. See the
+[UK CAA registry runner](/runners/uk-caa-registry#upgrading-from-the-single-weekly-job),
+including the manual steps for installs that don't use `install.sh`.
 
 To install or upgrade to a **development build** instead of a release, set
 the single `branch` variable — see [Testing a Dev

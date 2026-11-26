@@ -31,6 +31,10 @@ def _publish():
             kwargs[name] = _CFG
         elif name == "status":
             kwargs[name] = "success"
+        elif name == "job":
+            kwargs[name] = "search"
+        elif name == "stats":
+            kwargs[name] = {}
         else:
             kwargs[name] = 1
     _mod.publish_completion_stats(**kwargs)

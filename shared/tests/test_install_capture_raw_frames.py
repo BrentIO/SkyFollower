@@ -31,6 +31,8 @@ def _upgrade(root: Path) -> subprocess.CompletedProcess:
         + f"INSTALL_ROOT={root!s}\nIMAGE_VERSION=2026.09.99\n"
         + _extract_function("prune_superseded_images")
         + "\n"
+        + _extract_function("stop_old_uk_caa_runs")
+        + "\nprime_uk_caa_queue() { :; }\n"
         + _extract_function("do_upgrade")
         + "\ndo_upgrade\n"
     )

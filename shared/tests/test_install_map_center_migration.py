@@ -25,7 +25,10 @@ def _extract_function(name: str) -> str:
     return m.group(0)
 
 
-_DO_UPGRADE = _extract_function("prune_superseded_images") + "\n" + _extract_function("do_upgrade")
+_DO_UPGRADE = "\n".join(
+    [_extract_function(n) for n in ("prune_superseded_images", "stop_old_uk_caa_runs", "do_upgrade")]
+    + ["prime_uk_caa_queue() { :; }"]
+)
 
 # docker is stubbed to a no-op: these tests only care about the .env
 # rewrite. fetch_role is stubbed too (its own re-fetch behavior is

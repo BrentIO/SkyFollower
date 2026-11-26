@@ -77,15 +77,16 @@ up: seeds Redis by running every runner once instead of waiting on each
 one's own `ofelia` schedule (up to a week away for weekly runners).
 `mictronics` runs first since most country runners resolve `icao_hex`
 against its RediSearch index; the rest follow alphabetically, with
-`cz-caa-registry` and then `uk-caa-registry` pushed to the end since both
-take far longer than the others — each does a per-record detail fetch
-(`cz-caa-registry` with a 0.25s delay between requests, `uk-caa-registry`
-with 676+ prefix searches on top). `cz-caa-registry` runs immediately
-before `uk-caa-registry`. The whole sequence can take hours, so accepting
-the offer runs it detached from the installer (it keeps going after the
-installer moves on to the next role, or exits entirely) and prints the
-path to a log file to `tail -f` for progress; `docker compose ps` in the
-core host's directory also shows whichever runner is currently mid-run.
+`cz-caa-registry` and then the two `uk-caa-registry` jobs pushed to the end
+since they take far longer than the others. The UK search job makes 676+
+paced requests, then the UK details job fetches **one batch** (1,000
+aircraft by default). The daily schedule fetches the rest, so UK records
+fill in over about 20 days if CAA accepts that rate. The whole sequence can
+take hours, so accepting the offer runs it detached from the installer (it
+keeps going after the installer moves on to the next role, or exits
+entirely) and prints the path to a log file to `tail -f` for progress;
+`docker compose ps` in the core host's directory also shows whichever runner
+is currently mid-run.
 
 To do this manually instead — or to bulk-load again later — from the core
 host's directory:
@@ -93,11 +94,12 @@ host's directory:
 ```bash
 docker compose run --rm runner-mictronics
 for svc in $(docker compose --profile runners config --services \
-    | grep '^runner-' | grep -v -E '^runner-(mictronics|cz-caa-registry|uk-caa-registry)$' | sort); do
+    | grep '^runner-' | grep -v -E '^runner-(mictronics|cz-caa-registry|uk-caa-registry-(search|details))$' | sort); do
   docker compose run --rm "$svc"
 done
 docker compose run --rm runner-cz-caa-registry
-docker compose run --rm runner-uk-caa-registry
+docker compose run --rm runner-uk-caa-registry-search
+docker compose run --rm runner-uk-caa-registry-details
 ```
 
 The runner list comes from `docker compose config` itself, not a separate

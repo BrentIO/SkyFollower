@@ -2119,9 +2119,10 @@ offer_ofelia_and_bulk_load() {
     echo
     echo "First-time bulk load: seeds Redis by running every runner once"
     echo "(mictronics first -- most country runners resolve icao_hex against"
-    echo "its index -- then the rest alphabetically, then cz-caa-registry just"
-    echo "before uk-caa-registry last, since both do slow per-record detail"
-    echo "fetches). Otherwise each runs on its own schedule and Redis fills"
+    echo "its index -- then the rest alphabetically, then cz-caa-registry and"
+    echo "the uk-caa-registry search and details jobs last, since they are slow)."
+    echo "UK details fetches only one batch; the daily schedule fetches the"
+    echo "rest over the following weeks. Otherwise each runs on its own schedule and Redis fills"
     echo "in gradually. This can take hours end to end, so it runs detached"
     echo "in the background -- the installer moves on immediately and this"
     echo "session does not need to stay open for it to finish."
@@ -2135,16 +2136,17 @@ offer_ofelia_and_bulk_load() {
   # hardcoded list, so it can't drift from what's declared. `--profile
   # runners` is required or the list comes back empty. Every grep is
   # guarded with `|| true` since a legitimate no-match would otherwise
-  # take the script down under `set -e`. cz-caa-registry/uk-caa-registry
-  # are pulled out of the alphabetical batch and appended last: both do
-  # slow per-record detail fetches.
-  local all_runners mictronics rest cz_second_last uk_last ordered
+  # take the script down under `set -e`. cz-caa-registry and the two
+  # uk-caa-registry jobs are pulled out of the alphabetical batch and
+  # appended last: all are slow. UK search must run before UK details.
+  local all_runners mictronics rest cz_second_last uk_search uk_details ordered
   all_runners="$(cd "$role_dir" && docker compose --profile runners config --services | grep '^runner-' || true)"
   mictronics="$(echo "$all_runners" | grep '^runner-mictronics$' || true)"
   cz_second_last="$(echo "$all_runners" | grep '^runner-cz-caa-registry$' || true)"
-  uk_last="$(echo "$all_runners" | grep '^runner-uk-caa-registry$' || true)"
-  rest="$(echo "$all_runners" | grep -v '^runner-mictronics$' | grep -v '^runner-cz-caa-registry$' | grep -v '^runner-uk-caa-registry$' | sort || true)"
-  ordered="$(printf '%s\n%s\n%s\n%s\n' "$mictronics" "$rest" "$cz_second_last" "$uk_last" | grep -v '^$' || true)"
+  uk_search="$(echo "$all_runners" | grep '^runner-uk-caa-registry-search$' || true)"
+  uk_details="$(echo "$all_runners" | grep '^runner-uk-caa-registry-details$' || true)"
+  rest="$(echo "$all_runners" | grep -v '^runner-mictronics$' | grep -v '^runner-cz-caa-registry$' | grep -v '^runner-uk-caa-registry-' | sort || true)"
+  ordered="$(printf '%s\n%s\n%s\n%s\n%s\n' "$mictronics" "$rest" "$cz_second_last" "$uk_search" "$uk_details" | grep -v '^$' || true)"
 
   run_bulk_load_detached "$role_dir" "$ordered"
 }
@@ -2152,6 +2154,53 @@ offer_ofelia_and_bulk_load() {
 # ---------------------------------------------------------------------------
 # Upgrade mode
 # ---------------------------------------------------------------------------
+
+# Stops uk-caa-registry containers left running from another version, which
+# would compete for CAA's rate limit. `up -d` doesn't touch containers
+# Ofelia created. Best-effort.
+stop_old_uk_caa_runs() {
+  local id image
+  while read -r id image; do
+    case "$image" in
+      ghcr.io/brentio/skyfollower-runner-uk-caa-registry:"${IMAGE_VERSION}") ;;
+      ghcr.io/brentio/skyfollower-runner-uk-caa-registry:*)
+        echo "Stopping an old uk-caa-registry run (${image})..."
+        docker stop "$id" >/dev/null 2>&1 || echo "  ⚠ Could not stop container ${id}." >&2
+        ;;
+    esac
+  done < <(docker ps --format '{{.ID}} {{.Image}}' 2>/dev/null || true)
+}
+
+# Starts the first uk-caa-registry search, detached, if none has completed a
+# prefix yet, so the details queue doesn't wait for the weekly schedule.
+# Never fails the upgrade.
+prime_uk_caa_queue() {
+  local role_dir="$1" password searched="" waited=0
+  local rerun="(cd ${role_dir} && docker compose run -d --rm runner-uk-caa-registry-search)"
+  password="$(existing_env_value "${role_dir}/.env" REDIS_PASSWORD)"
+  while [ "$waited" -lt 60 ]; do
+    searched="$(cd "$role_dir" && docker compose exec -T -e "REDISCLI_AUTH=${password}" redis \
+      redis-cli EXISTS uk_caa:search:progress 2>/dev/null | tr -d '\r' || true)"
+    case "$searched" in 0|1) break ;; esac
+    sleep 2
+    waited=$((waited + 2))
+  done
+  case "$searched" in
+    1) return 0 ;;
+    0) ;;
+    *)
+      echo "  ⚠ Could not check the UK CAA queue. Once Redis is up, start it with:" >&2
+      echo "    ${rerun}" >&2
+      return 0
+      ;;
+  esac
+  if (cd "$role_dir" && docker compose run -d --rm runner-uk-caa-registry-search >/dev/null); then
+    echo "Started the first UK CAA search in the background; it can take several hours."
+  else
+    echo "  ⚠ Could not start the first UK CAA search. Start it with:" >&2
+    echo "    ${rerun}" >&2
+  fi
+}
 
 # Removes superseded ghcr.io/brentio/skyfollower-* images once every role has
 # upgraded. Matched by repository name, never `docker image prune -a`, so
@@ -2240,6 +2289,9 @@ do_upgrade() {
       # runner containers from the pulled images on its own schedule.
       cd "$role_dir"
       SKYFOLLOWER_VERSION="$IMAGE_VERSION" docker compose --parallel 4 --profile runners pull
+      if [ "$(basename "$role_dir")" = "core" ]; then
+        stop_old_uk_caa_runs
+      fi
       SKYFOLLOWER_VERSION="$IMAGE_VERSION" docker compose up -d
     )
     rc=$?
@@ -2254,6 +2306,9 @@ do_upgrade() {
       awk -v v="$IMAGE_VERSION" '/^SKYFOLLOWER_VERSION=/ { print "SKYFOLLOWER_VERSION=" v; next } { print }' "$env_file" > "$tmp"
       (umask 077; mv "$tmp" "$env_file")
       summary="${summary}  ✓ ${role_dir}: ${IMAGE_VERSION}"$'\n'
+      if [ "$(basename "$role_dir")" = "core" ]; then
+        prime_uk_caa_queue "$role_dir" || true
+      fi
     else
       failed=$((failed + 1))
       summary="${summary}  ✗ ${role_dir}: FAILED -- .env still says ${old_version:-(unset)}; re-run install.sh --upgrade"$'\n'

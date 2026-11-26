@@ -19,6 +19,10 @@ TTL (`ENRICHMENT_TTL_SECONDS` in `shared/timing.py`). `vrs-standing-data`
 is the one exception: its source updates daily rather than weekly, so it
 writes with a fixed 3-day TTL (`ROUTE_TTL_SECONDS`). Neither is
 operator-configurable — see [Timing and cadences](https://github.com/BrentIO/SkyFollower/blob/main/docs/architecture/timing.md).
+`uk-caa-registry` is also an exception: it runs as a weekly search job and a
+daily details job, keeps its aircraft records for 70 days, and publishes MQTT
+statistics per job — see its
+[README](https://github.com/BrentIO/SkyFollower/blob/main/runners/uk-caa-registry/README.md).
 
 Each runner publishes a single MQTT message on completion with `records_imported`,
 `last_run_at`, and `last_run_status`.

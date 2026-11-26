@@ -9,6 +9,7 @@ name: skyfollower-core
 x-ofelia-runner-defaults:
   network: &ofelia-runner-network "${COMPOSE_PROJECT_NAME:-skyfollower-core}_default"
   environment: &ofelia-runner-environment '["LOG_LEVEL=${LOG_LEVEL:-info}", "REDIS_HOST=${REDIS_HOST}", "REDIS_PORT=${REDIS_PORT:-6379}", "REDIS_PASSWORD=${REDIS_PASSWORD}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}"]'
+  uk-caa-environment: &ofelia-uk-caa-environment '["LOG_LEVEL=${LOG_LEVEL:-info}", "REDIS_HOST=${REDIS_HOST}", "REDIS_PORT=${REDIS_PORT:-6379}", "REDIS_PASSWORD=${REDIS_PASSWORD}", "MQTT_HOST=${MQTT_HOST}", "MQTT_PORT=${MQTT_PORT:-1883}", "MQTT_USERNAME=${MQTT_USERNAME}", "MQTT_PASSWORD=${MQTT_PASSWORD}", "REQUEST_INTERVAL_SECONDS=${UK_CAA_REQUEST_INTERVAL_SECONDS:-1}", "DETAILS_LIMIT=${UK_CAA_DETAILS_LIMIT:-1000}"]'
   delete: &ofelia-runner-delete "true"
 
 # Native Linux Docker Engine (what this project deploys to) doesn't resolve
@@ -184,13 +185,21 @@ services:
       ofelia.job-run.runner-ourairports.environment: *ofelia-runner-environment
       ofelia.job-run.runner-ourairports.delete: *ofelia-runner-delete
 
-      # uk-caa-registry makes 676 prefix search calls + per-aircraft detail fetches and takes several hours.
-      # Schedule it as the last runner of the day.
-      ofelia.job-run.runner-uk-caa-registry.schedule: "0 10 6 * * 1"
-      ofelia.job-run.runner-uk-caa-registry.image: "ghcr.io/brentio/skyfollower-runner-uk-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
-      ofelia.job-run.runner-uk-caa-registry.network: *ofelia-runner-network
-      ofelia.job-run.runner-uk-caa-registry.environment: *ofelia-runner-environment
-      ofelia.job-run.runner-uk-caa-registry.delete: *ofelia-runner-delete
+      # The two uk-caa-registry jobs share CAA's rate limit. The schedules leave
+      # room for each job's maximum run time (shared/timing.py).
+      ofelia.job-run.runner-uk-caa-registry-search.schedule: "0 10 6 * * 1"
+      ofelia.job-run.runner-uk-caa-registry-search.image: "ghcr.io/brentio/skyfollower-runner-uk-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
+      ofelia.job-run.runner-uk-caa-registry-search.command: "python uk-caa-registry/main.py search"
+      ofelia.job-run.runner-uk-caa-registry-search.network: *ofelia-runner-network
+      ofelia.job-run.runner-uk-caa-registry-search.environment: *ofelia-uk-caa-environment
+      ofelia.job-run.runner-uk-caa-registry-search.delete: *ofelia-runner-delete
+
+      ofelia.job-run.runner-uk-caa-registry-details.schedule: "0 10 19 * * *"
+      ofelia.job-run.runner-uk-caa-registry-details.image: "ghcr.io/brentio/skyfollower-runner-uk-caa-registry:${SKYFOLLOWER_VERSION:-latest}"
+      ofelia.job-run.runner-uk-caa-registry-details.command: "python uk-caa-registry/main.py details"
+      ofelia.job-run.runner-uk-caa-registry-details.network: *ofelia-runner-network
+      ofelia.job-run.runner-uk-caa-registry-details.environment: *ofelia-uk-caa-environment
+      ofelia.job-run.runner-uk-caa-registry-details.delete: *ofelia-runner-delete
 
       ofelia.job-run.runner-mictronics.schedule: "0 10 5 * * 2"
       ofelia.job-run.runner-mictronics.image: "ghcr.io/brentio/skyfollower-runner-mictronics:${SKYFOLLOWER_VERSION:-latest}"
@@ -670,12 +679,27 @@ services:
     profiles: ["runners"]
     environment: *runner-environment
 
-  runner-uk-caa-registry:
+  runner-uk-caa-registry-search:
     image: ghcr.io/brentio/skyfollower-runner-uk-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    command: ["python", "uk-caa-registry/main.py", "search"]
     extra_hosts: *extra-hosts
-    container_name: skyfollower-runner-uk-caa-registry
+    container_name: skyfollower-runner-uk-caa-registry-search
     profiles: ["runners"]
-    environment: *runner-environment
+    environment:
+      <<: *runner-environment
+      REQUEST_INTERVAL_SECONDS: ${UK_CAA_REQUEST_INTERVAL_SECONDS:-1}
+      DETAILS_LIMIT: ${UK_CAA_DETAILS_LIMIT:-1000}
+
+  runner-uk-caa-registry-details:
+    image: ghcr.io/brentio/skyfollower-runner-uk-caa-registry:${SKYFOLLOWER_VERSION:-latest}
+    command: ["python", "uk-caa-registry/main.py", "details"]
+    extra_hosts: *extra-hosts
+    container_name: skyfollower-runner-uk-caa-registry-details
+    profiles: ["runners"]
+    environment:
+      <<: *runner-environment
+      REQUEST_INTERVAL_SECONDS: ${UK_CAA_REQUEST_INTERVAL_SECONDS:-1}
+      DETAILS_LIMIT: ${UK_CAA_DETAILS_LIMIT:-1000}
 
   runner-is-samgongustofa-registry:
     image: ghcr.io/brentio/skyfollower-runner-is-samgongustofa-registry:${SKYFOLLOWER_VERSION:-latest}
