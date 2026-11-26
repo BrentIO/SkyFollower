@@ -24,7 +24,6 @@ import sys
 import threading
 import time
 import uuid
-from collections import deque
 from datetime import datetime, timezone
 from itertools import product
 from typing import Optional
@@ -79,10 +78,6 @@ _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 DEFAULT_REQUEST_INTERVAL_SECONDS = 1.0
 DEFAULT_DETAILS_LIMIT = 1000
 _QUEUE_BATCH_SIZE = 100
-# At most this many request attempts, refused ones and retries included, in
-# any window of this many seconds.
-_REQUEST_WINDOW_LIMIT = 25
-_REQUEST_WINDOW_SECONDS = 65
 _REFUSAL_STATUSES = (403, 429)
 # The first wait runs a little past a minute so a per-minute limit has reset.
 _REFUSAL_WAITS = (65, 120, 300, 600, 900)
@@ -445,14 +440,6 @@ class _Client:
         self._deadline = deadline
         self._lock = lock
         self._accepted = 0
-        self._sent: deque[float] = deque(maxlen=_REQUEST_WINDOW_LIMIT)
-
-    def _wait_for_slot(self) -> None:
-        """Wait until one more attempt keeps within the request window."""
-        if len(self._sent) == self._sent.maxlen:
-            remaining = self._sent[0] + _REQUEST_WINDOW_SECONDS - time.monotonic()
-            if remaining > 0:
-                self._sleep(remaining)
 
     def _sleep(self, seconds: float) -> None:
         if time.monotonic() + seconds >= self._deadline:
@@ -467,8 +454,6 @@ class _Client:
         waited = 0
         while True:
             self._sleep(self._interval)
-            self._wait_for_slot()
-            self._sent.append(time.monotonic())
             try:
                 resp = getattr(self._session, method)(url, timeout=30, **kwargs)
                 resp.raise_for_status()

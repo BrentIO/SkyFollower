@@ -68,7 +68,6 @@ New queue records are all due at once. At the default 1,000 a day, a register of
 G-INFO refuses clients that send requests too quickly with HTTP 403. Its limit is not published. In live runs, a block often followed 25 accepted requests, and sometimes came after only one.
 
 - **Pacing:** the runner waits before every request, 1 second by default.
-- **Request window:** the runner also makes no more than 25 attempts in any 65 seconds, counting retries and refused requests (`_REQUEST_WINDOW_LIMIT` and `_REQUEST_WINDOW_SECONDS` in `main.py`). That caps a job at about 23 requests a minute. Whether CAA's limit really works this way is not known, so the refusal handling below still applies.
 - **Refusals:** on HTTP 403 or 429 the runner waits, then retries the same request. The waits are 65, 120, 300, 600 and 900 seconds. A longer `Retry-After` value is honoured, up to one hour. Each refusal is logged with the number of requests accepted since the previous one, the response headers useful for diagnosis, and the start of the response body.
 - **Giving up:** if a request is still refused after the last wait, the run stops. The aircraft being fetched stays due.
 - **Other errors:** server errors, connection errors and timeouts are retried after 2, 5 and 15 seconds.

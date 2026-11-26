@@ -624,49 +624,6 @@ class TestClient:
         session.get.assert_not_called()
 
 
-class TestRequestWindow:
-    def _send_times(self, count, interval, responses=None):
-        clock = [1000.0]
-        sent = []
-        answers = iter(responses or [])
-
-        def _get(url, **kwargs):
-            sent.append(clock[0])
-            return next(answers, _ok([]))
-
-        session = MagicMock()
-        session.get.side_effect = _get
-
-        def _sleep(seconds):
-            clock[0] += seconds
-
-        with patch.object(_mod.time, "monotonic", side_effect=lambda: clock[0]), \
-                patch("time.sleep", side_effect=_sleep):
-            client = _mod._Client(session, interval)
-            for _ in range(count):
-                client.request("get", "u")
-        return sent
-
-    def test_never_more_than_25_attempts_in_65_seconds(self):
-        sent = self._send_times(80, 1.0)
-        assert all(later - earlier >= 65 for earlier, later in zip(sent, sent[25:]))
-
-    def test_first_25_are_only_paced_and_the_26th_waits_for_the_window(self):
-        sent = self._send_times(27, 1.0)
-        assert sent[24] - sent[0] == 24
-        assert sent[25] - sent[0] == 65
-        assert sent[26] - sent[1] == 65
-
-    def test_slow_requests_are_not_delayed_further(self):
-        sent = self._send_times(30, 3.0)
-        assert all(later - earlier == 3 for earlier, later in zip(sent, sent[1:]))
-
-    def test_refused_attempts_count_toward_the_window(self):
-        sent = self._send_times(40, 0, responses=[_http_error(403)])
-        assert len(sent) == 41
-        assert all(later - earlier >= 65 for earlier, later in zip(sent, sent[25:]))
-
-
 # ---------------------------------------------------------------------------
 # Real Redis Stack
 # ---------------------------------------------------------------------------
