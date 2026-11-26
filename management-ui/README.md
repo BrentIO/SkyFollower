@@ -23,7 +23,7 @@ uvicorn over HTTPS on the container's `443`.
 `MANAGEMENT_UI_HTTPS_PORT` (default `18443`, set in `.env` by
 `scripts/install.sh`) — see [TLS](#tls) below.
 
-Both base images (`node:26-slim` for the frontend stage, `python:3.14-slim`
+Both base images (`node:26-slim` for the frontend stage, a `python` slim image
 for the final stage) are pinned to an explicit `@sha256:<digest>` so
 Dependabot surfaces a rebuild PR when either tag is re-pushed upstream.
 Resolve a current digest with `docker buildx imagetools inspect <image>:<tag>`;

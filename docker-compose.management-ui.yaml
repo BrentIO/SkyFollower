@@ -56,7 +56,7 @@ services:
       # install only ever needs the one ./data/management-ui tree.
       - ./data/management-ui/tls:/etc/nginx/tls:ro
     # No curl/wget in the image (only nginx is apt-get installed on top of
-    # python:3.14-slim) -- use Python's built-in urllib instead of adding a
+    # the python slim base) -- use Python's built-in urllib instead of adding a
     # package just for this. Hits nginx's / (a real static file, index.html
     # via try_files fallback) to confirm nginx is actually serving traffic.
     # Certificate verification is deliberately disabled -- the cert is
