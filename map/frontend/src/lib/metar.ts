@@ -11,6 +11,8 @@ export interface MetarCloud {
 export interface MetarStation {
   station_id: string;
   name?: string;
+  /** The station file's display priority; lower is more important. */
+  station_priority?: number;
   lat: number;
   lon: number;
   /** Epoch seconds. */
@@ -77,15 +79,21 @@ export function worldPixel(lat: number, lon: number, zoom: number): [number, num
   return [((lon + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size];
 }
 
+function byImportance(a: MetarStation, b: MetarStation): number {
+  const rank = (s: MetarStation) => s.station_priority ?? Number.MAX_SAFE_INTEGER;
+  return rank(a) - rank(b) || a.station_id.localeCompare(b.station_id);
+}
+
 /** A station is dropped only if a kept station of the same colour is within
- * METAR_MIN_SPACING_PX of it. */
+ * METAR_MIN_SPACING_PX of it. More important stations are placed first, so
+ * the one kept is never less important than the one it displaces. */
 export function thinStations(stations: readonly MetarStation[], zoom: number): MetarStation[] {
   if (zoom >= METAR_FULL_DETAIL_ZOOM) return [...stations];
 
   const spacing = METAR_MIN_SPACING_PX;
   const grid = new Map<string, [number, number][]>();
   const kept: MetarStation[] = [];
-  const ordered = [...stations].sort((a, b) => a.station_id.localeCompare(b.station_id));
+  const ordered = [...stations].sort(byImportance);
 
   for (const station of ordered) {
     const color = flightCategoryStyle(station.flight_category).color;
@@ -182,13 +190,13 @@ export function buildMetarPopupContent(s: MetarStation, nowMs: number): HTMLElem
   const code = element("span", `${PILL} inline-block px-3 py-1 text-xl leading-tight font-bold`, s.station_id);
   code.style.backgroundColor = style.color;
   code.style.color = style.textColor;
+  code.title = style.label;
   header.append(code);
   if (s.name) header.append(element("div", "mt-1 text-sm", s.name));
   root.append(header);
 
   const list = element("dl", DIVIDER);
-  const rows: [string, string][] = [["Flight Category", style.label], ...metarPopupRows(s, nowMs)];
-  rows.forEach(([label, value], index) => {
+  metarPopupRows(s, nowMs).forEach(([label, value], index) => {
     const row = element("div", `flex items-baseline justify-between gap-3 px-4 py-1.5 ${index ? DIVIDER : ""}`);
     row.append(
       element("dt", "shrink-0 text-xs text-slate-500 dark:text-slate-400", label),

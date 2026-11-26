@@ -46,9 +46,10 @@ def _parse(*rows):
 
 
 _STATIONS = json.dumps([
-    {"icaoId": "KMCI", "site": "Kansas City Intl", "state": "MO", "country": "US"},
+    {"icaoId": "KMCI", "site": "Kansas City Intl", "state": "MO", "country": "US", "priority": 1},
     {"icaoId": None, "site": "Buoy"},
-    {"icaoId": "EGLL", "site": "Heathrow", "state": "", "country": "GB"},
+    {"icaoId": "EGLL", "site": "Heathrow", "state": "", "country": "GB", "priority": 0},
+    {"icaoId": "KNOP", "site": "No Priority", "priority": None},
 ]).encode()
 
 
@@ -145,9 +146,11 @@ def test_download_sends_user_agent_and_decompresses():
     assert urlopen.call_args.kwargs["timeout"] == 30
 
 
-def test_station_names():
-    assert metar.parse_station_names(_STATIONS) == {
-        "KMCI": "Kansas City Intl, MO, US", "EGLL": "Heathrow, GB",
+def test_station_details_keep_priority_zero_and_omit_a_missing_one():
+    assert metar.parse_stations(_STATIONS) == {
+        "KMCI": {"name": "Kansas City Intl, MO, US", "station_priority": 1},
+        "EGLL": {"name": "Heathrow, GB", "station_priority": 0},
+        "KNOP": {"name": "No Priority"},
     }
 
 
@@ -158,6 +161,7 @@ class TestMetarStore:
         body = store.get()
         assert body["max_age_seconds"] == 5400
         assert body["stations"][0]["name"] == "Kansas City Intl, MO, US"
+        assert body["stations"][0]["station_priority"] == 1
         assert store._redis.expiry[metar.METAR_KEY] == 5400
         assert store.consecutive_failures == 0 and store.last_success_at
 
@@ -198,7 +202,7 @@ class TestMetarStore:
         store, calls = _store(_answers())
         store.poll()
         store.poll()
-        store._names_fetched_at -= 86401
+        store._stations_fetched_at -= 86401
         store.poll()
         assert calls.count(metar.STATIONS_FILE) == 2
         assert calls.count(metar.REPORTS_FILE) == 3

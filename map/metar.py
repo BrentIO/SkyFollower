@@ -4,8 +4,8 @@ reference point, from the Aviation Weather Center's cache files.
 
 The reports file is downloaded on a fixed cadence, filtered to
 METAR_RADIUS_NM and kept in the map's own Redis. A failed or unreadable
-download leaves the last good data in place. Station names come from a
-second cache file and are optional.
+download leaves the last good data in place. Station names and display
+priorities come from a second cache file and are optional.
 
 Disabled entirely when no center is configured.
 """
@@ -148,18 +148,26 @@ def parse_reports(data: bytes, latitude: float, longitude: float) -> list[dict]:
     return sorted(reports.values(), key=lambda r: r["station_id"])
 
 
-def parse_station_names(data: bytes) -> dict[str, str]:
-    """ICAO identifier -> display name."""
-    names: dict[str, str] = {}
+def parse_stations(data: bytes) -> dict[str, dict]:
+    """ICAO identifier -> the `name` and `station_priority` the file carries.
+    A lower priority number is a more important station."""
+    stations: dict[str, dict] = {}
     for station in json.loads(data):
-        icao, site = station.get("icaoId"), (station.get("site") or "").strip()
-        if not icao or not site:
+        icao = station.get("icaoId")
+        if not icao:
             continue
-        parts = [site, station.get("state"), station.get("country")]
-        names[icao] = ", ".join(p.strip() for p in parts if p and p.strip())
-    if not names:
-        raise ValueError("station file has no named stations")
-    return names
+        details: dict = {}
+        site = (station.get("site") or "").strip()
+        if site:
+            parts = [site, station.get("state"), station.get("country")]
+            details["name"] = ", ".join(p.strip() for p in parts if p and p.strip())
+        if isinstance(station.get("priority"), int):
+            details["station_priority"] = station["priority"]
+        if details:
+            stations[icao] = details
+    if not stations:
+        raise ValueError("station file has no usable stations")
+    return stations
 
 
 class MetarStore:
@@ -176,8 +184,8 @@ class MetarStore:
         self._longitude = center_longitude
         self._base_url = base_url.rstrip("/")
         self._fetch = fetch
-        self._names: dict[str, str] = {}
-        self._names_fetched_at: Optional[float] = None
+        self._stations: dict[str, dict] = {}
+        self._stations_fetched_at: Optional[float] = None
         self.last_success_at: Optional[float] = None
         self.consecutive_failures = 0
 
@@ -204,23 +212,23 @@ class MetarStore:
             self.last_success_at = time.time()
             self.consecutive_failures = 0
             logger.info("METAR download: %d stations within %.0f nm.", len(reports), METAR_RADIUS_NM)
-        self._refresh_station_names()
+        self._refresh_station_details()
 
-    def _refresh_station_names(self) -> None:
+    def _refresh_station_details(self) -> None:
         now = time.monotonic()
         if (
-            self._names_fetched_at is not None
-            and now - self._names_fetched_at < MAP_METAR_STATION_REFRESH_INTERVAL_SECONDS
+            self._stations_fetched_at is not None
+            and now - self._stations_fetched_at < MAP_METAR_STATION_REFRESH_INTERVAL_SECONDS
         ):
             return
         try:
-            self._names = parse_station_names(self._fetch(f"{self._base_url}/{STATIONS_FILE}"))
-            self._names_fetched_at = now
+            self._stations = parse_stations(self._fetch(f"{self._base_url}/{STATIONS_FILE}"))
+            self._stations_fetched_at = now
         except Exception as exc:
-            logger.warning("METAR station name download failed: %s", exc)
+            logger.warning("METAR station file download failed: %s", exc)
 
     def get(self) -> dict:
-        """Reports no older than the maximum age, with station names where
+        """Reports no older than the maximum age, with station details where
         known."""
         stations: list[dict] = []
         raw = self._redis.get(METAR_KEY) if self.enabled else None
@@ -229,6 +237,5 @@ class MetarStore:
             for report in json.loads(raw):
                 if report["observed_at"] < oldest:
                     continue
-                name = self._names.get(report["station_id"])
-                stations.append({**report, "name": name} if name else report)
+                stations.append({**report, **self._stations.get(report["station_id"], {})})
         return {"max_age_seconds": MAP_METAR_REPORT_MAX_AGE_SECONDS, "stations": stations}

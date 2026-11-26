@@ -87,6 +87,7 @@ function scattered(count: number): MetarStation[] {
       lat: 35 + random() * 8,
       lon: -100 + random() * 10,
       flight_category: categories[Math.floor(random() * categories.length)],
+      station_priority: i % 11 === 10 ? undefined : i % 10,
     }),
   );
 }
@@ -110,6 +111,8 @@ describe("thinStations", () => {
         kept.some(
           (k) =>
             flightCategoryStyle(k.flight_category).color === color &&
+            // ...and one at least as important.
+            (k.station_priority ?? Infinity) <= (hidden.station_priority ?? Infinity) &&
             pixelDistance(k, hidden, zoom) < METAR_MIN_SPACING_PX,
         ),
       ).toBe(true);
@@ -134,6 +137,20 @@ describe("thinStations", () => {
       station({ station_id: `S${i}`, flight_category }),
     );
     expect(thinStations(together, 3)).toHaveLength(5);
+  });
+
+  it.each([
+    ["the lower priority number", 6, 1, "ZZZ"],
+    ["priority 0 over any other", 1, 0, "ZZZ"],
+    ["a priority over none", undefined, 9, "ZZZ"],
+    ["the first station ID on a tie", 3, 3, "AAA"],
+    ["the first station ID with neither", undefined, undefined, "AAA"],
+  ])("keeps %s", (_name, first, second, expected) => {
+    const pair = [
+      station({ station_id: "AAA", station_priority: first }),
+      station({ station_id: "ZZZ", station_priority: second }),
+    ];
+    expect(thinStations(pair, 5).map((s) => s.station_id)).toEqual([expected]);
   });
 
   it("chooses the same stations whatever order they arrive in", () => {
@@ -191,6 +208,11 @@ describe("metarPopupRows", () => {
 
   it("never shows a negative age", () => {
     expect(formatReportTime(NOW / 1000 + 30, NOW)).toBe("0 min ago (18:00 UTC)");
+  });
+
+  it("names the flight category on hover over the station code, not in a row", () => {
+    expect(metarSource).toContain("code.title = style.label;");
+    expect(metarSource).not.toContain('"Flight Category"');
   });
 
   it("builds popup content without parsing outside text as HTML", () => {

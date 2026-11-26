@@ -4161,13 +4161,14 @@ records:
     description: >
       One current weather report per station within 250 nm of the map
       service's center, from the Aviation Weather Center's cache files
-      (metars.cache.csv.gz; names from stations.cache.json.gz). Served by
-      GET /api/metar with the station name added. Omitted fields are absent.
+      (metars.cache.csv.gz; names and priorities from stations.cache.json.gz).
+      Served by GET /api/metar with those two added. Omitted fields are absent.
     storage: Redis (map service's own instance)
     redis_key: "map:metar:reports"
     fields:
       station_id:     { type: string, description: "ICAO station identifier (CSV station_id)" }
       name:           { type: string, description: "site, state, country from the station file (matched on icaoId); added when served, not stored" }
+      station_priority: { type: integer, description: "Station file priority (display order, lower is more important); added when served, not stored" }
       lat:            { type: float, description: "CSV latitude" }
       lon:            { type: float, description: "CSV longitude" }
       observed_at:    { type: float, description: "CSV observation_time as epoch seconds" }

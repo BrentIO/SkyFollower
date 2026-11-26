@@ -635,11 +635,11 @@ send `User-Agent: P5Software SkyFollower`.
 | File | Downloaded | Used for |
 |---|---|---|
 | `https://aviationweather.gov/data/cache/metars.cache.csv.gz` | At startup, then every 15 minutes | Reports |
-| `https://aviationweather.gov/data/cache/stations.cache.json.gz` | At startup, then daily | Station names |
+| `https://aviationweather.gov/data/cache/stations.cache.json.gz` | At startup, then daily | Station names and display priorities |
 
 - Reports within range are stored in this service's Redis as `map:metar:reports`, with a 90-minute TTL.
 - A failed or unreadable download keeps the last good data and is retried at the next poll.
-- Station names are optional: without them the popup shows only the station code.
+- The station file is optional: without it the popup shows only the station code, and thinning falls back to station ID order.
 - The reports file repeats its `sky_cover` and `cloud_base_ft_agl` columns, so it is read by column position.
 - It reports a variable wind as direction `0`, so `VRB` is read from the raw report.
 - An `OVX` cloud layer's base is the vertical visibility in feet. The file's `vert_vis_ft` column is in hundreds of feet and isn't used.
@@ -649,7 +649,7 @@ send `User-Agent: P5Software SkyFollower`.
 Returns `max_age_seconds` and a `stations` array. Reports observed more than
 90 minutes ago are left out. Each station has `station_id`, `lat`, `lon`,
 `observed_at` (epoch seconds) and `raw`, plus whichever of these it
-reports: `name`, `flight_category` (`VFR`, `MVFR`, `IFR` or `LIFR`),
+reports: `name`, `station_priority`, `flight_category` (`VFR`, `MVFR`, `IFR` or `LIFR`),
 `wind_dir_deg`, `wind_variable`, `wind_speed_kt`, `wind_gust_kt`,
 `visibility_sm`, `weather`, `clouds` (`cover`, `base_ft`), `sky_clear`,
 `temperature_c`, `dewpoint_c` and `altimeter_inhg`. The browser polls it every
@@ -668,7 +668,8 @@ so old reports disappear even while this service is unreachable.
 
 - Dots are drawn below trails and aircraft, with worse conditions on top.
 - From zoom 8 in, every station is shown. Further out, a dot is hidden only if a visible dot of the same colour is within 28 px (`src/lib/metar.ts`).
-- Clicking or tapping a dot opens its decoded report and raw text, in knots, statute miles, feet, °C and inHg. An aircraft under the pointer takes priority, and opening a report leaves any aircraft selection alone.
+- Which of those stays follows the station file's `priority` (its display order): `0` ranks highest, a station without one ranks last, and ties go to the first station ID.
+- Clicking or tapping a dot opens its decoded report and raw text, in knots, statute miles, feet, °C and inHg. The station code sits in a box of the category colour; hovering over it names the category. An aircraft under the pointer takes priority, and opening a report leaves any aircraft selection alone.
 - **Settings → Weather → METARs** turns the dots on and off. It is on by default and saved in the browser.
 
 ### Home Assistant
@@ -681,7 +682,7 @@ with discovery on the SkyFollower Map device:
 | `SkyFollower/map/statistic/metar_last_download_at` | UTC ISO-8601 time of the last successful report download; not published until one succeeds |
 | `SkyFollower/map/statistic/metar_consecutive_failures` | Report downloads failed in a row |
 
-Station name failures aren't counted.
+Station file failures aren't counted.
 
 ## Fault Tolerance
 
