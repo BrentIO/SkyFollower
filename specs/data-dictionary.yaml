@@ -4157,6 +4157,35 @@ records:
             file: airports.csv
             description: "Computed algorithmically from name + municipality; overridable via phonic_overrides.json"
 
+  metar_report:
+    description: >
+      One current weather report per station within 250 nm of the map
+      service's center, from the Aviation Weather Center's cache files
+      (metars.cache.csv.gz; names and priorities from stations.cache.json.gz).
+      Served by GET /api/metar with those two added. Omitted fields are absent.
+    storage: Redis (map service's own instance)
+    redis_key: "map:metar:reports"
+    fields:
+      station_id:     { type: string, description: "ICAO station identifier (CSV station_id)" }
+      name:           { type: string, description: "site, state, country from the station file (matched on icaoId); added when served, not stored" }
+      station_priority: { type: integer, description: "Station file priority (display order, lower is more important); added when served, not stored" }
+      lat:            { type: float, description: "CSV latitude" }
+      lon:            { type: float, description: "CSV longitude" }
+      observed_at:    { type: float, description: "CSV observation_time as epoch seconds" }
+      flight_category: { type: string, description: "VFR, MVFR, IFR or LIFR; absent for any other value" }
+      raw:            { type: string, description: "CSV raw_text" }
+      wind_variable:  { type: boolean, description: "True when the raw report's wind is VRB" }
+      wind_dir_deg:   { type: integer, description: "CSV wind_dir_degrees; absent when variable" }
+      wind_speed_kt:  { type: integer, description: "CSV wind_speed_kt" }
+      wind_gust_kt:   { type: integer, description: "CSV wind_gust_kt" }
+      visibility_sm:  { type: string, description: "CSV visibility_statute_mi, e.g. 10+" }
+      weather:        { type: string, description: "CSV wx_string" }
+      clouds:         { type: list, description: "cover and base_ft from each repeated sky_cover/cloud_base_ft_agl column pair; OVX base is the vertical visibility" }
+      sky_clear:      { type: string, description: "CLR, SKC or CAVOK when the raw report carries it before the remarks" }
+      temperature_c:  { type: float, description: "CSV temp_c" }
+      dewpoint_c:     { type: float, description: "CSV dewpoint_c" }
+      altimeter_inhg: { type: float, description: "CSV altim_in_hg" }
+
   archive_parquet_index:
     description: >
       Per-flight Parquet index row, written by archive-processor alongside

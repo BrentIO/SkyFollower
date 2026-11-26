@@ -117,13 +117,14 @@ describe("Range section -- two independent toggles under one heading", () => {
   });
 });
 
-describe("Radar section -- opacity slider only (#2012)", () => {
-  it("has a Radar section heading", () => {
-    expect(settingsPanelSource).toContain(">Radar<");
+describe("Weather section -- radar opacity slider", () => {
+  it("has a Weather section heading in place of Radar", () => {
+    expect(settingsPanelSource).toContain(">Weather<");
+    expect(settingsPanelSource).not.toContain(">Radar<");
   });
 
   it("the opacity slider is a 0-1 range input wired to onRadarOpacityChange, matching the popover it replaced", () => {
-    const sectionIndex = settingsPanelSource.indexOf(">Radar<");
+    const sectionIndex = settingsPanelSource.indexOf(">Weather<");
     const sliderIndex = settingsPanelSource.indexOf('type="range"', sectionIndex);
     expect(sliderIndex).toBeGreaterThan(-1);
     const callSite = settingsPanelSource.slice(sliderIndex - 50, sliderIndex + 300);
@@ -134,25 +135,32 @@ describe("Radar section -- opacity slider only (#2012)", () => {
   });
 
   it("shows the opacity as a rounded percentage, right-aligned and muted, on the label line", () => {
-    const sectionIndex = settingsPanelSource.indexOf(">Radar<");
+    const sectionIndex = settingsPanelSource.indexOf(">Weather<");
     const sliderIndex = settingsPanelSource.indexOf('type="range"', sectionIndex);
     const row = settingsPanelSource.slice(sectionIndex, sliderIndex);
     expect(row).toContain("justify-between");
-    expect(row).toContain("<span>Opacity</span>");
+    expect(row).toContain("<span>Radar Opacity</span>");
     expect(row).toContain("text-slate-500 dark:text-slate-400");
     expect(row).toContain("Math.round(radarOpacity * 100)");
   });
 
-  it("does not render an on/off switch or Play/Pause button -- those stay in ControlsPanel's own Radar popover", () => {
-    const sectionIndex = settingsPanelSource.indexOf(">Radar<");
-    const callSite = settingsPanelSource.slice(sectionIndex, sectionIndex + 500);
-    expect(callSite).not.toContain('role="switch"');
-    expect(callSite).not.toContain("PLAY_ICON");
-    expect(callSite).not.toContain("PAUSE_ICON");
+  it("has no radar on/off switch or Play/Pause button -- radar stays on its own icon button", () => {
+    expect(settingsPanelSource).not.toContain('feature="radar"');
+    expect(settingsPanelSource).not.toContain("PLAY_ICON");
+    expect(settingsPanelSource).not.toContain("PAUSE_ICON");
+  });
+
+  it("toggles METARs, disabled without a center", () => {
+    const rowIndex = settingsPanelSource.indexOf(">METARs<");
+    expect(rowIndex).toBeGreaterThan(settingsPanelSource.indexOf(">Weather<"));
+    const callSite = settingsPanelSource.slice(rowIndex, rowIndex + 300);
+    expect(callSite).toContain("checked={metarOn}");
+    expect(callSite).toContain("onChange={onToggleMetar}");
+    expect(callSite).toContain("disabled={metarDisabled}");
   });
 });
 
-describe("ToggleSwitch -- shared internal component for the three switches above", () => {
+describe("ToggleSwitch -- shared internal component for the switches above", () => {
   it("uses role=switch/aria-checked and the sliding-thumb translate-x idiom, same as ControlsPanel's pre-existing Radar switch", () => {
     expect(settingsPanelSource).toContain('role="switch"');
     expect(settingsPanelSource).toContain("aria-checked={checked}");
@@ -160,8 +168,8 @@ describe("ToggleSwitch -- shared internal component for the three switches above
     expect(settingsPanelSource).toContain('checked ? "translate-x-4" : "translate-x-0.5"');
   });
 
-  it("is used exactly three times (Map Labels, Reception Outline, Distance Rings)", () => {
+  it("is used exactly four times (Map Labels, Reception Outline, Distance Rings, METARs)", () => {
     const matches = settingsPanelSource.match(/<ToggleSwitch/g) ?? [];
-    expect(matches.length).toBe(3);
+    expect(matches.length).toBe(4);
   });
 });

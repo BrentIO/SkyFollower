@@ -10,6 +10,9 @@ import { loadPersistedControls, savePersistedControls } from "../lib/controlsPer
 import { useMapFlights } from "../hooks/useMapFlights";
 import { useProcessorRoster } from "../hooks/useProcessorRoster";
 import { useRangeOutline } from "../hooks/useRangeOutline";
+import { useMetar } from "../hooks/useMetar";
+import { METAR_DOT_RADIUS_PX, metarFeatureCollection, thinStations } from "../lib/metar";
+import { nearestMetarStation } from "../lib/metarHitTest";
 import {
   aircraftFeatureCollection,
   buildAircraftSourceDiff,
@@ -28,6 +31,8 @@ import {
   AIRCRAFT_SOURCE_ID,
   CENTER_POINT_CIRCLE_LAYER_ID,
   CENTER_POINT_SOURCE_ID,
+  METAR_LAYER_ID,
+  METAR_SOURCE_ID,
   RANGE_OUTLINE_LAYER_ID,
   RANGE_OUTLINE_SOURCE_ID,
   RANGE_RING_LABEL_LAYER_ID,
@@ -81,6 +86,7 @@ import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { AircraftDetailPanel } from "./AircraftDetailPanel";
 import { AircraftListPanel } from "./AircraftListPanel";
 import { ControlsPanel } from "./ControlsPanel";
+import { MetarDetailPanel } from "./MetarDetailPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
 
 // Empty singleton so an unchanged "off" state compares equal by reference
@@ -192,6 +198,13 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const radarOn = radarState !== "off";
   const radarPlaying = radarState === "animate";
   const [radarOpacity, setRadarOpacity] = useState(() => loadPersistedControls().radarOpacity);
+  const [metarOn, setMetarOn] = useState(() => loadPersistedControls().metarOn);
+  const metar = useMetar(config.apiBaseUrl, metarOn && !!config.center);
+  // The station whose card is open; never open alongside an aircraft's.
+  const [metarId, setMetarId] = useState<string | null>(null);
+  const selectedMetar = metar.stations.find((s) => s.station_id === metarId);
+  // Drives dot thinning; updated when a zoom settles, not on every frame.
+  const [mapZoom, setMapZoom] = useState<number | null>(null);
   // Multiplies both the aircraft icon-size expression (below) and
   // InfoBoxLayer's rendered size; 1 is the no-op default.
   const [displayScale, setDisplayScale] = useState(() => loadPersistedControls().displayScale);
@@ -207,6 +220,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
       rangeRingsVisible,
       radarOn,
       radarOpacity,
+      metarOn,
       displayScale,
     });
   }, [
@@ -217,6 +231,7 @@ function MapViewInner({ config }: { config: AppConfig }) {
     rangeRingsVisible,
     radarOn,
     radarOpacity,
+    metarOn,
     displayScale,
   ]);
 
@@ -544,7 +559,10 @@ function MapViewInner({ config }: { config: AppConfig }) {
     }
 
 
+    map.on("zoomend", () => setMapZoom(map.getZoom()));
+
     map.on("load", () => {
+      setMapZoom(map.getZoom());
       // Discover the basemap's own text-bearing layers before any overlay
       // layers are added below, so this list is purely the remote style's
       // own text layers (see basemapLabelLayerIds' own docstring).
@@ -604,6 +622,18 @@ function MapViewInner({ config }: { config: AppConfig }) {
         // layer only consumes the first two, so altitude is silently
         // ignored here -- expected, not a bug.
         paint: { "line-color": "#196363", "line-width": 2 },
+      });
+
+      map.addSource(METAR_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
+      map.addLayer({
+        id: METAR_LAYER_ID,
+        type: "circle",
+        source: METAR_SOURCE_ID,
+        layout: { "circle-sort-key": ["get", "priority"] },
+        paint: {
+          "circle-color": ["get", "color"],
+          "circle-radius": METAR_DOT_RADIUS_PX,
+        },
       });
 
       map.addSource(TRAIL_SOURCE_ID, { type: "geojson", data: EMPTY_FEATURE_COLLECTION });
@@ -795,17 +825,21 @@ function MapViewInner({ config }: { config: AppConfig }) {
         const features = map.queryRenderedFeatures(e.point, { layers: SELECTABLE_LAYER_IDS as string[] });
         const icaoHex = topIcaoHex(features);
         if (!icaoHex) {
+          // A weather dot opens its card in place of any aircraft card, so
+          // the selection is cleared either way.
+          setMetarId(nearestMetarStation(map, e.point));
           // A click that misses every selectable feature is a background
           // click -- closes the detail panel and deselects.
           setSelected(new Set());
           return;
         }
+        setMetarId(null);
         setSelected((prev) => nextSelection(prev, icaoHex));
       });
       map.on("mousemove", (e) => {
         const features = map.queryRenderedFeatures(e.point, { layers: SELECTABLE_LAYER_IDS as string[] });
         const icaoHex = topIcaoHex(features);
-        map.getCanvas().style.cursor = icaoHex ? "pointer" : "";
+        map.getCanvas().style.cursor = icaoHex || nearestMetarStation(map, e.point) ? "pointer" : "";
         setHoveredId(icaoHex ?? null);
       });
 
@@ -1222,6 +1256,34 @@ function MapViewInner({ config }: { config: AppConfig }) {
     // active layer's paint property current without rebuilding per drag.
   }, [radarOn, radarPlaying, mapLoaded]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || mapZoom === null) return;
+    (map.getSource(METAR_SOURCE_ID) as maplibregl.GeoJSONSource | undefined)?.setData(
+      metarFeatureCollection(thinStations(metar.stations, mapZoom)),
+    );
+  }, [metar.stations, mapZoom, mapLoaded]);
+
+  // Centers on a newly opened station once, keeping the zoom. Follow is
+  // cancelled so it can't pull the map back to its aircraft.
+  const metarLat = selectedMetar?.lat;
+  const metarLon = selectedMetar?.lon;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || metarLat === undefined || metarLon === undefined) return;
+    cancelFollow();
+    map.easeTo({ center: [metarLon, metarLat] });
+  }, [metarId, metarLat, metarLon]);
+
+  // Closes for good once the report expires or the dots are turned off, and
+  // whenever an aircraft is selected.
+  useEffect(() => {
+    if (metarId !== null && !selectedMetar) setMetarId(null);
+  }, [metarId, selectedMetar]);
+  useEffect(() => {
+    if (selectedIcaoHex !== null) setMetarId(null);
+  }, [selectedIcaoHex]);
+
   // Coalesces sync-effect runs (below) into at most one source update per
   // MAP_SYNC_THROTTLE_MS (see syncThrottle.ts). One throttle instance for
   // this component's whole lifetime, not per-render -- a fresh instance
@@ -1456,6 +1518,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
             displayScale={displayScale}
           />
         )}
+        {selectedMetar && !selectedAircraft && (
+          <MetarDetailPanel station={selectedMetar} now={metar.now} onClose={() => setMetarId(null)} />
+        )}
         {selectedAircraft && (
           <AircraftDetailPanel
             aircraft={selectedAircraft}
@@ -1494,6 +1559,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
           radarOpacity={radarOpacity}
           onRadarOpacityChange={setRadarOpacity}
           radarPlaybackLoading={radarPlaybackLoading}
+          metarOn={metarOn}
+          onToggleMetar={() => setMetarOn((prev) => !prev)}
+          metarDisabled={!config.center}
           displayScale={displayScale}
           onDisplayScaleChange={setDisplayScale}
         />

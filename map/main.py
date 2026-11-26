@@ -2,7 +2,7 @@
 """
 SkyFollower Map Service
 
-Backend for the live-map frontend (`frontend/`). Three jobs, plus serving
+Backend for the live-map frontend (`frontend/`). Three core jobs, plus serving
 the built frontend: a UDP listener merging `position`/`metadata`/
 `heartbeat` datagrams from message-processor instances into per-aircraft
 state and a per-processor liveness roster (both in a dedicated Redis
@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -43,11 +43,12 @@ if _REPO_ROOT not in sys.path:
 
 from shared.config import load_config  # noqa: E402
 from shared.logging_setup import configure_logging  # noqa: E402
-from shared.mqtt_presence import MqttPresence  # noqa: E402
+from shared.mqtt_presence import MqttPresence, Statistic  # noqa: E402
 from shared.redis_client import build_redis_client  # noqa: E402
 from shared.timing import (  # noqa: E402
     DEFAULT_FLIGHT_TTL_SECONDS,
     MAP_HIDE_TTL_SECONDS,
+    MAP_METAR_POLL_INTERVAL_SECONDS,
     MAP_STALE_TTL_SECONDS,
     HEALTHCHECK_INTERVAL_SECONDS,
     MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS,
@@ -56,6 +57,7 @@ from shared.timing import (  # noqa: E402
 )
 
 from map.broadcaster import ConnectionManager  # noqa: E402
+from map.metar import DEFAULT_BASE_URL as METAR_BASE_URL, MetarStore  # noqa: E402
 from map.range_outline import RangeOutlineStore  # noqa: E402
 from map.state_store import (  # noqa: E402
     POSITION_FIELDS,
@@ -78,6 +80,21 @@ _TLS_KEY_PATH = "/app/tls/key.pem"
 # Where the daily range-outline snapshots are written. MAP_RANGE_OUTLINE_DIR
 # overrides it only so the test suite can point it at a tmp directory.
 _RANGE_OUTLINE_DIR = os.environ.get("MAP_RANGE_OUTLINE_DIR", "/app/range-outline")
+
+# MAP_METAR_BASE_URL overrides the weather source only so tests never reach
+# the live site.
+_METAR_BASE_URL = os.environ.get("MAP_METAR_BASE_URL", METAR_BASE_URL)
+
+_METAR_STATISTICS = (
+    Statistic(
+        "metar_last_download_at", "METAR Last Download", "mdi:weather-cloudy-clock",
+        device_class="timestamp",
+    ),
+    Statistic(
+        "metar_consecutive_failures", "METAR Consecutive Download Failures",
+        "mdi:weather-cloudy-alert", state_class="measurement",
+    ),
+)
 
 # recvfrom() bound so the UDP listener thread wakes periodically to check
 # the shutdown event, rather than blocking forever on a socket with no
@@ -143,6 +160,7 @@ _cfg: dict = {}
 _redis = None
 _store: Optional[FlightStateStore] = None
 _range_outline: Optional[RangeOutlineStore] = None
+_metar: Optional[MetarStore] = None
 _connections = ConnectionManager()
 _shutdown = threading.Event()
 _threads: list[threading.Thread] = []
@@ -340,9 +358,31 @@ def _range_outline_loop() -> None:
         _shutdown.wait(MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS)
 
 
+def _publish_metar_statistics() -> None:
+    if _mqtt_presence is None:
+        return
+    _mqtt_presence.set_statistic("metar_consecutive_failures", _metar.consecutive_failures)
+    if _metar.last_success_at is not None:
+        _mqtt_presence.set_statistic(
+            "metar_last_download_at",
+            datetime.fromtimestamp(_metar.last_success_at, timezone.utc).isoformat(),
+        )
+
+
+def _metar_loop() -> None:
+    """Downloads current METAR reports on a fixed cadence."""
+    while not _shutdown.is_set():
+        try:
+            _metar.poll()
+            _publish_metar_statistics()
+        except Exception:
+            logger.exception("METAR poll failed")
+        _shutdown.wait(MAP_METAR_POLL_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _cfg, _redis, _store, _range_outline, _connections, _mqtt_presence
+    global _cfg, _redis, _store, _range_outline, _metar, _connections, _mqtt_presence
 
     _cfg = load_config("map_redis", "map", "mqtt")
     configure_logging(_cfg.get("log_level"))
@@ -365,24 +405,15 @@ async def lifespan(app: FastAPI):
     )
     _range_outline.load_from_disk()
 
-    # Fresh every startup -- see the module-level comment on _connections.
-    _connections = ConnectionManager()
+    _metar = MetarStore(
+        _redis,
+        center_latitude=_cfg.get("map_center_latitude"),
+        center_longitude=_cfg.get("map_center_longitude"),
+        base_url=_METAR_BASE_URL,
+    )
 
-    _shutdown.clear()
-    _threads.clear()
-    for target, name in (
-        (_udp_loop, "udp-listener"),
-        (_eviction_loop, "eviction-listener"),
-        (_healthcheck_loop, "healthcheck"),
-        (_range_outline_loop, "range-outline"),
-    ):
-        thread = threading.Thread(target=target, daemon=True, name=name)
-        thread.start()
-        _threads.append(thread)
-
-    flush_task = asyncio.ensure_future(_connections.flush_loop())
-
-    # Optional MQTT presence -- inert unless MQTT_HOST is set.
+    # Optional MQTT presence -- inert unless MQTT_HOST is set. Created before
+    # the threads so the first METAR poll can report through it.
     _mqtt_presence = MqttPresence(
         _cfg.get("mqtt"),
         component="map",
@@ -390,8 +421,29 @@ async def lifespan(app: FastAPI):
         device_name="SkyFollower Map",
         device_model="Map",
         configuration_url="https://brentio.github.io/SkyFollower/components/map.html",
+        statistics=_METAR_STATISTICS if _metar.enabled else (),
     )
     _mqtt_presence.start()
+
+    # Fresh every startup -- see the module-level comment on _connections.
+    _connections = ConnectionManager()
+
+    _shutdown.clear()
+    _threads.clear()
+    targets = [
+        (_udp_loop, "udp-listener"),
+        (_eviction_loop, "eviction-listener"),
+        (_healthcheck_loop, "healthcheck"),
+        (_range_outline_loop, "range-outline"),
+    ]
+    if _metar.enabled:
+        targets.append((_metar_loop, "metar"))
+    for target, name in targets:
+        thread = threading.Thread(target=target, daemon=True, name=name)
+        thread.start()
+        _threads.append(thread)
+
+    flush_task = asyncio.ensure_future(_connections.flush_loop())
 
     logger.info("Map service started.")
     yield
@@ -521,6 +573,15 @@ def reset_range_outline() -> None:
     """Reset the in-progress day -- drops today's live outline and its
     snapshot file. Finalised past days are untouched."""
     _range_outline.clear_today()
+
+
+@app.get("/api/metar", tags=["weather"])
+def get_metar() -> dict:
+    """Current METAR reports for stations within 250 nm of the configured
+    "center" reference point, excluding any older than `max_age_seconds`.
+    `stations` is empty when no center is configured or nothing has been
+    downloaded."""
+    return _metar.get()
 
 
 @app.get("/api/config", tags=["config"])

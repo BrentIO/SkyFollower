@@ -29,6 +29,11 @@ export interface SettingsPanelProps {
    * moved. */
   radarOpacity: number;
   onRadarOpacityChange: (value: number) => void;
+  /** METAR flight-category dots -- same disabled-when-no-center convention
+   * as rangeOutlineDisabled. */
+  metarOn: boolean;
+  onToggleMetar: () => void;
+  metarDisabled: boolean;
 }
 
 const ROW_LABEL = "text-sm text-slate-700 dark:text-slate-200";
@@ -47,6 +52,9 @@ export function SettingsPanel({
   rangeRingsDisabled,
   radarOpacity,
   onRadarOpacityChange,
+  metarOn,
+  onToggleMetar,
+  metarDisabled,
 }: SettingsPanelProps) {
   return (
     // Anchors to the icon column's top edge (ControlsPanel's `relative`
@@ -125,11 +133,11 @@ export function SettingsPanel({
       </div>
 
       <div className={DIVIDER}>
-        <div className={SECTION_BAR}>Radar</div>
+        <div className={SECTION_BAR}>Weather</div>
         <div className="px-4 py-3">
           <label className="flex flex-col gap-1 text-xs text-slate-700 dark:text-slate-200">
             <div className="flex items-center justify-between gap-3">
-              <span>Opacity</span>
+              <span>Radar Opacity</span>
               <span className="text-slate-500 dark:text-slate-400">{Math.round(radarOpacity * 100)}%</span>
             </div>
             <input
@@ -143,13 +151,17 @@ export function SettingsPanel({
             />
           </label>
         </div>
+        <div className="flex items-center justify-between gap-3 px-4 pb-3">
+          <span className={ROW_LABEL}>METARs</span>
+          <ToggleSwitch checked={metarOn} onChange={onToggleMetar} disabled={metarDisabled} feature="METARs" />
+        </div>
       </div>
     </div>
   );
 }
 
 // Phone-style toggle switch -- same shape as ControlsPanel's Radar on/off
-// switch, extracted here since this panel needs it three times.
+// switch, extracted here since this panel needs it several times.
 function ToggleSwitch({
   checked,
   onChange,

@@ -63,6 +63,10 @@ export interface ControlsPanelProps {
    * through the spinner (see `loadingDisabled={false}` below) -- the
    * operator can cycle straight out of animate without waiting. */
   radarPlaybackLoading: boolean;
+  /** METAR flight-category dots, toggled from the Settings panel. */
+  metarOn: boolean;
+  onToggleMetar: () => void;
+  metarDisabled: boolean;
   /** Multiplies both the aircraft icon-size expression (MapView.tsx) and
    * the info box's rendered size (InfoBoxLayer.tsx). A display's true
    * physical pixel density can't be read from the browser, so this is a
@@ -117,6 +121,9 @@ export function ControlsPanel({
   radarOpacity,
   onRadarOpacityChange,
   radarPlaybackLoading,
+  metarOn,
+  onToggleMetar,
+  metarDisabled,
   displayScale,
   onDisplayScaleChange,
 }: ControlsPanelProps) {
@@ -215,6 +222,9 @@ export function ControlsPanel({
             rangeRingsDisabled={rangeRingsDisabled}
             radarOpacity={radarOpacity}
             onRadarOpacityChange={onRadarOpacityChange}
+            metarOn={metarOn}
+            onToggleMetar={onToggleMetar}
+            metarDisabled={metarDisabled}
           />
         )}
       </div>

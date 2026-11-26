@@ -253,6 +253,18 @@ MAP_RANGE_OUTLINE_TTL_SECONDS = 30 * 86400
 # snapshot to disk (only if changed) and checks for UTC-date rollover.
 MAP_RANGE_OUTLINE_SNAPSHOT_INTERVAL_SECONDS = 60
 
+# How often the map service downloads the METAR cache, and the station name
+# cache.
+MAP_METAR_POLL_INTERVAL_SECONDS = 900
+MAP_METAR_STATION_REFRESH_INTERVAL_SECONDS = 86400
+
+# Deadline on each of those downloads.
+MAP_METAR_FETCH_TIMEOUT_SECONDS = 30
+
+# A report observed longer ago than this is not shown. The frontend reads it
+# from GET /api/metar.
+MAP_METAR_REPORT_MAX_AGE_SECONDS = 5400
+
 # --- Rule trigger counters --------------------------------------------------
 
 # TTL on each rule_triggers:{identifier}:{date} day key -- one day of
@@ -294,6 +306,10 @@ assert 2 * UK_CAA_SEARCH_INTERVAL_SECONDS < UK_CAA_QUEUE_TTL_SECONDS < 3 * UK_CA
 )
 assert UK_CAA_LOCK_TTL_SECONDS > 2 * UK_CAA_LOCK_REFRESH_INTERVAL_SECONDS, (
     "UK_CAA_LOCK_TTL_SECONDS must tolerate a missed refresh"
+)
+
+assert MAP_METAR_REPORT_MAX_AGE_SECONDS > 2 * MAP_METAR_POLL_INTERVAL_SECONDS, (
+    "MAP_METAR_REPORT_MAX_AGE_SECONDS must tolerate a missed METAR download"
 )
 
 assert MAP_STALE_TTL_SECONDS < MAP_HIDE_TTL_SECONDS, (

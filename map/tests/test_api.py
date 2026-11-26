@@ -107,6 +107,8 @@ class _Server:
             "MAP_HTTP_HOST": "127.0.0.1",
             "MAP_HTTPS_PORT": str(self.http_port),
             "PYTHONPATH": _REPO_ROOT,
+            # Never reach the live weather site from a test.
+            "MAP_METAR_BASE_URL": "http://127.0.0.1:9",
         })
         if extra_env:
             env.update(extra_env)
