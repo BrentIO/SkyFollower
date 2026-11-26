@@ -670,6 +670,7 @@ so old reports disappear even while this service is unreachable.
 - From zoom 8 in, every station is shown. Further out, a dot is hidden only if a visible dot of the same colour is within 28 px (`src/lib/metar.ts`).
 - Which of those stays follows the station file's `priority` (its display order): `0` ranks highest, a station without one ranks last, and ties go to the first station ID.
 - Clicking or tapping a dot opens its decoded report and raw text, in knots, statute miles, feet, °C and inHg. The station code sits in a box of the category colour; hovering over it names the category. An aircraft under the pointer takes priority, and opening a report leaves any aircraft selection alone.
+- On small screens (up to 640 px wide or 500 px tall) the popup is docked along the bottom of the map instead of attached to its dot.
 - **Settings → Weather → METARs** turns the dots on and off. It is on by default and saved in the browser.
 
 ### Home Assistant

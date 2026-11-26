@@ -90,3 +90,31 @@ body,
     background: #1e293b;
   }
 }
+/* Phones: a popup anchored to a dot can't fit beside it, so dock it along the
+   bottom, above the attribution. Overrides MapLibre's inline positioning. */
+@media (max-width: 640px), (max-height: 500px) {
+  .maplibregl-popup.sf-metar-popup {
+    z-index: 1002;
+    top: auto;
+    right: auto;
+    bottom: 28px;
+    left: 8px;
+    width: min(24rem, calc(100% - 16px));
+    max-width: none !important;
+    transform: none !important;
+  }
+  .sf-metar-popup .maplibregl-popup-content {
+    width: 100%;
+  }
+  .sf-metar-popup .maplibregl-popup-tip {
+    display: none;
+  }
+  .sf-metar {
+    max-height: min(55vh, calc(100vh - 5rem));
+  }
+  .sf-metar-popup .maplibregl-popup-close-button {
+    width: 40px;
+    height: 40px;
+    font-size: 22px;
+  }
+}
