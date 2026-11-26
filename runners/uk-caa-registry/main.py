@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -383,8 +384,13 @@ def _log_refusal(response, url: str, accepted: int, wait: int) -> None:
         wait,
         response.headers.get("Retry-After"),
         response.headers.get("x-azure-ref"),
-        str(response.text)[:300],
+        _page_text(str(response.text))[:300],
     )
+
+
+def _page_text(body: str) -> str:
+    body = re.sub(r"(?is)<(style|script)\b.*?</\1>|<!DOCTYPE[^>]*>|<[^>]+>", " ", body)
+    return " ".join(body.split())
 
 
 def _search_by_prefix(client: _Client, prefix: str) -> list[dict]:

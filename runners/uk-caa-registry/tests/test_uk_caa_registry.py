@@ -737,6 +737,10 @@ class TestRunPipeline:
         assert "blocked" in caplog.text
         assert "Accepted again after waiting 60s" in caplog.text
 
+    def test_error_page_is_logged_as_plain_text(self):
+        page = "<!DOCTYPE html><html><style>body { }</style>\n<h2>Request  blocked</h2></html>"
+        assert _mod._page_text(page) == "Request blocked"
+
     def test_server_error_is_retried(self):
         session = MagicMock()
         session.post.side_effect = [_http_error(503)] + [_ok([])] * 676
