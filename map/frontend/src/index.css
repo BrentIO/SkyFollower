@@ -99,7 +99,7 @@ body,
     right: auto;
     bottom: 28px;
     left: 8px;
-    width: min(24rem, calc(100% - 16px));
+    width: min(17rem, calc(100% - 16px));
     max-width: none !important;
     transform: none !important;
   }
@@ -110,7 +110,7 @@ body,
     display: none;
   }
   .sf-metar {
-    max-height: min(55vh, calc(100vh - 5rem));
+    max-height: min(70vh, calc(100vh - 5rem));
   }
   .sf-metar-popup .maplibregl-popup-close-button {
     width: 40px;
