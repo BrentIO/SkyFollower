@@ -27,6 +27,10 @@ export const RANGE_RING_SOURCE_ID = "sf-range-rings";
 export const RANGE_RING_LAYER_ID = "sf-range-rings-line";
 export const RANGE_RING_LABEL_SOURCE_ID = "sf-range-ring-labels";
 export const RANGE_RING_LABEL_LAYER_ID = "sf-range-ring-labels-text";
+// METAR flight-category dots (see lib/metar.ts). Drawn below trails and
+// aircraft; clicked through its own hit test, so not in SELECTABLE_LAYER_IDS.
+export const METAR_SOURCE_ID = "sf-metar";
+export const METAR_LAYER_ID = "sf-metar-dots";
 // Daily reception range outline (GET /api/range-outline?band=envelope) --
 // a toggle-able overlay, distinct from the always-on static range rings
 // above.

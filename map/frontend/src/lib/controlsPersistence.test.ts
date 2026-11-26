@@ -35,6 +35,7 @@ const ALL_ON = {
   rangeRingsVisible: true,
   radarOn: true,
   radarOpacity: 0.8,
+  metarOn: false,
   displayScale: 1.2,
 };
 
@@ -46,6 +47,7 @@ const DEFAULTS = {
   rangeRingsVisible: true,
   radarOn: false,
   radarOpacity: 0.5,
+  metarOn: true,
   displayScale: 1,
 };
 
@@ -58,6 +60,21 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("METAR toggle", () => {
+  it("defaults on and keeps the rest of preferences saved before it existed", () => {
+    const { metarOn: _omitted, ...older } = ALL_ON;
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 4, controls: older }));
+
+    expect(loadPersistedControls()).toEqual({ ...ALL_ON, metarOn: true });
+  });
+
+  it("rejects a non-boolean value", () => {
+    storage.setItem(STORAGE_KEY, JSON.stringify({ version: 4, controls: { ...ALL_ON, metarOn: "no" } }));
+
+    expect(loadPersistedControls()).toEqual(DEFAULTS);
+  });
 });
 
 describe("loadPersistedControls/savePersistedControls -- round-trip", () => {
@@ -76,6 +93,7 @@ describe("loadPersistedControls/savePersistedControls -- round-trip", () => {
       rangeRingsVisible: false,
       radarOn: true,
       radarOpacity: 0.5,
+      metarOn: false,
       displayScale: 0.75,
     };
     savePersistedControls(mixed);

@@ -6,7 +6,8 @@ Unlike the receiver/message-processor/archive-processor's periodic
 telemetry loops, these only need to appear in Home Assistant and
 self-register for core-health's "update available" entity. This helper
 publishes the retained discovery + started_at + version topics once per
-connect and then just stays connected -- no periodic publish, no stats.
+connect and then just stays connected -- no periodic publish. A service may
+declare a few extra statistics and set them as they change.
 
 Built on shared/mqtt.py's build_mqtt_client(), shared/ha_discovery.py's
 build_ha_device(), and shared/mqtt_register.py's publish_register().
@@ -17,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -28,6 +30,17 @@ logger = logging.getLogger("mqtt-presence")
 
 ONLINE = "ONLINE"
 OFFLINE = "OFFLINE"
+
+
+@dataclass(frozen=True)
+class Statistic:
+    """A statistic a component publishes beyond the common ones."""
+
+    name: str
+    label: str
+    icon: str
+    device_class: Optional[str] = None
+    state_class: Optional[str] = None
 
 
 class MqttPresence:
@@ -47,6 +60,7 @@ class MqttPresence:
         device_name: str,
         device_model: str,
         configuration_url: Optional[str] = None,
+        statistics: tuple[Statistic, ...] = (),
     ) -> None:
         self._cfg = mqtt_config or {}
         self._component = component
@@ -54,6 +68,8 @@ class MqttPresence:
         self._device_name = device_name
         self._device_model = device_model
         self._configuration_url = configuration_url
+        self._statistics = statistics
+        self._values: dict[str, str] = {}
 
         self._status_topic = f"SkyFollower/{component}/status"
         self._stat_base = f"SkyFollower/{component}/statistic"
@@ -65,6 +81,13 @@ class MqttPresence:
 
         self._client = None
         self._connected = False
+
+    def set_statistic(self, name: str, value: object) -> None:
+        """Publish a retained statistic now if connected, and again on every
+        reconnect."""
+        self._values[name] = str(value)
+        if self._client is not None and self._connected:
+            self._client.publish(f"{self._stat_base}/{name}", self._values[name], retain=True)
 
     @property
     def enabled(self) -> bool:
@@ -115,6 +138,8 @@ class MqttPresence:
             return
         self._client.publish(f"{self._stat_base}/started_at", self._started_at, retain=True)
         self._client.publish(f"{self._stat_base}/version", self._version, retain=True)
+        for name, value in list(self._values.items()):
+            self._client.publish(f"{self._stat_base}/{name}", value, retain=True)
 
     def _publish_discovery(self) -> None:
         if not (self._client and self._connected):
@@ -152,3 +177,21 @@ class MqttPresence:
             json.dumps(payload),
             retain=True,
         )
+        for statistic in self._statistics:
+            unique_id = f"{self._device_identifier}_{statistic.name}"
+            payload = {
+                **availability,
+                "state_topic": f"{self._stat_base}/{statistic.name}",
+                "name": statistic.label,
+                "unique_id": unique_id,
+                "object_id": unique_id,
+                "device": device,
+                "icon": statistic.icon,
+            }
+            if statistic.device_class:
+                payload["device_class"] = statistic.device_class
+            if statistic.state_class:
+                payload["state_class"] = statistic.state_class
+            self._client.publish(
+                f"homeassistant/sensor/{unique_id}/config", json.dumps(payload), retain=True
+            )

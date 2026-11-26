@@ -31,3 +31,63 @@ body,
   height: 100%;
   margin: 0;
 }
+
+/* METAR popup. Above the aircraft info boxes (MAX_LABEL_Z_INDEX), with its
+   own text colour because MapLibre's popup is white in either colour scheme. */
+.sf-metar-popup {
+  z-index: 1001;
+}
+.sf-metar-popup .maplibregl-popup-close-button {
+  width: 28px;
+  height: 28px;
+  color: #374151;
+  font-size: 18px;
+}
+.sf-metar {
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.35;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.sf-metar-title {
+  font-size: 14px;
+  font-weight: 600;
+  padding-right: 18px;
+}
+.sf-metar-name {
+  color: #4b5563;
+}
+.sf-metar-category {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  font-weight: 600;
+}
+.sf-metar-swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid #1f2937;
+  border-radius: 50%;
+}
+.sf-metar-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+}
+.sf-metar-rows dt {
+  color: #4b5563;
+}
+.sf-metar-rows dd {
+  margin: 0;
+}
+.sf-metar-raw {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}

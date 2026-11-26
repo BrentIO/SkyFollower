@@ -26,7 +26,8 @@ this is not horizontally scaled (no `MAP_SERVICE_ID`-style claim/heartbeat
 mechanism).
 
 **Data boundary**: this service's only inputs are the UDP feed from
-`message-processor` and its own dedicated Redis. It never queries core
+`message-processor`, its own dedicated Redis, and the public weather files
+described under [METAR Weather](#metar-weather). It never queries core
 Redis (enrichment keys, `config:*`, etc.) directly -- all enrichment needed
 for display (registration, operator, aircraft type) arrives pre-resolved in
 `message-processor`'s `metadata` payload.
@@ -125,9 +126,9 @@ Requiring authentication on it is a deployment choice available via
 
 MQTT is entirely optional -- leave `MQTT_HOST` unset and the service never
 opens a broker connection. When it is set, the service publishes a
-**minimal presence** and nothing else: there is no telemetry loop, no
-periodic publish, and none of the operational stats the receiver, message
-processor, or archive processor emit. The client (its own paho network
+**minimal presence** and the two [METAR download statistics](#metar-weather):
+there is no telemetry loop and none of the operational stats the receiver,
+message processor, or archive processor emit. The client (its own paho network
 loop, running alongside the UDP/eviction/healthcheck/range-outline
 background threads) connects once and stays connected.
 
@@ -619,6 +620,68 @@ one of them will be `Sec-WebSocket-Extensions: permessage-deflate; ...`;
 or from the command line/a script, open a raw WebSocket handshake (e.g.
 Python's `websockets` client) and read `.response.headers` for the same
 header.
+
+## METAR Weather
+
+`map/metar.py` keeps current METAR reports for stations within 250 nm of the
+"center" point (`MAP_CENTER_LATITUDE`/`MAP_CENTER_LONGITUDE`). With no center
+configured, nothing is downloaded or shown.
+
+### Source
+
+The Aviation Weather Center's cache files, which need no API key. Requests
+send `User-Agent: P5Software SkyFollower`.
+
+| File | Downloaded | Used for |
+|---|---|---|
+| `https://aviationweather.gov/data/cache/metars.cache.csv.gz` | At startup, then every 15 minutes | Reports |
+| `https://aviationweather.gov/data/cache/stations.cache.json.gz` | At startup, then daily | Station names |
+
+- Reports within range are stored in this service's Redis as `map:metar:reports`, with a 90-minute TTL.
+- A failed or unreadable download keeps the last good data and is retried at the next poll.
+- Station names are optional: without them the popup shows only the station code.
+- The reports file repeats its `sky_cover` and `cloud_base_ft_agl` columns, so it is read by column position.
+- It reports a variable wind as direction `0`, so `VRB` is read from the raw report.
+- An `OVX` cloud layer's base is the vertical visibility in feet. The file's `vert_vis_ft` column is in hundreds of feet and isn't used.
+
+### `GET /api/metar`
+
+Returns `max_age_seconds` and a `stations` array. Reports observed more than
+90 minutes ago are left out. Each station has `station_id`, `lat`, `lon`,
+`observed_at` (epoch seconds) and `raw`, plus whichever of these it
+reports: `name`, `flight_category` (`VFR`, `MVFR`, `IFR` or `LIFR`),
+`wind_dir_deg`, `wind_variable`, `wind_speed_kt`, `wind_gust_kt`,
+`visibility_sm`, `weather`, `clouds` (`cover`, `base_ft`), `sky_clear`,
+`temperature_c`, `dewpoint_c` and `altimeter_inhg`. The browser polls it every
+minute and never calls the weather site. It applies the same age limit itself,
+so old reports disappear even while this service is unreachable.
+
+### On the map
+
+| Flight category | Dot |
+|---|---|
+| VFR | Green |
+| Marginal VFR | Blue |
+| IFR | Red |
+| Low IFR | Magenta |
+| Missing or anything else | Gray |
+
+- Dots are drawn below trails and aircraft, with worse conditions on top.
+- From zoom 8 in, every station is shown. Further out, a dot is hidden only if a visible dot of the same colour is within 28 px (`src/lib/metar.ts`).
+- Clicking or tapping a dot opens its decoded report and raw text, in knots, statute miles, feet, °C and inHg. An aircraft under the pointer takes priority, and opening a report leaves any aircraft selection alone.
+- **Settings → Weather → METARs** turns the dots on and off. It is on by default and saved in the browser.
+
+### Home Assistant
+
+When MQTT and a center are configured, the service also publishes, retained,
+with discovery on the SkyFollower Map device:
+
+| Topic | Value |
+|---|---|
+| `SkyFollower/map/statistic/metar_last_download_at` | UTC ISO-8601 time of the last successful report download; not published until one succeeds |
+| `SkyFollower/map/statistic/metar_consecutive_failures` | Report downloads failed in a row |
+
+Station name failures aren't counted.
 
 ## Fault Tolerance
 

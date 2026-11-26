@@ -1261,6 +1261,30 @@ channels:
       MapVersionMessage:
         $ref: '#/components/messages/MapVersionMessage'
 
+  mapMetarLastDownloadAt:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/map/statistic/metar_last_download_at
+    description: >
+      UTC ISO-8601 time of the last successful METAR cache download.
+      Published after each poll and on broker connect, retained; not
+      published until a download succeeds, or when no center is configured.
+    messages:
+      MapMetarLastDownloadAtMessage:
+        $ref: '#/components/messages/MapMetarLastDownloadAtMessage'
+
+  mapMetarConsecutiveFailures:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: SkyFollower/map/statistic/metar_consecutive_failures
+    description: >
+      METAR cache downloads failed in a row. Published after each poll and
+      on broker connect, retained; not published when no center is
+      configured.
+    messages:
+      MapMetarConsecutiveFailuresMessage:
+        $ref: '#/components/messages/MapMetarConsecutiveFailuresMessage'
+
   mapUdpFeed:
     servers:
       - $ref: '#/servers/udp'
@@ -1733,6 +1757,18 @@ operations:
     channel:
       $ref: '#/channels/mapVersion'
     summary: Map service publishes its running image version
+
+  publishMapMetarLastDownloadAt:
+    action: send
+    channel:
+      $ref: '#/channels/mapMetarLastDownloadAt'
+    summary: Map service publishes its last successful METAR download time
+
+  publishMapMetarConsecutiveFailures:
+    action: send
+    channel:
+      $ref: '#/channels/mapMetarConsecutiveFailures'
+    summary: Map service publishes its consecutive METAR download failures
 
   publishMapUdpFeed:
     action: send
@@ -2289,6 +2325,23 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/ComponentVersion'
+
+    MapMetarLastDownloadAtMessage:
+      name: MapMetarLastDownloadAtMessage
+      title: Map METAR last download time
+      summary: UTC ISO-8601 time of the last successful METAR download
+      contentType: text/plain
+      payload:
+        type: string
+        format: date-time
+
+    MapMetarConsecutiveFailuresMessage:
+      name: MapMetarConsecutiveFailuresMessage
+      title: Map METAR consecutive download failures
+      summary: METAR downloads failed in a row
+      contentType: text/plain
+      payload:
+        type: string
 
     MapStartedAtMessage:
       name: MapStartedAtMessage

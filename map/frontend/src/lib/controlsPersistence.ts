@@ -28,6 +28,8 @@ export interface PersistedControls {
   rangeRingsVisible: boolean;
   radarOn: boolean;
   radarOpacity: number;
+  /** METAR flight-category dots. */
+  metarOn: boolean;
   /** Multiplies the aircraft icon-size expression and the info box's
    * rendered size (see MapView.tsx/InfoBoxLayer.tsx). 1 is the no-op
    * default. */
@@ -46,6 +48,7 @@ const DEFAULTS: PersistedControls = {
   rangeRingsVisible: true,
   radarOn: false,
   radarOpacity: 0.5,
+  metarOn: true,
   displayScale: 1,
 };
 
@@ -73,6 +76,8 @@ function isPersistedControls(value: unknown): value is PersistedControls {
     isBoolean(v.rangeRingsVisible) &&
     isBoolean(v.radarOn) &&
     isFiniteNumber(v.radarOpacity) &&
+    // Optional, so preferences saved before it existed are kept.
+    (v.metarOn === undefined || isBoolean(v.metarOn)) &&
     isFiniteNumber(v.displayScale)
   );
 }
@@ -91,7 +96,7 @@ export function loadPersistedControls(): PersistedControls {
     if (parsed.version !== STORAGE_VERSION) return { ...DEFAULTS };
     if (!isPersistedControls(parsed.controls)) return { ...DEFAULTS };
 
-    return { ...parsed.controls };
+    return { ...DEFAULTS, ...parsed.controls };
   } catch {
     return { ...DEFAULTS };
   }
