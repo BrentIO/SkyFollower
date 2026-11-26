@@ -120,7 +120,7 @@ services:
   # well after midnight UTC -- there's no upstream data source to wait on,
   # unlike the core host's runners.
   ofelia:
-    image: mcuadros/ofelia:0.3.22@sha256:efcbe2c5cf658a25de6443c1462d653f9cc03791d642e01fc6c638a00f97e492
+    image: mcuadros/ofelia:0.3.23@sha256:75c3a3d7ddeb99bc1545a4955155019f0444f6e6d6f812f4e3304bfae8e67304
     restart: unless-stopped
     # Ofelia reads job labels from every ofelia.enabled container on the
     # host; the filter keeps it from also running the core host's jobs.
