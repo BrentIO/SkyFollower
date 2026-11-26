@@ -41,6 +41,13 @@ describe("flightCategoryStyle", () => {
     expect(flightCategoryStyle(category)).toMatchObject({ label: "Unknown", color: "#9ca3af" });
   });
 
+  it("keeps the station code readable on every badge colour", () => {
+    expect(flightCategoryStyle(undefined).textColor).toBe("#111827");
+    for (const category of ["VFR", "MVFR", "IFR", "LIFR"]) {
+      expect(flightCategoryStyle(category).textColor).toBe("#ffffff");
+    }
+  });
+
   it("ranks worse conditions higher so they draw on top", () => {
     const ranks = [undefined, "VFR", "MVFR", "IFR", "LIFR"].map((c) => flightCategoryStyle(c).priority);
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b));

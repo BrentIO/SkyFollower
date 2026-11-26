@@ -32,61 +32,61 @@ body,
   margin: 0;
 }
 
-/* METAR popup. Above the aircraft info boxes (MAX_LABEL_Z_INDEX), with its
-   own text colour because MapLibre's popup is white in either colour scheme. */
+/* METAR popup. Above the aircraft info boxes (MAX_LABEL_Z_INDEX), with
+   MapLibre's white shell recoloured to match AircraftDetailPanel. */
 .sf-metar-popup {
   z-index: 1001;
+  --sf-popup-background: #fff;
+}
+.sf-metar-popup .maplibregl-popup-content {
+  overflow: hidden;
+  width: 20rem;
+  max-width: 100%;
+  padding: 0;
+  border-radius: 6px;
+  background: var(--sf-popup-background);
+  color: var(--color-slate-900, #0f172a);
+}
+.sf-metar-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.sf-metar-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.sf-metar-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--sf-popup-background);
+}
+.sf-metar-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.sf-metar-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.sf-metar-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--sf-popup-background);
+}
+.sf-metar-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--sf-popup-background);
+}
+.sf-metar-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--sf-popup-background);
 }
 .sf-metar-popup .maplibregl-popup-close-button {
+  top: 8px;
+  right: 8px;
   width: 28px;
   height: 28px;
-  color: #374151;
+  border-radius: 4px;
+  color: #64748b;
   font-size: 18px;
 }
 .sf-metar {
-  color: #111827;
-  font-size: 12px;
-  line-height: 1.35;
   max-height: 55vh;
   overflow-y: auto;
 }
-.sf-metar-title {
-  font-size: 14px;
-  font-weight: 600;
-  padding-right: 18px;
-}
-.sf-metar-name {
-  color: #4b5563;
-}
-.sf-metar-category {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 6px 0;
-  font-weight: 600;
-}
-.sf-metar-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-.sf-metar-rows {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 10px;
-  margin: 0;
-}
-.sf-metar-rows dt {
-  color: #4b5563;
-}
-.sf-metar-rows dd {
-  margin: 0;
-}
-.sf-metar-raw {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid #e5e7eb;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  overflow-wrap: anywhere;
+@media (prefers-color-scheme: dark) {
+  .sf-metar-popup {
+    --sf-popup-background: var(--color-slate-900, #0f172a);
+  }
+  .sf-metar-popup .maplibregl-popup-content {
+    color: var(--color-slate-100, #f1f5f9);
+  }
+  .sf-metar-popup .maplibregl-popup-close-button {
+    color: #94a3b8;
+  }
+  .sf-metar-popup .maplibregl-popup-close-button:hover {
+    background: #1e293b;
+  }
 }

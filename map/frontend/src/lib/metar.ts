@@ -1,6 +1,7 @@
 // METAR flight-category dots: colours, expiry, zoom thinning and popup text.
 
 import type { FeatureCollection, Point } from "geojson";
+import { DIVIDER, PILL, SECTION_BAR } from "../components/AircraftDetailPanel";
 
 export interface MetarCloud {
   cover: string;
@@ -37,17 +38,19 @@ export interface MetarResponse {
 export interface FlightCategoryStyle {
   label: string;
   color: string;
+  /** Readable on a `color` background. */
+  textColor: string;
   /** Higher draws on top: worse conditions win an overlap. */
   priority: number;
 }
 
-const UNKNOWN_CATEGORY: FlightCategoryStyle = { label: "Unknown", color: "#9ca3af", priority: 0 };
+const UNKNOWN_CATEGORY: FlightCategoryStyle = { label: "Unknown", color: "#9ca3af", textColor: "#111827", priority: 0 };
 
 const CATEGORIES: Record<string, FlightCategoryStyle> = {
-  VFR: { label: "VFR", color: "#16a34a", priority: 1 },
-  MVFR: { label: "Marginal VFR", color: "#2563eb", priority: 2 },
-  IFR: { label: "IFR", color: "#dc2626", priority: 3 },
-  LIFR: { label: "Low IFR", color: "#d946ef", priority: 4 },
+  VFR: { label: "VFR", color: "#16a34a", textColor: "#ffffff", priority: 1 },
+  MVFR: { label: "Marginal VFR", color: "#2563eb", textColor: "#ffffff", priority: 2 },
+  IFR: { label: "IFR", color: "#dc2626", textColor: "#ffffff", priority: 3 },
+  LIFR: { label: "Low IFR", color: "#d946ef", textColor: "#ffffff", priority: 4 },
 };
 
 export const METAR_DOT_RADIUS_PX = 4.5;
@@ -169,23 +172,37 @@ function element<K extends keyof HTMLElementTagNameMap>(tag: K, className: strin
   return node;
 }
 
-// Built with textContent only: report and station text comes from outside.
+// Styled like AircraftDetailPanel. Built with textContent only: report and
+// station text comes from outside.
 export function buildMetarPopupContent(s: MetarStation, nowMs: number): HTMLElement {
-  const root = element("div", "sf-metar");
-  root.append(element("div", "sf-metar-title", s.station_id));
-  if (s.name) root.append(element("div", "sf-metar-name", s.name));
-
   const style = flightCategoryStyle(s.flight_category);
-  const category = element("div", "sf-metar-category");
-  const swatch = element("span", "sf-metar-swatch");
-  swatch.style.backgroundColor = style.color;
-  category.append(swatch, element("span", "", style.label));
-  root.append(category);
+  const root = element("div", "sf-metar");
 
-  const list = element("dl", "sf-metar-rows");
-  for (const [label, value] of metarPopupRows(s, nowMs)) {
-    list.append(element("dt", "", label), element("dd", "", value));
-  }
-  root.append(list, element("div", "sf-metar-raw", s.raw));
+  const header = element("div", "p-3 pr-10");
+  const code = element("span", `${PILL} inline-block px-3 py-1 text-xl leading-tight font-bold`, s.station_id);
+  code.style.backgroundColor = style.color;
+  code.style.color = style.textColor;
+  header.append(code);
+  if (s.name) header.append(element("div", "mt-1 text-sm", s.name));
+  root.append(header);
+
+  const list = element("dl", DIVIDER);
+  const rows: [string, string][] = [["Flight Category", style.label], ...metarPopupRows(s, nowMs)];
+  rows.forEach(([label, value], index) => {
+    const row = element("div", `flex items-baseline justify-between gap-3 px-4 py-1.5 ${index ? DIVIDER : ""}`);
+    row.append(
+      element("dt", "shrink-0 text-xs text-slate-500 dark:text-slate-400", label),
+      element("dd", "text-right text-sm", value),
+    );
+    list.append(row);
+  });
+  root.append(list);
+
+  const raw = element("div", DIVIDER);
+  raw.append(
+    element("div", SECTION_BAR, "Raw METAR"),
+    element("div", "px-4 py-2.5 font-mono text-xs break-words", s.raw),
+  );
+  root.append(raw);
   return root;
 }
