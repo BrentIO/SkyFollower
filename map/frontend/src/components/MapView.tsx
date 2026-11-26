@@ -11,7 +11,7 @@ import { useMapFlights } from "../hooks/useMapFlights";
 import { useProcessorRoster } from "../hooks/useProcessorRoster";
 import { useRangeOutline } from "../hooks/useRangeOutline";
 import { useMetar } from "../hooks/useMetar";
-import { buildMetarPopupContent, METAR_DOT_RADIUS_PX, metarFeatureCollection, thinStations } from "../lib/metar";
+import { METAR_DOT_RADIUS_PX, metarFeatureCollection, thinStations } from "../lib/metar";
 import { nearestMetarStation } from "../lib/metarHitTest";
 import {
   aircraftFeatureCollection,
@@ -86,6 +86,7 @@ import { aircraftNeedingHistorySeed } from "../lib/trailSeeding";
 import { AircraftDetailPanel } from "./AircraftDetailPanel";
 import { AircraftListPanel } from "./AircraftListPanel";
 import { ControlsPanel } from "./ControlsPanel";
+import { MetarDetailPanel } from "./MetarDetailPanel";
 import { InfoBoxLayer, type InfoBoxLayerItem } from "./InfoBoxLayer";
 
 // Empty singleton so an unchanged "off" state compares equal by reference
@@ -199,8 +200,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
   const [radarOpacity, setRadarOpacity] = useState(() => loadPersistedControls().radarOpacity);
   const [metarOn, setMetarOn] = useState(() => loadPersistedControls().metarOn);
   const metar = useMetar(config.apiBaseUrl, metarOn && !!config.center);
-  const [metarPopupId, setMetarPopupId] = useState<string | null>(null);
-  const metarPopupRef = useRef<{ id: string; popup: maplibregl.Popup } | null>(null);
+  // The station whose card is open; never open alongside an aircraft's.
+  const [metarId, setMetarId] = useState<string | null>(null);
+  const selectedMetar = metar.stations.find((s) => s.station_id === metarId);
   // Drives dot thinning; updated when a zoom settles, not on every frame.
   const [mapZoom, setMapZoom] = useState<number | null>(null);
   // Multiplies both the aircraft icon-size expression (below) and
@@ -823,16 +825,15 @@ function MapViewInner({ config }: { config: AppConfig }) {
         const features = map.queryRenderedFeatures(e.point, { layers: SELECTABLE_LAYER_IDS as string[] });
         const icaoHex = topIcaoHex(features);
         if (!icaoHex) {
-          // Opening a weather popup leaves any aircraft selection alone.
-          const stationId = nearestMetarStation(map, e.point);
-          setMetarPopupId(stationId);
-          if (stationId) return;
+          // A weather dot opens its card in place of any aircraft card, so
+          // the selection is cleared either way.
+          setMetarId(nearestMetarStation(map, e.point));
           // A click that misses every selectable feature is a background
           // click -- closes the detail panel and deselects.
           setSelected(new Set());
           return;
         }
-        setMetarPopupId(null);
+        setMetarId(null);
         setSelected((prev) => nextSelection(prev, icaoHex));
       });
       map.on("mousemove", (e) => {
@@ -1263,45 +1264,25 @@ function MapViewInner({ config }: { config: AppConfig }) {
     );
   }, [metar.stations, mapZoom, mapLoaded]);
 
-  // Keeps the open popup in step with its report, and closes it once the
-  // report expires or the dots are turned off.
+  // Centers on a newly opened station once, keeping the zoom. Follow is
+  // cancelled so it can't pull the map back to its aircraft.
+  const metarLat = selectedMetar?.lat;
+  const metarLon = selectedMetar?.lon;
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded) return;
-    const station = metar.stations.find((s) => s.station_id === metarPopupId);
-    let open = metarPopupRef.current;
-    if (open && open.id !== station?.station_id) {
-      metarPopupRef.current = null;
-      open.popup.remove();
-      open = null;
-    }
-    if (!station) {
-      if (metarPopupId !== null) setMetarPopupId(null);
-      return;
-    }
-    const content = buildMetarPopupContent(station, metar.now);
-    if (open) {
-      open.popup.setLngLat([station.lon, station.lat]).setDOMContent(content);
-      return;
-    }
-    const popup = new maplibregl.Popup({
-      className: "sf-metar-popup",
-      closeOnClick: false,
-      focusAfterOpen: false,
-      maxWidth: "320px",
-      offset: 8,
-    })
-      .setLngLat([station.lon, station.lat])
-      .setDOMContent(content)
-      .addTo(map);
-    popup.on("close", () => {
-      // Ignored when this effect removed the popup itself.
-      if (metarPopupRef.current?.popup !== popup) return;
-      metarPopupRef.current = null;
-      setMetarPopupId(null);
-    });
-    metarPopupRef.current = { id: station.station_id, popup };
-  }, [metarPopupId, metar.stations, metar.now, mapLoaded]);
+    if (!map || metarLat === undefined || metarLon === undefined) return;
+    cancelFollow();
+    map.easeTo({ center: [metarLon, metarLat] });
+  }, [metarId, metarLat, metarLon]);
+
+  // Closes for good once the report expires or the dots are turned off, and
+  // whenever an aircraft is selected.
+  useEffect(() => {
+    if (metarId !== null && !selectedMetar) setMetarId(null);
+  }, [metarId, selectedMetar]);
+  useEffect(() => {
+    if (selectedIcaoHex !== null) setMetarId(null);
+  }, [selectedIcaoHex]);
 
   // Coalesces sync-effect runs (below) into at most one source update per
   // MAP_SYNC_THROTTLE_MS (see syncThrottle.ts). One throttle instance for
@@ -1536,6 +1517,9 @@ function MapViewInner({ config }: { config: AppConfig }) {
             hoveredId={hoveredId}
             displayScale={displayScale}
           />
+        )}
+        {selectedMetar && !selectedAircraft && (
+          <MetarDetailPanel station={selectedMetar} now={metar.now} onClose={() => setMetarId(null)} />
         )}
         {selectedAircraft && (
           <AircraftDetailPanel

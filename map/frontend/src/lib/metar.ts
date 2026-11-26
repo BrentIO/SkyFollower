@@ -1,7 +1,6 @@
-// METAR flight-category dots: colours, expiry, zoom thinning and popup text.
+// METAR flight-category dots: colours, expiry, zoom thinning and card text.
 
 import type { FeatureCollection, Point } from "geojson";
-import { DIVIDER, PILL, SECTION_BAR } from "../components/AircraftDetailPanel";
 
 export interface MetarCloud {
   cover: string;
@@ -158,8 +157,8 @@ export function formatReportTime(observedAt: number, nowMs: number): string {
   return `${minutes} min ago (${utc} UTC)`;
 }
 
-/** The popup's labelled rows, omitting anything the report doesn't carry. */
-export function metarPopupRows(s: MetarStation, nowMs: number): [string, string][] {
+/** The card's labelled rows, omitting anything the report doesn't carry. */
+export function metarRows(s: MetarStation, nowMs: number): [string, string][] {
   const rows: [string, string | null | undefined][] = [
     ["Report", formatReportTime(s.observed_at, nowMs)],
     ["Wind", formatWind(s)],
@@ -171,46 +170,4 @@ export function metarPopupRows(s: MetarStation, nowMs: number): [string, string]
     ["Altimeter", s.altimeter_inhg === undefined ? null : `${s.altimeter_inhg.toFixed(2)} inHg`],
   ];
   return rows.filter((row): row is [string, string] => !!row[1]);
-}
-
-function element<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string) {
-  const node = document.createElement(tag);
-  node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-// Styled like AircraftDetailPanel. Built with textContent only: report and
-// station text comes from outside.
-export function buildMetarPopupContent(s: MetarStation, nowMs: number): HTMLElement {
-  const style = flightCategoryStyle(s.flight_category);
-  const root = element("div", "sf-metar");
-
-  const header = element("div", "p-3 pr-10");
-  const code = element("span", `${PILL} inline-block px-3 py-1 text-xl leading-tight font-bold`, s.station_id);
-  code.style.backgroundColor = style.color;
-  code.style.color = style.textColor;
-  code.title = style.label;
-  header.append(code);
-  if (s.name) header.append(element("div", "mt-1 text-sm", s.name));
-  root.append(header);
-
-  const list = element("dl", DIVIDER);
-  metarPopupRows(s, nowMs).forEach(([label, value], index) => {
-    const row = element("div", `flex items-baseline justify-between gap-3 px-4 py-1.5 ${index ? DIVIDER : ""}`);
-    row.append(
-      element("dt", "shrink-0 text-xs text-slate-500 dark:text-slate-400", label),
-      element("dd", "text-right text-sm", value),
-    );
-    list.append(row);
-  });
-  root.append(list);
-
-  const raw = element("div", DIVIDER);
-  raw.append(
-    element("div", SECTION_BAR, "Raw METAR"),
-    element("div", "px-4 py-2.5 font-mono text-xs break-words", s.raw),
-  );
-  root.append(raw);
-  return root;
 }

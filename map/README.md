@@ -639,7 +639,7 @@ send `User-Agent: P5Software SkyFollower`.
 
 - Reports within range are stored in this service's Redis as `map:metar:reports`, with a 90-minute TTL.
 - A failed or unreadable download keeps the last good data and is retried at the next poll.
-- The station file is optional: without it the popup shows only the station code, and thinning falls back to station ID order.
+- The station file is optional: without it the card shows only the station code, and thinning falls back to station ID order.
 - The reports file repeats its `sky_cover` and `cloud_base_ft_agl` columns, so it is read by column position.
 - It reports a variable wind as direction `0`, so `VRB` is read from the raw report.
 - An `OVX` cloud layer's base is the vertical visibility in feet. The file's `vert_vis_ft` column is in hundreds of feet and isn't used.
@@ -669,8 +669,8 @@ so old reports disappear even while this service is unreachable.
 - Dots are drawn below trails and aircraft, with worse conditions on top.
 - From zoom 8 in, every station is shown. Further out, a dot is hidden only if a visible dot of the same colour is within 28 px (`src/lib/metar.ts`).
 - Which of those stays follows the station file's `priority` (its display order): `0` ranks highest, a station without one ranks last, and ties go to the first station ID.
-- Clicking or tapping a dot opens its decoded report and raw text, in knots, statute miles, feet, °C and inHg. The station code sits in a box of the category colour; hovering over it names the category. An aircraft under the pointer takes priority, and opening a report leaves any aircraft selection alone.
-- On small screens (up to 640 px wide or 500 px tall) the popup is docked along the bottom of the map instead of attached to its dot.
+- Clicking or tapping a dot centers the map on the station, keeping the zoom, and opens a card with its decoded report and raw text, in knots, statute miles, feet, °C and inHg. The card has the same position and look as the aircraft card. The station code sits in a box of the category colour; hovering over it names the category.
+- An aircraft under the pointer takes priority. Only one card is open at a time: opening a station's closes the aircraft card and stops Follow, and selecting an aircraft closes the station's.
 - **Settings → Weather → METARs** turns the dots on and off. It is on by default and saved in the browser.
 
 ### Home Assistant

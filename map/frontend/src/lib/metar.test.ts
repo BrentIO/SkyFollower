@@ -6,12 +6,11 @@ import {
   METAR_FULL_DETAIL_ZOOM,
   METAR_MIN_SPACING_PX,
   metarFeatureCollection,
-  metarPopupRows,
+  metarRows,
   thinStations,
   worldPixel,
   type MetarStation,
 } from "./metar";
-import metarSource from "./metar.ts?raw";
 
 const NOW = Date.UTC(2026, 10, 26, 18, 0, 0);
 
@@ -159,8 +158,8 @@ describe("thinStations", () => {
   });
 });
 
-describe("metarPopupRows", () => {
-  const rows = (overrides: Partial<MetarStation>) => Object.fromEntries(metarPopupRows(station(overrides), NOW));
+describe("metarRows", () => {
+  const rows = (overrides: Partial<MetarStation>) => Object.fromEntries(metarRows(station(overrides), NOW));
 
   it("formats every field in US aviation units", () => {
     expect(
@@ -208,14 +207,5 @@ describe("metarPopupRows", () => {
 
   it("never shows a negative age", () => {
     expect(formatReportTime(NOW / 1000 + 30, NOW)).toBe("0 min ago (18:00 UTC)");
-  });
-
-  it("names the flight category on hover over the station code, not in a row", () => {
-    expect(metarSource).toContain("code.title = style.label;");
-    expect(metarSource).not.toContain('"Flight Category"');
-  });
-
-  it("builds popup content without parsing outside text as HTML", () => {
-    expect(metarSource).not.toContain("innerHTML");
   });
 });
