@@ -32,6 +32,8 @@ def _upgrade(root: Path) -> subprocess.CompletedProcess:
     script = (
         _HARNESS
         + f"INSTALL_ROOT={root!s}\nIMAGE_VERSION=2026.09.99\n"
+        + _extract_function("prune_superseded_images")
+        + "\n"
         + _extract_function("do_upgrade")
         + "\ndo_upgrade\n"
     )

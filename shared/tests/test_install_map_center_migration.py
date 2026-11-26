@@ -25,7 +25,7 @@ def _extract_function(name: str) -> str:
     return m.group(0)
 
 
-_DO_UPGRADE = _extract_function("do_upgrade")
+_DO_UPGRADE = _extract_function("prune_superseded_images") + "\n" + _extract_function("do_upgrade")
 
 # docker is stubbed to a no-op: these tests only care about the .env
 # rewrite. fetch_role is stubbed too (its own re-fetch behavior is
