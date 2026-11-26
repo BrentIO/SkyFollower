@@ -32,7 +32,7 @@ def _extract_function(name: str) -> str:
 _FUNCS = "\n".join(
     _extract_function(n)
     for n in (
-        "fetch_role", "role_files", "role_compose_files", "role_data_dirs", "do_upgrade",
+        "fetch_role", "role_files", "role_compose_files", "role_data_dirs", "prune_superseded_images", "do_upgrade",
         "convert_generated_blocks", "init_instances_compose", "instance_ids",
         "write_instance_env", "write_receiver_env", "write_message_processor_env",
         "append_receiver_service", "append_message_processor_service",

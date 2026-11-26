@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@mdi/js": "^7.4.47",
-    "lucide-react": "^1.74.0",
+    "lucide-react": "^1.77.0",
     "maplibre-gl": "^6.16.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.5",
-    "terra-draw": "^1.39.0",
+    "terra-draw": "^1.40.0",
     "terra-draw-maplibre-gl-adapter": "^1.5.0"
   },
   "devDependencies": {
@@ -30,6 +30,6 @@
     "tailwindcss": "^4.3.5",
     "typescript": "~7.0.2",
     "vite": "^8.3.8",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   }
 }
