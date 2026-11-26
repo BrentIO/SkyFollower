@@ -276,6 +276,11 @@ jobs:
             exit 0
           fi
 
+          # shared/ tests also read these paths.
+          if echo "$changed_files" | grep -qE '^(scripts/|config/|specs/|docker-compose[^/]*\.yaml$|management-ui/nginx\.conf$)'; then
+            changed_files+=$'\nshared/'
+          fi
+
           changed_json=$(printf '%s\n' "$changed_files" | jq -R -s -c 'split("\n") | map(select(length > 0))')
           filtered=$(echo "$full_matrix" | jq -c --argjson changed "$changed_json" \
             'map(select(. as $dir | $changed | any(startswith($dir + "/"))))')
