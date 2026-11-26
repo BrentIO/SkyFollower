@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from redis.commands.search.field import TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
 
-from shared.config import ConfigError, load_config
+from shared.config import ConfigError, ConfigLoader, load_config
 from shared.timing import ENRICHMENT_TTL_SECONDS
 from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
@@ -51,6 +51,13 @@ API_BASE = "https://ginfoapi.caa.co.uk"
 MQTT_ROOT = "SkyFollower/runner/uk-caa-registry"
 
 _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+DEFAULT_REQUEST_INTERVAL_SECONDS = 1.0
+_REFUSAL_STATUSES = (403, 429)
+_REFUSAL_WAITS = (60, 120, 300, 600, 900)
+_MAX_RETRY_AFTER_SECONDS = 3600
+_TRANSIENT_WAITS = (2, 5, 15)
+_MAX_DETAIL_FAILURE_RATIO = 0.01
 
 # ---------------------------------------------------------------------------
 # Decode tables
@@ -299,32 +306,103 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
 # G-INFO API
 # ---------------------------------------------------------------------------
 
-def _search_by_prefix(session: requests.Session, prefix: str) -> list[dict]:
+class IncompleteRunError(Exception):
+    """The register was only partly imported."""
+
+    def __init__(self, message: str, records_imported: int = 0):
+        super().__init__(message)
+        self.records_imported = records_imported
+
+
+class RateLimitedError(IncompleteRunError):
+    """CAA kept refusing a request after every wait."""
+
+
+class _Client:
+    """Paces every G-INFO request and waits out refusals."""
+
+    def __init__(self, session: requests.Session, interval: float):
+        self._session = session
+        self._interval = interval
+        self._accepted = 0
+
+    def request(self, method: str, url: str, **kwargs):
+        refusals = 0
+        transients = 0
+        waited = 0
+        while True:
+            time.sleep(self._interval)
+            try:
+                resp = getattr(self._session, method)(url, timeout=30, **kwargs)
+                resp.raise_for_status()
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status in _REFUSAL_STATUSES:
+                    if refusals == len(_REFUSAL_WAITS):
+                        raise RateLimitedError(
+                            f"Still refused with HTTP {status} after waiting {waited}s: {url}"
+                        ) from exc
+                    wait = max(_REFUSAL_WAITS[refusals], _retry_after_seconds(exc.response))
+                    _log_refusal(exc.response, url, self._accepted, wait)
+                    self._accepted = 0
+                    refusals += 1
+                    waited += wait
+                elif status is not None and status >= 500 and transients < len(_TRANSIENT_WAITS):
+                    wait = _TRANSIENT_WAITS[transients]
+                    transients += 1
+                else:
+                    raise
+            except (requests.ConnectionError, requests.Timeout):
+                if transients == len(_TRANSIENT_WAITS):
+                    raise
+                wait = _TRANSIENT_WAITS[transients]
+                transients += 1
+            else:
+                if refusals:
+                    logger.info("Accepted again after waiting %ds.", waited)
+                self._accepted += 1
+                return resp
+            time.sleep(wait)
+
+
+def _retry_after_seconds(response) -> int:
+    try:
+        seconds = int(response.headers.get("Retry-After"))
+    except (TypeError, ValueError):
+        return 0
+    return min(max(seconds, 0), _MAX_RETRY_AFTER_SECONDS)
+
+
+def _log_refusal(response, url: str, accepted: int, wait: int) -> None:
+    logger.warning(
+        "HTTP %d from %s after %d accepted requests; waiting %ds. "
+        "Retry-After=%s x-azure-ref=%s body=%r",
+        response.status_code,
+        url,
+        accepted,
+        wait,
+        response.headers.get("Retry-After"),
+        response.headers.get("x-azure-ref"),
+        str(response.text)[:300],
+    )
+
+
+def _search_by_prefix(client: _Client, prefix: str) -> list[dict]:
     """POST /api/aircraft/search with a 2-letter registration prefix.
 
     Returns the raw result list; may include non-registered aircraft.
     """
     url = f"{API_BASE}/api/aircraft/search"
     logger.debug("Searching UK CAA G-INFO for prefix=%s at %s", prefix, url)
-    resp = session.post(
-        url,
-        json={"Registration": prefix},
-        timeout=30,
-    )
-    resp.raise_for_status()
+    resp = client.request("post", url, json={"Registration": prefix})
     return resp.json() or []
 
 
-def _get_aircraft_details(session: requests.Session, aircraft_id: int) -> Optional[dict]:
+def _get_aircraft_details(client: _Client, aircraft_id: int) -> Optional[dict]:
     """GET /api/aircraft/details/{aircraft_id}. Returns the parsed JSON payload."""
     url = f"{API_BASE}/api/aircraft/details/{aircraft_id}"
     logger.debug("Fetching UK CAA aircraft details from %s", url)
-    resp = session.get(
-        url,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return client.request("get", url).json()
 
 
 def run_pipeline(
@@ -335,80 +413,25 @@ def run_pipeline(
 ) -> int:
     """Enumerate all G-registered aircraft via AA-ZZ search and write to Redis.
     Fetches and writes each prefix's details immediately, no accumulation.
-    Only details calls are rate-limited via request_interval. Returns the
-    count of records successfully written."""
+    Returns the count of records written; raises IncompleteRunError if too much
+    of the register could not be fetched."""
+    client = _Client(session, request_interval)
     count = 0
     skipped = 0
     errors = 0
-    retry_queue: list[int] = []
-    prefix_retry_queue: list[str] = []
+    failed_prefixes = 0
+    detail_requests = 0
 
-    for c1, c2 in product(_LETTERS, _LETTERS):
-        prefix = f"{c1}{c2}"
-        try:
-            results = _search_by_prefix(session, prefix)
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 403:
-                prefix_retry_queue.append(prefix)
-            else:
+    try:
+        for c1, c2 in product(_LETTERS, _LETTERS):
+            prefix = f"{c1}{c2}"
+            try:
+                results = _search_by_prefix(client, prefix)
+            except RateLimitedError:
+                raise
+            except Exception as exc:
                 logger.warning("Search error for prefix %s: %s", prefix, exc)
-            continue
-        except Exception as exc:
-            logger.warning("Search error for prefix %s: %s", prefix, exc)
-            continue
-
-        aircraft_ids = [
-            item.get("AircraftID")
-            for item in results
-            if item.get("RegistrationStatus") == "R" and item.get("AircraftID") is not None
-        ]
-        logger.info("G-%s*: %d registered (written so far: %d).", prefix, len(aircraft_ids), count)
-
-        for aircraft_id in aircraft_ids:
-            try:
-                time.sleep(request_interval)
-                details = _get_aircraft_details(session, aircraft_id)
-            except requests.HTTPError as exc:
-                if exc.response is not None and exc.response.status_code == 403:
-                    retry_queue.append(aircraft_id)
-                else:
-                    logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
-                    errors += 1
-                continue
-            except Exception as exc:
-                logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
-                errors += 1
-                continue
-
-            reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
-            if reg_status != "Registered":
-                logger.debug("AircraftID=%d: Status is %r — skipping.", aircraft_id, reg_status)
-                skipped += 1
-                continue
-
-            record = _build_record(details)
-            if record is None:
-                logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
-                errors += 1
-                continue
-
-            _apply_type_lookup(record, r)
-            record["source"] = "uk-caa-registry"
-            record["country_code"] = "GB"
-            key = aircraft_registry_key(record["icao_hex"])
-            set_json(r, key, record)
-            r.expire(key, ttl)
-            count += 1
-
-    if prefix_retry_queue:
-        logger.info("Retrying %d prefixes that returned 403 (500ms interval)...", len(prefix_retry_queue))
-        for prefix in prefix_retry_queue:
-            time.sleep(0.5)
-            try:
-                results = _search_by_prefix(session, prefix)
-            except Exception as exc:
-                logger.warning("Retry failed for prefix %s: %s", prefix, exc)
-                errors += 1
+                failed_prefixes += 1
                 continue
 
             aircraft_ids = [
@@ -416,19 +439,14 @@ def run_pipeline(
                 for item in results
                 if item.get("RegistrationStatus") == "R" and item.get("AircraftID") is not None
             ]
-            logger.info("G-%s* (retry): %d registered.", prefix, len(aircraft_ids))
+            logger.info("G-%s*: %d registered (written so far: %d).", prefix, len(aircraft_ids), count)
 
             for aircraft_id in aircraft_ids:
+                detail_requests += 1
                 try:
-                    time.sleep(request_interval)
-                    details = _get_aircraft_details(session, aircraft_id)
-                except requests.HTTPError as exc:
-                    if exc.response is not None and exc.response.status_code == 403:
-                        retry_queue.append(aircraft_id)
-                    else:
-                        logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
-                        errors += 1
-                    continue
+                    details = _get_aircraft_details(client, aircraft_id)
+                except RateLimitedError:
+                    raise
                 except Exception as exc:
                     logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
                     errors += 1
@@ -436,6 +454,7 @@ def run_pipeline(
 
                 reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
                 if reg_status != "Registered":
+                    logger.debug("AircraftID=%d: Status is %r — skipping.", aircraft_id, reg_status)
                     skipped += 1
                     continue
 
@@ -452,38 +471,19 @@ def run_pipeline(
                 set_json(r, key, record)
                 r.expire(key, ttl)
                 count += 1
+    except RateLimitedError as exc:
+        exc.records_imported = count
+        raise
 
-    if retry_queue:
-        logger.info("Retrying %d aircraft that returned 403 (500ms interval)...", len(retry_queue))
-        for aircraft_id in retry_queue:
-            time.sleep(0.5)
-            try:
-                details = _get_aircraft_details(session, aircraft_id)
-            except Exception as exc:
-                logger.warning("Retry failed for AircraftID=%d: %s", aircraft_id, exc)
-                errors += 1
-                continue
-
-            reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
-            if reg_status != "Registered":
-                skipped += 1
-                continue
-
-            record = _build_record(details)
-            if record is None:
-                logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
-                errors += 1
-                continue
-
-            _apply_type_lookup(record, r)
-            record["source"] = "uk-caa-registry"
-            record["country_code"] = "GB"
-            key = aircraft_registry_key(record["icao_hex"])
-            set_json(r, key, record)
-            r.expire(key, ttl)
-            count += 1
-
-    logger.info("Finished: %d written, %d skipped, %d errors.", count, skipped, errors)
+    logger.info(
+        "Finished: %d written, %d skipped, %d errors, %d failed prefix searches.",
+        count, skipped, errors, failed_prefixes,
+    )
+    if failed_prefixes or errors > detail_requests * _MAX_DETAIL_FAILURE_RATIO:
+        raise IncompleteRunError(
+            f"{failed_prefixes} prefix searches failed; {errors} of {detail_requests} aircraft failed",
+            count,
+        )
     return count
 
 
@@ -603,7 +603,13 @@ def main() -> None:
     r = build_redis_client(rc)
 
     ttl = ENRICHMENT_TTL_SECONDS
-    request_interval = cfg.get("request_interval_seconds", 0.1)
+    loader = ConfigLoader()
+    request_interval = loader.number("REQUEST_INTERVAL_SECONDS", DEFAULT_REQUEST_INTERVAL_SECONDS)
+    try:
+        loader.raise_for_problems()
+    except ConfigError as exc:
+        logger.critical("%s", exc)
+        sys.exit(1)
 
     session = requests.Session()
     session.headers.update({"User-Agent": "P5Software SkyFollower"})
@@ -617,6 +623,10 @@ def main() -> None:
         records_imported = run_pipeline(session, r, ttl, request_interval)
         status = "success"
         logger.info("UK CAA runner completed successfully. Records imported: %d", records_imported)
+
+    except IncompleteRunError as exc:
+        records_imported = exc.records_imported
+        logger.error("UK CAA runner incomplete after %d records: %s", records_imported, exc)
 
     except Exception as exc:
         logger.error("UK CAA runner failed: %s", exc, exc_info=True)
