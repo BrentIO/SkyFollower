@@ -25,13 +25,14 @@ Each runner publishes a single MQTT message on completion with `records_imported
 
 ## Container image
 
-Every runner's `Dockerfile` bases on `python:3.14-slim`, pinned to an
-explicit digest: `FROM python:3.14-slim@sha256:<digest>`. The bare tag alone
+Every runner's `Dockerfile` bases on a `python` slim image, pinned to an
+explicit digest: `FROM python:X.Y-slim@sha256:<digest>`. The test workflow
+runs each runner's tests on that `X.Y`. The bare tag alone
 is not enough — Docker Hub re-pushes it under the same name on every
 upstream patch, and Dependabot only tracks (and opens a rebuild PR for) a
 digest that is already present in the `FROM` line. When adding a runner,
-copy the digest from an existing runner's `Dockerfile`, or resolve the
-current one with `docker buildx imagetools inspect python:3.14-slim`. A CI
+copy the `FROM` line from an existing runner's `Dockerfile`, or resolve the
+current digest with `docker buildx imagetools inspect python:X.Y-slim`. A CI
 guard in `.github/workflows/run-tests.yaml` fails the build if any
 `Dockerfile` has an unpinned base image.
 

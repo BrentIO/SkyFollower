@@ -9,10 +9,10 @@ internals) — this page links out to those rather than duplicating them.
 
 ## Prerequisites
 
-- **Python 3.14** — every backend service (`receiver`, `message-processor`,
-  `map`, `management-ui`'s backend, `archive-processor`, `archive-compaction`,
-  `core-health`, `aws-setup`, the `runners/*`) targets this version; it's
-  what each `Dockerfile` and the test workflow both build against.
+- **Python** — use the version in the component's `Dockerfile` (`FROM
+  python:X.Y-slim`). The test workflow reads it from there, so tests run on
+  the same version the image ships. `shared/` and `tools/*` have no image and
+  are tested on the newest version any `Dockerfile` uses.
 - **Node 26** — the `map/frontend` and `management-ui/frontend` React
   apps, and the `docs/` site itself.
 - **Docker** — for Redis (RedisJSON + Lua scripting, i.e.

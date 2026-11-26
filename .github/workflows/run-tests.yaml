@@ -278,7 +278,9 @@ jobs:
 
           changed_json=$(printf '%s\n' "$changed_files" | jq -R -s -c 'split("\n") | map(select(length > 0))')
           filtered=$(echo "$full_matrix" | jq -c --argjson changed "$changed_json" \
-            'map(select(. as $dir | $changed | any(startswith($dir + "/"))))')
+            'map(select(. as $dir
+               | (($dir | split("/"))[:-1] + ["Dockerfile"] | join("/")) as $parent_dockerfile
+               | $changed | any(startswith($dir + "/") or . == $parent_dockerfile)))')
 
           echo "Filtered to $(echo "$filtered" | jq 'length') component(s): $filtered"
           echo "matrix=$filtered" >> "$GITHUB_OUTPUT"
@@ -319,10 +321,41 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # Read from the Dockerfile so tests always run on the shipped Python.
+      # Components with no image of their own use the newest one shipped.
+      - name: Resolve Python version
+        id: python-version
+        env:
+          COMPONENT_DIR: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          from_python() {
+            sed -nE 's/^FROM +(--platform=[^ ]+ +)?python:([0-9]+\.[0-9]+).*/\2/p' "$@"
+          }
+          dockerfile=""
+          for candidate in "$COMPONENT_DIR/Dockerfile" "$(dirname "$COMPONENT_DIR")/Dockerfile"; do
+            if [ -f "$candidate" ]; then
+              dockerfile="$candidate"
+              break
+            fi
+          done
+          if [ -n "$dockerfile" ]; then
+            version=$(from_python "$dockerfile" | tail -n1)
+          else
+            version=$(git ls-files -z -- 'Dockerfile' '*/Dockerfile' \
+              | while IFS= read -r -d '' f; do from_python "$f"; done | sort -V | tail -n1)
+          fi
+          if [ -z "$version" ]; then
+            echo "::error::No python base image found in ${dockerfile:-any Dockerfile}."
+            exit 1
+          fi
+          echo "Python $version (from ${dockerfile:-the newest Dockerfile})"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.14"
+          python-version: ${{ steps.python-version.outputs.version }}
           cache: "pip"
           cache-dependency-path: "${{ matrix.dir }}/requirements.txt"
 
