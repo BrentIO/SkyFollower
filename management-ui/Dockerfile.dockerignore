@@ -1,0 +1,5 @@
+# Used by BuildKit for management-ui/Dockerfile only. Keeps a developer's local frontend
+# packages and build output from overwriting the image's own.
+**/node_modules
+management-ui/frontend/dist
+management-ui/frontend/*.tsbuildinfo
