@@ -969,14 +969,24 @@ sources:
     description: "UK Civil Aviation Authority G-INFO aircraft register — G-prefix registrations"
     url: "https://ginfoapi.caa.co.uk"
     format: api
-    cadence: weekly_tuesday
-    notes: "Undocumented public REST API; no auth required; User-Agent 'P5Software SkyFollower' required; enumerates all G-registered aircraft by iterating every 2-letter suffix combination AA-ZZ (676 POST /api/aircraft/search calls); filters results on RegistrationStatus 'R'; calls GET /api/aircraft/details/{AircraftID} for each matched result; no hard Redis dependency — runs independently of Mictronics and completes successfully even if aircraft:type:{designator} lookups are unavailable, but opportunistically looks up its own ICAOAircraftTypeDesignator against that mictronics-populated reference table to set aircraft.manufacturer_model when found; details payload also includes AircraftOperatedByAocHolder (commercial operator, can differ from owner) — intentionally not captured, only RegisteredAircraftOwners is tracked"
+    cadence: "search job weekly Monday; details job daily"
+    redis_keys:
+      "uk_caa:aircraft:{AircraftID}":
+        description: "Details queue record, indexed by idx:uk_caa:aircraft on next_fetch_at; 18-day TTL renewed by each search that finds the aircraft registered"
+        fields:
+          aircraft_id:   "G-INFO AircraftID; shared by every mark the aircraft has held"
+          mark:          "Registration mark without the G- prefix, from the search result"
+          next_fetch_at: "Epoch seconds when details are next due; 0 until first processed"
+      "uk_caa:search:progress": "Hash of 2-letter prefix to epoch seconds of its last successful search; no TTL"
+      "uk_caa:lock": "Held by whichever uk-caa-registry job is calling CAA; 5-minute TTL"
+      "aircraft:registry:{icao_hex}": "Written by the details job with a 70-day TTL"
+    notes: "Undocumented public REST API; no auth required; User-Agent 'P5Software SkyFollower' required; enumerates all G-registered aircraft by iterating every 2-letter suffix combination AA-ZZ (676 POST /api/aircraft/search calls); the search job queues results with RegistrationStatus 'R' and deletes a queue record only when a non-'R' result has the queued mark, because one AircraftID is listed under every mark the aircraft has held; the details job calls GET /api/aircraft/details/{AircraftID} for queued aircraft that are due; no hard Redis dependency — runs independently of Mictronics and completes successfully even if aircraft:type:{designator} lookups are unavailable, but opportunistically looks up its own ICAOAircraftTypeDesignator against that mictronics-populated reference table to set aircraft.manufacturer_model when found; details payload also includes AircraftOperatedByAocHolder (commercial operator, can differ from owner) — intentionally not captured, only RegisteredAircraftOwners is tracked"
     endpoints:
       search:
         method: POST
         path: /api/aircraft/search
         body_field: Registration
-        description: "Search by registration mark suffix (Mark field without leading G-); returns array of {AircraftID, Mark, RegistrationStatus}"
+        description: "Search by registration mark suffix (Mark field without leading G-); returns array of {AircraftID, Mark, SerialNo, MilitarySerialNo, AircraftType, RegistrationStatus}; no ICAO address"
       details:
         method: GET
         path: "/api/aircraft/details/{AircraftID}"

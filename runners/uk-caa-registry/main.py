@@ -2,21 +2,28 @@
 """
 SkyFollower United Kingdom CAA Data Runner
 
-Enumerates all G-registered aircraft via the UK CAA G-INFO REST API by
-iterating every 2-letter suffix combination AA-ZZ (676 calls total).
-For each aircraft returned with RegistrationStatus "R", calls the details
-endpoint to fetch the full payload and writes enrichment data to Redis.
+Two jobs against the UK CAA G-INFO REST API, run as separate commands:
+
+  search   searches every 2-letter registration prefix AA-ZZ and keeps one
+           Redis queue record per registered aircraft
+  details  fetches the aircraft whose queue records are due and writes
+           their enrichment records to Redis
 
 API base: https://ginfoapi.caa.co.uk  (no authentication required)
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
+import re
+import signal
 import sys
+import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from itertools import product
 from typing import Optional
@@ -27,17 +34,33 @@ import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from redis.commands.search.field import TagField
+from redis.commands.search.field import NumericField, TagField
 from redis.commands.search.index_definition import IndexDefinition, IndexType
+from redis.commands.search.query import Query
 
-from shared.config import ConfigError, load_config
-from shared.timing import ENRICHMENT_TTL_SECONDS
+from shared.config import ConfigError, ConfigLoader, load_config
+from shared.timing import (
+    UK_CAA_DETAILS_RUN_TIMEOUT_SECONDS,
+    UK_CAA_DETAILS_REFRESH_INTERVAL_SECONDS,
+    UK_CAA_DETAILS_RETRY_BACKOFF_SECONDS,
+    UK_CAA_LOCK_POLL_INTERVAL_SECONDS,
+    UK_CAA_LOCK_REFRESH_INTERVAL_SECONDS,
+    UK_CAA_LOCK_TTL_SECONDS,
+    UK_CAA_QUEUE_TTL_SECONDS,
+    UK_CAA_REGISTRY_TTL_SECONDS,
+    UK_CAA_SEARCH_RUN_TIMEOUT_SECONDS,
+)
 from shared.redis_client import build_redis_client
 from shared.ha_discovery import build_ha_device
 from shared.redis_keys import (
     AIRCRAFT_REGISTRY_SEARCH_INDEX,
+    UK_CAA_LOCK_KEY,
+    UK_CAA_QUEUE_KEY_PREFIX,
+    UK_CAA_QUEUE_SEARCH_INDEX,
+    UK_CAA_SEARCH_PROGRESS_KEY,
     aircraft_registry_key,
     aircraft_type_key,
+    uk_caa_queue_key,
 )
 from shared.redis_json import set_json
 from shared.mqtt import build_mqtt_client
@@ -51,6 +74,16 @@ API_BASE = "https://ginfoapi.caa.co.uk"
 MQTT_ROOT = "SkyFollower/runner/uk-caa-registry"
 
 _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+DEFAULT_REQUEST_INTERVAL_SECONDS = 1.0
+DEFAULT_DETAILS_LIMIT = 1000
+_QUEUE_BATCH_SIZE = 100
+_REFUSAL_STATUSES = (403, 429)
+# The first wait runs a little past a minute so a per-minute limit has reset.
+_REFUSAL_WAITS = (65, 120, 300, 600, 900)
+_MAX_RETRY_AFTER_SECONDS = 3600
+_TRANSIENT_WAITS = (2, 5, 15)
+_MAX_DETAIL_FAILURE_RATIO = 0.01
 
 # ---------------------------------------------------------------------------
 # Decode tables
@@ -295,203 +328,441 @@ def _ensure_search_index(r: redis_lib.Redis) -> None:
         logger.info("Created search index %r.", AIRCRAFT_REGISTRY_SEARCH_INDEX)
 
 
+def _ensure_queue_index(r: redis_lib.Redis) -> None:
+    """Create the details queue search index if it does not already exist."""
+    try:
+        r.ft(UK_CAA_QUEUE_SEARCH_INDEX).info()
+    except Exception:
+        r.ft(UK_CAA_QUEUE_SEARCH_INDEX).create_index(
+            fields=[NumericField("$.next_fetch_at", as_name="next_fetch_at", sortable=True)],
+            definition=IndexDefinition(prefix=[UK_CAA_QUEUE_KEY_PREFIX], index_type=IndexType.JSON),
+        )
+        logger.info("Created search index %r.", UK_CAA_QUEUE_SEARCH_INDEX)
+
+
 # ---------------------------------------------------------------------------
 # G-INFO API
 # ---------------------------------------------------------------------------
 
-def _search_by_prefix(session: requests.Session, prefix: str) -> list[dict]:
+class IncompleteRunError(Exception):
+    """The job did not do all it was expected to."""
+
+
+class RunStoppedError(IncompleteRunError):
+    """No further CAA requests can be made in this run."""
+
+
+class RateLimitedError(RunStoppedError):
+    """CAA kept refusing a request after every wait."""
+
+
+class LockLostError(RunStoppedError):
+    """The other job may now be calling CAA."""
+
+
+class DeadlineReached(RunStoppedError):
+    """The run's maximum time is up."""
+
+
+class _RunLock:
+    """Redis lock held while a job calls CAA, refreshed from a thread so a
+    long backoff cannot let it expire."""
+
+    _REFRESH = (
+        "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+        "return redis.call('EXPIRE', KEYS[1], ARGV[2]) else return 0 end"
+    )
+    _RELEASE = (
+        "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+        "return redis.call('DEL', KEYS[1]) else return 0 end"
+    )
+
+    def __init__(self, r: redis_lib.Redis):
+        self._r = r
+        self._token = uuid.uuid4().hex
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self.lost = False
+
+    def acquire(self, deadline: float) -> bool:
+        """Wait for the lock until `deadline`. False if it never came free."""
+        waiting = False
+        while not self._r.set(UK_CAA_LOCK_KEY, self._token, nx=True, ex=UK_CAA_LOCK_TTL_SECONDS):
+            if time.monotonic() + UK_CAA_LOCK_POLL_INTERVAL_SECONDS >= deadline:
+                return False
+            if not waiting:
+                logger.info("Waiting for the other uk-caa-registry job to finish.")
+                waiting = True
+            time.sleep(UK_CAA_LOCK_POLL_INTERVAL_SECONDS)
+        self._thread = threading.Thread(target=self._keep_alive, daemon=True)
+        self._thread.start()
+        return True
+
+    def _keep_alive(self) -> None:
+        refreshed_at = time.monotonic()
+        while not self._stop.wait(UK_CAA_LOCK_REFRESH_INTERVAL_SECONDS):
+            try:
+                if not self._r.eval(
+                    self._REFRESH, 1, UK_CAA_LOCK_KEY, self._token, UK_CAA_LOCK_TTL_SECONDS
+                ):
+                    self.lost = True
+                    return
+                refreshed_at = time.monotonic()
+            except Exception as exc:
+                logger.warning("Could not refresh the run lock: %s", exc)
+                if time.monotonic() - refreshed_at >= UK_CAA_LOCK_TTL_SECONDS:
+                    self.lost = True
+                    return
+
+    def release(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+        try:
+            self._r.eval(self._RELEASE, 1, UK_CAA_LOCK_KEY, self._token)
+        except Exception as exc:
+            logger.warning("Could not release the run lock: %s", exc)
+
+
+class _Client:
+    """Paces every G-INFO request and waits out refusals, within the run's
+    deadline."""
+
+    def __init__(
+        self,
+        session: requests.Session,
+        interval: float,
+        deadline: float = float("inf"),
+        lock: Optional[_RunLock] = None,
+    ):
+        self._session = session
+        self._interval = interval
+        self._deadline = deadline
+        self._lock = lock
+        self._accepted = 0
+
+    def _sleep(self, seconds: float) -> None:
+        if time.monotonic() + seconds >= self._deadline:
+            raise DeadlineReached("Maximum run time reached")
+        time.sleep(seconds)
+        if self._lock is not None and self._lock.lost:
+            raise LockLostError("Lost the run lock")
+
+    def request(self, method: str, url: str, **kwargs):
+        refusals = 0
+        transients = 0
+        waited = 0
+        while True:
+            self._sleep(self._interval)
+            try:
+                resp = getattr(self._session, method)(url, timeout=30, **kwargs)
+                resp.raise_for_status()
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status in _REFUSAL_STATUSES:
+                    if refusals == len(_REFUSAL_WAITS):
+                        raise RateLimitedError(
+                            f"Still refused with HTTP {status} after waiting {waited}s: {url}"
+                        ) from exc
+                    wait = max(_REFUSAL_WAITS[refusals], _retry_after_seconds(exc.response))
+                    _log_refusal(exc.response, url, self._accepted, wait)
+                    self._accepted = 0
+                    refusals += 1
+                    waited += wait
+                elif status is not None and status >= 500 and transients < len(_TRANSIENT_WAITS):
+                    wait = _TRANSIENT_WAITS[transients]
+                    transients += 1
+                else:
+                    raise
+            except (requests.ConnectionError, requests.Timeout):
+                if transients == len(_TRANSIENT_WAITS):
+                    raise
+                wait = _TRANSIENT_WAITS[transients]
+                transients += 1
+            else:
+                if refusals:
+                    logger.info("Accepted again after waiting %ds.", waited)
+                self._accepted += 1
+                return resp
+            self._sleep(wait)
+
+
+def _retry_after_seconds(response) -> int:
+    try:
+        seconds = int(response.headers.get("Retry-After"))
+    except (TypeError, ValueError):
+        return 0
+    return min(max(seconds, 0), _MAX_RETRY_AFTER_SECONDS)
+
+
+def _log_refusal(response, url: str, accepted: int, wait: int) -> None:
+    logger.warning(
+        "HTTP %d from %s after %d accepted requests; waiting %ds. "
+        "Retry-After=%s x-azure-ref=%s body=%r",
+        response.status_code,
+        url,
+        accepted,
+        wait,
+        response.headers.get("Retry-After"),
+        response.headers.get("x-azure-ref"),
+        _page_text(str(response.text))[:300],
+    )
+
+
+def _page_text(body: str) -> str:
+    body = re.sub(r"(?is)<(style|script)\b.*?</\1>|<!DOCTYPE[^>]*>|<[^>]+>", " ", body)
+    return " ".join(body.split())
+
+
+def _search_by_prefix(client: _Client, prefix: str) -> list[dict]:
     """POST /api/aircraft/search with a 2-letter registration prefix.
 
     Returns the raw result list; may include non-registered aircraft.
     """
     url = f"{API_BASE}/api/aircraft/search"
     logger.debug("Searching UK CAA G-INFO for prefix=%s at %s", prefix, url)
-    resp = session.post(
-        url,
-        json={"Registration": prefix},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json() or []
+    results = client.request("post", url, json={"Registration": prefix}).json() or []
+    if not isinstance(results, list):
+        raise ValueError(f"Unexpected search response: {type(results).__name__}")
+    return results
 
 
-def _get_aircraft_details(session: requests.Session, aircraft_id: int) -> Optional[dict]:
+def _get_aircraft_details(client: _Client, aircraft_id: int) -> Optional[dict]:
     """GET /api/aircraft/details/{aircraft_id}. Returns the parsed JSON payload."""
     url = f"{API_BASE}/api/aircraft/details/{aircraft_id}"
     logger.debug("Fetching UK CAA aircraft details from %s", url)
-    resp = session.get(
-        url,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return client.request("get", url).json()
 
 
-def run_pipeline(
-    session: requests.Session,
-    r: redis_lib.Redis,
-    ttl: int,
-    request_interval: float,
-) -> int:
-    """Enumerate all G-registered aircraft via AA-ZZ search and write to Redis.
-    Fetches and writes each prefix's details immediately, no accumulation.
-    Only details calls are rate-limited via request_interval. Returns the
-    count of records successfully written."""
-    count = 0
-    skipped = 0
-    errors = 0
-    retry_queue: list[int] = []
-    prefix_retry_queue: list[str] = []
+# ---------------------------------------------------------------------------
+# Search job
+# ---------------------------------------------------------------------------
 
-    for c1, c2 in product(_LETTERS, _LETTERS):
-        prefix = f"{c1}{c2}"
-        try:
-            results = _search_by_prefix(session, prefix)
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 403:
-                prefix_retry_queue.append(prefix)
-            else:
-                logger.warning("Search error for prefix %s: %s", prefix, exc)
+def _prefixes_longest_waiting_first(r: redis_lib.Redis) -> list[str]:
+    progress = r.hgetall(UK_CAA_SEARCH_PROGRESS_KEY)
+    prefixes = ["".join(pair) for pair in product(_LETTERS, _LETTERS)]
+    return sorted(prefixes, key=lambda p: (int(progress.get(p, 0)), p))
+
+
+# One AircraftID is listed under every mark the aircraft has held, so only a
+# non-registered result for the queued mark means it has been deregistered.
+_DELETE_IF_SAME_MARK = (
+    "local mark = redis.call('JSON.GET', KEYS[1], '.mark') "
+    "if mark and cjson.decode(mark) == ARGV[1] then "
+    "return redis.call('DEL', KEYS[1]) end return 0"
+)
+
+
+def _apply_search_results(r: redis_lib.Redis, results: list[dict], stats: dict) -> None:
+    """Create or renew a queue record for each registered aircraft, and delete
+    one whose own mark is no longer registered. Absence from the results
+    changes nothing."""
+    # Rows for one mark share a prefix, so they are always in the same result.
+    registered = {
+        (item.get("AircraftID"), (item.get("Mark") or "").strip())
+        for item in results if item.get("RegistrationStatus") == "R"
+    }
+    pipe = r.pipeline()
+    operations: list[Optional[str]] = []
+    for item in results:
+        aircraft_id = item.get("AircraftID")
+        status = item.get("RegistrationStatus")
+        if aircraft_id is None or not status:
             continue
+        key = uk_caa_queue_key(aircraft_id)
+        mark = (item.get("Mark") or "").strip()
+        if status != "R":
+            if (aircraft_id, mark) in registered:
+                continue
+            pipe.eval(_DELETE_IF_SAME_MARK, 1, key, mark)
+            operations.append("aircraft_removed")
+            continue
+        record = {"aircraft_id": aircraft_id, "mark": mark, "next_fetch_at": 0}
+        # NX keeps an existing record's next_fetch_at.
+        set_json(pipe, key, record, nx=True)
+        operations.append("aircraft_added")
+        pipe.json().set(key, "$.mark", mark, xx=True)
+        operations.append(None)
+        pipe.expire(key, UK_CAA_QUEUE_TTL_SECONDS)
+        operations.append(None)
+        stats["aircraft_found"] += 1
+    for operation, result in zip(operations, pipe.execute()):
+        if operation and result:
+            stats[operation] += 1
+
+
+def run_search(client: _Client, r: redis_lib.Redis, stats: dict) -> None:
+    """Search every prefix, updating the details queue. Raises
+    IncompleteRunError unless every prefix succeeds."""
+    for prefix in _prefixes_longest_waiting_first(r):
+        try:
+            results = _search_by_prefix(client, prefix)
+        except RunStoppedError:
+            raise
         except Exception as exc:
             logger.warning("Search error for prefix %s: %s", prefix, exc)
+            stats["prefixes_failed"] += 1
             continue
 
-        aircraft_ids = [
-            item.get("AircraftID")
-            for item in results
-            if item.get("RegistrationStatus") == "R" and item.get("AircraftID") is not None
-        ]
-        logger.info("G-%s*: %d registered (written so far: %d).", prefix, len(aircraft_ids), count)
+        _apply_search_results(r, results, stats)
+        r.hset(UK_CAA_SEARCH_PROGRESS_KEY, prefix, int(time.time()))
+        stats["prefixes_searched"] += 1
+        logger.info(
+            "G-%s*: %d results. Run totals: %d prefixes searched, "
+            "%d aircraft added, %d removed.",
+            prefix, len(results), stats["prefixes_searched"],
+            stats["aircraft_added"], stats["aircraft_removed"],
+        )
 
-        for aircraft_id in aircraft_ids:
-            try:
-                time.sleep(request_interval)
-                details = _get_aircraft_details(session, aircraft_id)
-            except requests.HTTPError as exc:
-                if exc.response is not None and exc.response.status_code == 403:
-                    retry_queue.append(aircraft_id)
-                else:
-                    logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
-                    errors += 1
-                continue
-            except Exception as exc:
-                logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
-                errors += 1
-                continue
+    if stats["prefixes_failed"]:
+        raise IncompleteRunError(f"{stats['prefixes_failed']} prefix searches failed")
 
-            reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
-            if reg_status != "Registered":
-                logger.debug("AircraftID=%d: Status is %r — skipping.", aircraft_id, reg_status)
-                skipped += 1
-                continue
 
-            record = _build_record(details)
-            if record is None:
-                logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
-                errors += 1
-                continue
+# ---------------------------------------------------------------------------
+# Details job
+# ---------------------------------------------------------------------------
 
-            _apply_type_lookup(record, r)
-            record["source"] = "uk-caa-registry"
-            record["country_code"] = "GB"
-            key = aircraft_registry_key(record["icao_hex"])
-            set_json(r, key, record)
-            r.expire(key, ttl)
-            count += 1
+def _queue_query(minimum, maximum, offset: int, limit: int) -> Query:
+    return (
+        Query(f"@next_fetch_at:[{minimum} {maximum}]")
+        .sort_by("next_fetch_at", asc=True)
+        .paging(offset, limit)
+    )
 
-    if prefix_retry_queue:
-        logger.info("Retrying %d prefixes that returned 403 (500ms interval)...", len(prefix_retry_queue))
-        for prefix in prefix_retry_queue:
-            time.sleep(0.5)
-            try:
-                results = _search_by_prefix(session, prefix)
-            except Exception as exc:
-                logger.warning("Retry failed for prefix %s: %s", prefix, exc)
-                errors += 1
-                continue
 
-            aircraft_ids = [
-                item.get("AircraftID")
-                for item in results
-                if item.get("RegistrationStatus") == "R" and item.get("AircraftID") is not None
-            ]
-            logger.info("G-%s* (retry): %d registered.", prefix, len(aircraft_ids))
+def _reschedule(r: redis_lib.Redis, key: str, delay: int) -> None:
+    """Move a queue record's next fetch. A path update keeps the TTL, and XX
+    leaves a deleted or expired record gone."""
+    r.json().set(key, "$.next_fetch_at", int(time.time()) + delay, xx=True)
 
-            for aircraft_id in aircraft_ids:
-                try:
-                    time.sleep(request_interval)
-                    details = _get_aircraft_details(session, aircraft_id)
-                except requests.HTTPError as exc:
-                    if exc.response is not None and exc.response.status_code == 403:
-                        retry_queue.append(aircraft_id)
-                    else:
-                        logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
-                        errors += 1
-                    continue
-                except Exception as exc:
-                    logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
-                    errors += 1
-                    continue
 
-                reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
-                if reg_status != "Registered":
-                    skipped += 1
-                    continue
+def _write_aircraft(r: redis_lib.Redis, record: dict) -> None:
+    _apply_type_lookup(record, r)
+    record["source"] = "uk-caa-registry"
+    record["country_code"] = "GB"
+    key = aircraft_registry_key(record["icao_hex"])
+    pipe = r.pipeline()
+    set_json(pipe, key, record)
+    pipe.expire(key, UK_CAA_REGISTRY_TTL_SECONDS)
+    pipe.execute()
 
-                record = _build_record(details)
-                if record is None:
-                    logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
-                    errors += 1
-                    continue
 
-                _apply_type_lookup(record, r)
-                record["source"] = "uk-caa-registry"
-                record["country_code"] = "GB"
-                key = aircraft_registry_key(record["icao_hex"])
-                set_json(r, key, record)
-                r.expire(key, ttl)
-                count += 1
+def _process_aircraft(client: _Client, r: redis_lib.Redis, key: str, stats: dict) -> None:
+    aircraft_id = int(key.rsplit(":", 1)[1])
+    try:
+        details = _get_aircraft_details(client, aircraft_id)
+        status = (details.get("RegistrationDetails") or {}).get("Status", "")
+        record = _build_record(details) if status == "Registered" else None
+    except RunStoppedError:
+        raise
+    except Exception as exc:
+        logger.warning("Error fetching details for AircraftID=%d: %s", aircraft_id, exc)
+        stats["requests_attempted"] += 1
+        stats["requests_failed"] += 1
+        _reschedule(r, key, UK_CAA_DETAILS_RETRY_BACKOFF_SECONDS)
+        return
 
-    if retry_queue:
-        logger.info("Retrying %d aircraft that returned 403 (500ms interval)...", len(retry_queue))
-        for aircraft_id in retry_queue:
-            time.sleep(0.5)
-            try:
-                details = _get_aircraft_details(session, aircraft_id)
-            except Exception as exc:
-                logger.warning("Retry failed for AircraftID=%d: %s", aircraft_id, exc)
-                errors += 1
-                continue
+    stats["requests_attempted"] += 1
+    if record is not None:
+        _write_aircraft(r, record)
+        stats["records_imported"] += 1
+    else:
+        logger.info(
+            "AircraftID=%d: no record written (status %r%s).", aircraft_id, status,
+            ", no ICAO address or mark" if status == "Registered" else "",
+        )
+    _reschedule(r, key, UK_CAA_DETAILS_REFRESH_INTERVAL_SECONDS)
 
-            reg_status = (details.get("RegistrationDetails") or {}).get("Status", "")
-            if reg_status != "Registered":
-                skipped += 1
-                continue
 
-            record = _build_record(details)
-            if record is None:
-                logger.warning("Could not build record for AircraftID=%d.", aircraft_id)
-                errors += 1
-                continue
+def run_details(client: _Client, r: redis_lib.Redis, limit: int, stats: dict) -> None:
+    """Fetch up to `limit` due aircraft, longest-due first. Raises
+    IncompleteRunError if nothing due could be fetched or too many requests
+    failed."""
+    cutoff = int(time.time())
+    seen: set[str] = set()
+    try:
+        while len(seen) < limit:
+            # Offset stays 0: each processed record leaves the filter.
+            query = _queue_query(
+                "-inf", cutoff, 0, min(_QUEUE_BATCH_SIZE, limit - len(seen))
+            ).no_content()
+            docs = r.ft(UK_CAA_QUEUE_SEARCH_INDEX).search(query).docs
+            keys = [doc.id for doc in docs if doc.id not in seen]
+            if not keys:
+                break
+            for key in keys:
+                _process_aircraft(client, r, key, stats)
+                seen.add(key)
+                if len(seen) % _QUEUE_BATCH_SIZE == 0:
+                    logger.info(
+                        "%d aircraft processed (%d written, %d failed).",
+                        len(seen), stats["records_imported"], stats["requests_failed"],
+                    )
+    except DeadlineReached:
+        if stats["requests_attempted"] == stats["requests_failed"]:
+            raise
+        logger.info("Maximum run time reached; the rest stay queued.")
 
-            _apply_type_lookup(record, r)
-            record["source"] = "uk-caa-registry"
-            record["country_code"] = "GB"
-            key = aircraft_registry_key(record["icao_hex"])
-            set_json(r, key, record)
-            r.expire(key, ttl)
-            count += 1
+    attempted, failed = stats["requests_attempted"], stats["requests_failed"]
+    if attempted and failed == attempted:
+        raise IncompleteRunError(f"All {attempted} requests failed")
+    if failed > attempted * _MAX_DETAIL_FAILURE_RATIO:
+        raise IncompleteRunError(f"{failed} of {attempted} requests failed")
 
-    logger.info("Finished: %d written, %d skipped, %d errors.", count, skipped, errors)
-    return count
+
+def queue_statistics(r: redis_lib.Redis) -> dict:
+    """Queue counts for reporting, computed by Redis without returning the
+    records. Failed fetches are rescheduled, so oldest_overdue_days measures
+    a backlog the limit or rate cannot clear."""
+    index = r.ft(UK_CAA_QUEUE_SEARCH_INDEX)
+    now = int(time.time())
+
+    def _count(query: str) -> int:
+        return index.search(Query(query).paging(0, 0)).total
+
+    oldest = index.search(
+        _queue_query(1, "+inf", 0, 1).return_field("next_fetch_at")
+    ).docs
+    overdue = max(0, now - int(float(oldest[0].next_fetch_at))) if oldest else 0
+    return {
+        "queue_size": _count("*"),
+        "aircraft_due": _count(f"@next_fetch_at:[-inf {now}]"),
+        "aircraft_never_fetched": _count("@next_fetch_at:[0 0]"),
+        "oldest_overdue_days": overdue // 86400,
+    }
 
 
 # ---------------------------------------------------------------------------
 # MQTT
 # ---------------------------------------------------------------------------
 
-def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> None:
+# job -> (statistic, friendly name, icon, state_class)
+_STATISTICS: dict[str, tuple] = {
+    "search": (
+        ("prefixes_searched", "Prefixes Searched", "mdi:magnify", "measurement"),
+        ("prefixes_failed", "Prefixes Failed", "mdi:alert-circle", "measurement"),
+        ("aircraft_found", "Aircraft Found", "mdi:airplane-search", "measurement"),
+        ("aircraft_added", "Aircraft Added", "mdi:airplane-plus", "measurement"),
+        ("aircraft_removed", "Aircraft Removed", "mdi:airplane-minus", "measurement"),
+    ),
+    "details": (
+        ("records_imported", "Records Imported", "mdi:airplane", "measurement"),
+        ("requests_failed", "Requests Failed", "mdi:alert-circle", "measurement"),
+        ("queue_size", "Queue Size", "mdi:tray-full", "measurement"),
+        ("aircraft_due", "Aircraft Due", "mdi:timer-sand", "measurement"),
+        ("aircraft_never_fetched", "Aircraft Never Fetched", "mdi:help-circle", "measurement"),
+        ("oldest_overdue_days", "Oldest Overdue Days", "mdi:calendar-alert", "measurement"),
+    ),
+}
+_RUN_STATISTICS = (
+    ("last_run_at", "Last Run At", "mdi:clock", None),
+    ("last_run_status", "Last Run Status", "mdi:check-circle", None),
+)
+# Published by the single weekly job these two jobs replaced.
+_RETIRED_STATISTICS = ("records_imported", "last_run_at", "last_run_status")
+
+
+def publish_completion_stats(cfg: dict, job: str, stats: dict, status: str) -> None:
     """Publish completion statistics to MQTT."""
     mc = cfg.get("mqtt")
     if not mc or not mc.get("host"):
@@ -530,17 +801,20 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
             client.loop_stop()
             return
 
-        base = MQTT_ROOT + "/statistic"
-        client.publish(f"{base}/records_imported", str(records_imported), retain=True)
+        base = f"{MQTT_ROOT}/{job}/statistic"
+        for name, *_ in _STATISTICS[job]:
+            if name in stats:
+                client.publish(f"{base}/{name}", str(stats[name]), retain=True)
         client.publish(f"{base}/last_run_at", run_at, retain=True)
         client.publish(f"{base}/last_run_status", status.capitalize(), retain=True)
 
-        _publish_ha_autodiscovery(client)
+        _publish_ha_autodiscovery(client, job)
+        _clear_retired_topics(client)
 
         time.sleep(0.5)
         client.loop_stop()
         client.disconnect()
-        logger.info("MQTT stats published (status=%s, records=%d).", status, records_imported)
+        logger.info("MQTT stats published (job=%s, status=%s).", job, status)
 
     except Exception as exc:
         logger.warning("MQTT publish failed: %s", exc)
@@ -550,7 +824,7 @@ def publish_completion_stats(cfg: dict, records_imported: int, status: str) -> N
             pass
 
 
-def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
+def _publish_ha_autodiscovery(client: mqtt.Client, job: str) -> None:
     device = build_ha_device(
         identifier="SkyFollower_runner_uk_caa_registry",
         name=f"SkyFollower United Kingdom {country_flag('GB')} CAA Registry Runner",
@@ -558,38 +832,99 @@ def _publish_ha_autodiscovery(client: mqtt.Client) -> None:
         configuration_url="https://brentio.github.io/SkyFollower/runners/uk-caa-registry.html",
     )
     publish_register(client, device)
-    stats = [
-        ("records_imported", "United Kingdom CAA Registry Records Imported", "mdi:airplane", "total_increasing", None),
-        ("last_run_at", "United Kingdom CAA Last Run At", "mdi:clock", None, None),
-        ("last_run_status", "United Kingdom CAA Last Run Status", "mdi:check-circle", None, None),
-    ]
-    for name, friendly_name, icon, state_class, unit in stats:
+    for name, label, icon, state_class in _STATISTICS[job] + _RUN_STATISTICS:
+        unique_id = f"SkyFollower_runner_uk_caa_registry_{job}_{name}"
         payload: dict = {
-            "state_topic": f"{MQTT_ROOT}/statistic/{name}",
-            "name": friendly_name,
-            "unique_id": f"SkyFollower_runner_uk_caa_registry_{name}",
-            "object_id": f"SkyFollower_runner_uk_caa_registry_{name}",
+            "state_topic": f"{MQTT_ROOT}/{job}/statistic/{name}",
+            "name": f"United Kingdom CAA {job.title()} {label}",
+            "unique_id": unique_id,
+            "object_id": unique_id,
             "device": device,
             "icon": icon,
         }
         if state_class:
             payload["state_class"] = state_class
-        if unit:
-            payload["unit_of_measurement"] = unit
         if name == "last_run_at":
             payload["device_class"] = "timestamp"
         client.publish(
-            f"homeassistant/sensor/SkyFollower_runner_uk_caa_registry_{name}/config",
-            json.dumps(payload),
-            retain=True,
+            f"homeassistant/sensor/{unique_id}/config", json.dumps(payload), retain=True
         )
+
+
+def _clear_retired_topics(client: mqtt.Client) -> None:
+    """An empty retained payload removes the topic, and with it the Home
+    Assistant entity."""
+    for name in _RETIRED_STATISTICS:
+        client.publish(
+            f"homeassistant/sensor/SkyFollower_runner_uk_caa_registry_{name}/config",
+            "", retain=True,
+        )
+        client.publish(f"{MQTT_ROOT}/statistic/{name}", "", retain=True)
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def run_job(
+    job: str,
+    session: requests.Session,
+    r: redis_lib.Redis,
+    request_interval: float,
+    details_limit: int,
+) -> tuple[str, dict]:
+    """Run one job under the lock. Returns (status, statistics)."""
+    max_runtime = (
+        UK_CAA_SEARCH_RUN_TIMEOUT_SECONDS if job == "search"
+        else UK_CAA_DETAILS_RUN_TIMEOUT_SECONDS
+    )
+    deadline = time.monotonic() + max_runtime
+    stats = {name: 0 for name, *_ in _STATISTICS[job]}
+    if job == "details":
+        stats = {"records_imported": 0, "requests_failed": 0, "requests_attempted": 0}
+    status = "failure"
+    try:
+        _ensure_search_index(r)
+        _ensure_queue_index(r)
+        lock = _RunLock(r)
+        if not lock.acquire(deadline):
+            raise IncompleteRunError("The other uk-caa-registry job did not finish in time")
+        try:
+            client = _Client(session, request_interval, deadline, lock)
+            if job == "search":
+                run_search(client, r, stats)
+            else:
+                run_details(client, r, details_limit, stats)
+        finally:
+            lock.release()
+        status = "success"
+        logger.info("UK CAA %s completed successfully: %s", job, stats)
+    except IncompleteRunError as exc:
+        logger.error("UK CAA %s incomplete: %s (%s)", job, exc, stats)
+    except Exception as exc:
+        logger.error("UK CAA %s failed: %s", job, exc, exc_info=True)
+
+    if job == "details":
+        try:
+            stats.update(queue_statistics(r))
+            logger.info("Queue: %s", {name: stats[name] for name in (
+                "queue_size", "aircraft_due", "aircraft_never_fetched", "oldest_overdue_days",
+            )})
+        except Exception as exc:
+            logger.warning("Could not read queue statistics: %s", exc)
+    return status, stats
+
+
+def _exit_on_sigterm(signum, frame) -> None:
+    # Unwinds the stack so a stopped run releases its lock.
+    sys.exit(128 + signum)
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    parser = argparse.ArgumentParser(description="UK CAA registry runner")
+    parser.add_argument("job", choices=sorted(_STATISTICS))
+    job = parser.parse_args(argv).job
+
     try:
         cfg = load_config("redis", "mqtt")
     except ConfigError as exc:
@@ -599,34 +934,29 @@ def main() -> None:
 
     configure_logging(cfg.get("log_level"))
 
-    rc = cfg["redis"]
-    r = build_redis_client(rc)
+    loader = ConfigLoader()
+    request_interval = loader.number("REQUEST_INTERVAL_SECONDS", DEFAULT_REQUEST_INTERVAL_SECONDS)
+    details_limit = loader.integer("DETAILS_LIMIT", DEFAULT_DETAILS_LIMIT)
+    try:
+        loader.raise_for_problems()
+    except ConfigError as exc:
+        logger.critical("%s", exc)
+        sys.exit(1)
 
-    ttl = ENRICHMENT_TTL_SECONDS
-    request_interval = cfg.get("request_interval_seconds", 0.1)
-
+    r = build_redis_client(cfg["redis"])
+    signal.signal(signal.SIGTERM, _exit_on_sigterm)
     session = requests.Session()
     session.headers.update({"User-Agent": "P5Software SkyFollower"})
 
-    status = "failure"
-    records_imported = 0
-
     try:
-        _ensure_search_index(r)
-        logger.info("Enumerating and enriching G-registered aircraft via AA-ZZ search...")
-        records_imported = run_pipeline(session, r, ttl, request_interval)
-        status = "success"
-        logger.info("UK CAA runner completed successfully. Records imported: %d", records_imported)
-
-    except Exception as exc:
-        logger.error("UK CAA runner failed: %s", exc, exc_info=True)
-
+        status, stats = run_job(job, session, r, request_interval, details_limit)
     finally:
         session.close()
-        try:
-            publish_completion_stats(cfg, records_imported, status)
-        except Exception as exc:
-            logger.warning("Failed to publish MQTT stats: %s", exc)
+
+    try:
+        publish_completion_stats(cfg, job, stats, status)
+    except Exception as exc:
+        logger.warning("Failed to publish MQTT stats: %s", exc)
 
     if status != "success":
         sys.exit(1)

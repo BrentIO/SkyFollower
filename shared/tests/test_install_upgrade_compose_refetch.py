@@ -30,6 +30,7 @@ _FUNCS = "\n".join(
     for n in (
         "fetch_role", "role_files", "role_compose_files", "role_data_dirs",
         "prune_superseded_images", "do_upgrade",
+        "stop_old_uk_caa_runs",
         "convert_generated_blocks", "init_instances_compose", "instance_ids",
         "write_instance_env", "write_receiver_env", "write_message_processor_env",
         "append_receiver_service", "append_message_processor_service",
@@ -48,6 +49,7 @@ BRANCH=""
 REF="main"
 INSTANCES_COMPOSE_FILE="docker-compose.instances.yaml"
 docker() { return 0; }
+prime_uk_caa_queue() { :; }
 http_get() { echo "FETCHED:${1}"; }
 provision_rabbitmq_users() { return 0; }
 """ + _FUNCS

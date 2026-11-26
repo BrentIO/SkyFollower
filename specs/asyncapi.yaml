@@ -1159,6 +1159,27 @@ channels:
       RunnerLastRunStatusMessage:
         $ref: '#/components/messages/RunnerLastRunStatusMessage'
 
+  ukCaaRegistryStatistic:
+    servers:
+      - $ref: '#/servers/mqtt'
+    address: 'SkyFollower/runner/uk-caa-registry/{job}/statistic/{statistic}'
+    description: >
+      The uk-caa-registry runner publishes per job instead of the common
+      runner topics above. Published once per run, retained. Both jobs
+      publish last_run_at and last_run_status; search also publishes
+      prefixes_searched, prefixes_failed, aircraft_found, aircraft_added and
+      aircraft_removed; details also publishes records_imported,
+      requests_failed, queue_size, aircraft_due, aircraft_never_fetched and
+      oldest_overdue_days.
+    parameters:
+      job:
+        description: "search or details"
+      statistic:
+        description: Statistic name, as listed in the channel description.
+    messages:
+      UkCaaRegistryStatisticMessage:
+        $ref: '#/components/messages/UkCaaRegistryStatisticMessage'
+
   # ── Management UI ─────────────────────────────────────────────────────────
   # A minimal MQTT presence only: enough for the backend to appear in Home
   # Assistant with its running version and start time. No telemetry loop --
@@ -1742,6 +1763,12 @@ operations:
     channel:
       $ref: '#/channels/runnerLastRunStatus'
     summary: Data runner publishes its run outcome
+
+  publishUkCaaRegistryStatistic:
+    action: send
+    channel:
+      $ref: '#/channels/ukCaaRegistryStatistic'
+    summary: UK CAA registry runner publishes a per-job statistic
 
 components:
 
@@ -2358,6 +2385,14 @@ components:
       contentType: text/plain
       payload:
         $ref: '#/components/schemas/RunnerLastRunAt'
+
+    UkCaaRegistryStatisticMessage:
+      name: UkCaaRegistryStatisticMessage
+      title: UK CAA registry runner statistic
+      summary: One statistic from a search or details run
+      contentType: text/plain
+      payload:
+        type: string
 
     RunnerLastRunStatusMessage:
       name: RunnerLastRunStatusMessage

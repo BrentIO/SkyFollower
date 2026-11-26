@@ -171,6 +171,30 @@ ENRICHMENT_TTL_SECONDS = 14 * 86400
 # ENRICHMENT_TTL_SECONDS because the upstream route data refreshes daily.
 ROUTE_TTL_SECONDS = 3 * 86400
 
+# --- UK CAA registry runner ---------------------------------------------
+
+# How often the search job and each aircraft's details fetch are due.
+UK_CAA_SEARCH_INTERVAL_SECONDS = 7 * 86400
+UK_CAA_DETAILS_REFRESH_INTERVAL_SECONDS = 28 * 86400
+
+# Delay before retrying a failed details request.
+UK_CAA_DETAILS_RETRY_BACKOFF_SECONDS = 86400
+
+# Both TTLs drop data only after two missed refreshes, without waiting for
+# a third. They apply to this runner's keys only.
+UK_CAA_QUEUE_TTL_SECONDS = 18 * 86400
+UK_CAA_REGISTRY_TTL_SECONDS = 70 * 86400
+
+# Longest a run may take, including any wait for the other job. The
+# schedules in docker-compose.core.yaml leave room for both.
+UK_CAA_SEARCH_RUN_TIMEOUT_SECONDS = 12 * 3600
+UK_CAA_DETAILS_RUN_TIMEOUT_SECONDS = 10 * 3600
+
+# The lock that keeps the two jobs from sharing CAA's rate limit.
+UK_CAA_LOCK_TTL_SECONDS = 300
+UK_CAA_LOCK_REFRESH_INTERVAL_SECONDS = 60
+UK_CAA_LOCK_POLL_INTERVAL_SECONDS = 60
+
 # --- Flight TTL default -------------------------------------------------
 
 # Fallback for flight_ttl_seconds when config:flight_ttl_seconds is unset.
@@ -260,6 +284,16 @@ assert HEARTBEAT_TTL_SECONDS > HEARTBEAT_INTERVAL_SECONDS, (
 
 assert ROUTE_TTL_SECONDS < ENRICHMENT_TTL_SECONDS, (
     "ROUTE_TTL_SECONDS is meant to be shorter than ENRICHMENT_TTL_SECONDS"
+)
+
+assert UK_CAA_REGISTRY_TTL_SECONDS > 2 * UK_CAA_DETAILS_REFRESH_INTERVAL_SECONDS, (
+    "UK_CAA_REGISTRY_TTL_SECONDS must outlast two missed details refreshes"
+)
+assert 2 * UK_CAA_SEARCH_INTERVAL_SECONDS < UK_CAA_QUEUE_TTL_SECONDS < 3 * UK_CAA_SEARCH_INTERVAL_SECONDS, (
+    "UK_CAA_QUEUE_TTL_SECONDS must expire between the second and third missed search"
+)
+assert UK_CAA_LOCK_TTL_SECONDS > 2 * UK_CAA_LOCK_REFRESH_INTERVAL_SECONDS, (
+    "UK_CAA_LOCK_TTL_SECONDS must tolerate a missed refresh"
 )
 
 assert MAP_STALE_TTL_SECONDS < MAP_HIDE_TTL_SECONDS, (

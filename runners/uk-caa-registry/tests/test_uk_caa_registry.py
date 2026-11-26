@@ -6,8 +6,9 @@ Covers:
 - Record builder (_build_record)
 - Search index helper (_ensure_search_index) — mocked
 - API helpers (_search_by_prefix, _get_aircraft_details) — mocked
-- Registration enumeration (enumerate_registrations) — mocked
-- Redis write logic (write_to_redis) — mocked
+- Request pacing and refusal handling — mocked
+- Search and details jobs, queue statistics — against real Redis Stack
+  (skipped when none is reachable on REDIS_HOST/REDIS_PORT)
 - MQTT completion stats — mocked
 """
 
@@ -18,8 +19,10 @@ import json
 import logging
 import os
 import sys
+import time
 from unittest.mock import MagicMock, patch
 
+import redis
 import requests
 
 import pytest
@@ -58,9 +61,37 @@ _build_record = _mod._build_record
 _apply_type_lookup = _mod._apply_type_lookup
 _search_by_prefix = _mod._search_by_prefix
 _get_aircraft_details = _mod._get_aircraft_details
-run_pipeline = _mod.run_pipeline
+run_search = _mod.run_search
+run_details = _mod.run_details
+DeadlineReached = _mod.DeadlineReached
+IncompleteRunError = _mod.IncompleteRunError
+RateLimitedError = _mod.RateLimitedError
+
+
+def _client(session):
+    return _mod._Client(session, 0)
+
+
+def _ok(payload):
+    resp = MagicMock()
+    resp.json.return_value = payload
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+def _http_error(status, headers=None):
+    error = MagicMock(status_code=status, headers=headers or {}, text="blocked")
+    resp = MagicMock()
+    resp.raise_for_status.side_effect = requests.HTTPError(response=error)
+    return resp
 publish_completion_stats = _mod.publish_completion_stats
-REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
+uk_caa_queue_key = _mod.uk_caa_queue_key
+UK_CAA_QUEUE_SEARCH_INDEX = _mod.UK_CAA_QUEUE_SEARCH_INDEX
+UK_CAA_SEARCH_PROGRESS_KEY = _mod.UK_CAA_SEARCH_PROGRESS_KEY
+UK_CAA_LOCK_KEY = _mod.UK_CAA_LOCK_KEY
+_QUEUE_TTL = _mod.UK_CAA_QUEUE_TTL_SECONDS
+_REGISTRY_TTL = _mod.UK_CAA_REGISTRY_TTL_SECONDS
+_REFRESH = _mod.UK_CAA_DETAILS_REFRESH_INTERVAL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
 
 
@@ -453,35 +484,35 @@ class TestSearchByPrefix:
 
     def test_posts_to_correct_url(self):
         session = self._make_session(_SEARCH_RESULT)
-        _search_by_prefix(session, "VA")
+        _search_by_prefix(_client(session), "VA")
         url = session.post.call_args.args[0]
         assert "/api/aircraft/search" in url
 
     def test_sends_registration_prefix(self):
         session = self._make_session(_SEARCH_RESULT)
-        _search_by_prefix(session, "VA")
+        _search_by_prefix(_client(session), "VA")
         payload = session.post.call_args.kwargs["json"]
         assert payload == {"Registration": "VA"}
 
     def test_returns_results_list(self):
         session = self._make_session(_SEARCH_RESULT)
-        results = _search_by_prefix(session, "VA")
+        results = _search_by_prefix(_client(session), "VA")
         assert results == _SEARCH_RESULT
 
     def test_empty_response_returns_empty_list(self):
         session = self._make_session([])
-        results = _search_by_prefix(session, "ZZ")
+        results = _search_by_prefix(_client(session), "ZZ")
         assert results == []
 
     def test_none_response_returns_empty_list(self):
         session = self._make_session(None)
-        results = _search_by_prefix(session, "ZZ")
+        results = _search_by_prefix(_client(session), "ZZ")
         assert results == []
 
     def test_logs_url_and_prefix_at_debug(self, caplog):
         session = self._make_session(_SEARCH_RESULT)
         with caplog.at_level(logging.DEBUG, logger="uk-caa-registry"):
-            _search_by_prefix(session, "VA")
+            _search_by_prefix(_client(session), "VA")
         assert any(
             "/api/aircraft/search" in r.message and "VA" in r.message
             for r in caplog.records
@@ -503,430 +534,460 @@ class TestGetAircraftDetails:
 
     def test_gets_correct_url(self):
         session = self._make_session(_make_details())
-        _get_aircraft_details(session, 66819)
+        _get_aircraft_details(_client(session), 66819)
         url = session.get.call_args.args[0]
         assert "/api/aircraft/details/66819" in url
 
     def test_returns_parsed_json(self):
         details = _make_details()
         session = self._make_session(details)
-        result = _get_aircraft_details(session, 66819)
+        result = _get_aircraft_details(_client(session), 66819)
         assert result == details
 
     def test_logs_url_at_debug(self, caplog):
         session = self._make_session(_make_details())
         with caplog.at_level(logging.DEBUG, logger="uk-caa-registry"):
-            _get_aircraft_details(session, 66819)
+            _get_aircraft_details(_client(session), 66819)
         assert any(
             "/api/aircraft/details/66819" in r.message for r in caplog.records
         )
 
 
 # ---------------------------------------------------------------------------
-# Tests: run_pipeline
+# Tests: request pacing and refusals
 # ---------------------------------------------------------------------------
 
-class TestRunPipeline:
-    def _make_redis(self) -> MagicMock:
-        r = MagicMock()
-        r.json.return_value = MagicMock()
-        # No aircraft:type match by default, so existing assertions on the
-        # written record aren't polluted by a MagicMock manufacturer_model
-        # value; tests that exercise the lookup override this explicitly.
-        r.json.return_value.get.return_value = None
-        return r
-
-    def _make_session(self, search_results: list, details: dict) -> MagicMock:
+class TestClient:
+    def _request(self, responses, interval=1.0, deadline=float("inf")):
         session = MagicMock()
+        session.get.side_effect = responses
+        sleeps = []
+        client = _mod._Client(session, interval, deadline)
+        with patch("time.sleep", side_effect=sleeps.append):
+            client.request("get", "https://example.invalid/x")
+        return session, sleeps
 
-        search_resp = MagicMock()
-        search_resp.json.return_value = search_results
-        search_resp.raise_for_status.return_value = None
-        session.post.return_value = search_resp
+    def test_every_request_is_paced(self):
+        _, sleeps = self._request([_ok([])], interval=0.25)
+        assert sleeps == [0.25]
 
-        details_resp = MagicMock()
-        details_resp.json.return_value = details
-        details_resp.raise_for_status.return_value = None
-        session.get.return_value = details_resp
+    @pytest.mark.parametrize("status", [403, 429])
+    def test_refusal_is_retried_after_waiting(self, status):
+        session, sleeps = self._request([_http_error(status), _ok([])])
+        assert sleeps == [1.0, 65, 1.0]
+        assert session.get.call_count == 2
 
-        return session
+    def test_waits_increase_then_request_gives_up(self):
+        session = MagicMock()
+        session.get.return_value = _http_error(403)
+        sleeps = []
+        with patch("time.sleep", side_effect=sleeps.append):
+            with pytest.raises(RateLimitedError):
+                _mod._Client(session, 1.0).request("get", "u")
+        assert [s for s in sleeps if s != 1.0] == [65, 120, 300, 600, 900]
+        assert session.get.call_count == 6
 
-    def test_searches_all_676_prefixes(self):
-        r = self._make_redis()
-        session = self._make_session([], _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        assert session.post.call_count == 676
+    @pytest.mark.parametrize("header, expected", [
+        ("200", 200), ("5", 65), ("999999", 3600), ("soon", 65),
+    ])
+    def test_retry_after_header(self, header, expected):
+        _, sleeps = self._request([_http_error(429, {"Retry-After": header}), _ok([])])
+        assert sleeps[1] == expected
 
-    def test_manufacturer_model_set_from_type_lookup_end_to_end(self):
-        r = self._make_redis()
-        r.json.return_value.get.return_value = {
-            "manufacturer_model": "BOEING 787-9 (Dreamliner)",
+    def test_refusal_is_logged_with_diagnostics(self, caplog):
+        with caplog.at_level(logging.INFO, logger="uk-caa-registry"):
+            self._request([_http_error(403, {"x-azure-ref": "abc123"}), _ok([])])
+        assert "after 0 accepted requests" in caplog.text
+        assert "x-azure-ref=abc123" in caplog.text
+        assert "blocked" in caplog.text
+        assert "Accepted again after waiting 65s" in caplog.text
+
+    def test_error_page_is_logged_as_plain_text(self):
+        page = "<!DOCTYPE html><html><style>body { }</style>\n<h2>Request  blocked</h2></html>"
+        assert _mod._page_text(page) == "Request blocked"
+
+    @pytest.mark.parametrize("failure", [_http_error(503), requests.ConnectionError()])
+    def test_transient_error_is_retried(self, failure):
+        _, sleeps = self._request([failure, _ok([])])
+        assert sleeps[1] == 2
+
+    def test_wait_past_the_deadline_stops_without_sleeping(self):
+        with patch.object(_mod.time, "monotonic", return_value=1000.0):
+            with pytest.raises(DeadlineReached):
+                self._request([_http_error(403)], deadline=1030.0)
+
+    def test_lost_lock_stops_requests(self):
+        lock = MagicMock(lost=True)
+        session = MagicMock()
+        with patch("time.sleep"), pytest.raises(_mod.LockLostError):
+            _mod._Client(session, 0, lock=lock).request("get", "u")
+        session.get.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Real Redis Stack
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def r():
+    client = redis.Redis(
+        host=os.environ.get("REDIS_HOST", "localhost"),
+        port=int(os.environ.get("REDIS_PORT", "6379")),
+        password=os.environ.get("REDIS_PASSWORD") or None,
+        decode_responses=True,
+        socket_connect_timeout=1,
+    )
+    try:
+        client.ft(UK_CAA_QUEUE_SEARCH_INDEX)
+        client.execute_command("FT._LIST")
+    except redis.exceptions.RedisError:
+        pytest.skip("Redis Stack is not reachable")
+
+    def _clean():
+        keys = [k for pattern in ("uk_caa:*", "aircraft:registry:FF*", "aircraft:type:ZZ*")
+                for k in client.scan_iter(pattern)]
+        if keys:
+            client.delete(*keys)
+
+    _clean()
+    _mod._ensure_queue_index(client)
+    yield client
+    _clean()
+
+
+def _queue(r, aircraft_id, next_fetch_at=0, ttl=1000):
+    key = uk_caa_queue_key(aircraft_id)
+    r.json().set(key, "$", {"aircraft_id": aircraft_id, "mark": "VAHH",
+                            "next_fetch_at": next_fetch_at})
+    r.expire(key, ttl)
+    return key
+
+
+def _next_fetch(r, key):
+    return r.json().get(key)["next_fetch_at"]
+
+
+class _Caa:
+    """Stands in for _Client: answers searches by prefix, details by id."""
+
+    def __init__(self, searches=None, details=None):
+        self.searches = searches or {}
+        self.details = details or {}
+        self.requested = []
+
+    def request(self, method, url, **kwargs):
+        if method == "post":
+            target = kwargs["json"]["Registration"]
+            answer = self.searches.get(target, [])
+        else:
+            target = int(url.rsplit("/", 1)[1])
+            answer = self.details.get(target, _make_details(icao_hex=f"FF{target:04X}"))
+        self.requested.append(target)
+        if isinstance(answer, Exception):
+            raise answer
+        return _ok(answer)
+
+
+def _search_stats():
+    return {name: 0 for name, *_ in _mod._STATISTICS["search"]}
+
+
+def _details_stats():
+    return {"records_imported": 0, "requests_failed": 0, "requests_attempted": 0}
+
+
+def _result(aircraft_id, status="R", mark="VAHH"):
+    return {"AircraftID": aircraft_id, "Mark": mark, "RegistrationStatus": status}
+
+
+# ---------------------------------------------------------------------------
+# Tests: search job
+# ---------------------------------------------------------------------------
+
+@pytest.mark.xdist_group("uk_caa_redis")
+class TestRunSearch:
+    def test_creates_a_due_record_only_for_registered_aircraft(self, r):
+        stats = _search_stats()
+        run_search(_Caa({"AA": [_result(1), _result(2, "D")]}), r, stats)
+        assert r.json().get(uk_caa_queue_key(1)) == {
+            "aircraft_id": 1, "mark": "VAHH", "next_fetch_at": 0,
         }
-        session = self._make_session(_SEARCH_RESULT, _make_details(type_designator="B789"))
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        written = r.json.return_value.set.call_args.args[2]
-        assert written["aircraft"]["manufacturer_model"] == "BOEING 787-9 (Dreamliner)"
-
-    def test_includes_first_prefix_aa(self):
-        r = self._make_redis()
-        session = self._make_session([], _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        called_prefixes = [c.kwargs["json"]["Registration"] for c in session.post.call_args_list]
-        assert "AA" in called_prefixes
-
-    def test_includes_last_prefix_zz(self):
-        r = self._make_redis()
-        session = self._make_session([], _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        called_prefixes = [c.kwargs["json"]["Registration"] for c in session.post.call_args_list]
-        assert "ZZ" in called_prefixes
-
-    def test_writes_record_for_registered_result(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details())
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-        assert count == 676  # one registered result per prefix
-
-    def test_filters_non_registered_status(self):
-        r = self._make_redis()
-        search_results = [{"AircraftID": 1, "RegistrationStatus": "D"}]
-        session = self._make_session(search_results, _make_details())
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-        assert count == 0
-        r.json.return_value.set.assert_not_called()
-
-    def test_writes_to_correct_key(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        key_arg = r.json.return_value.set.call_args.args[0]
-        assert key_arg == "aircraft:registry:406B48"
-
-    def test_writes_at_root_path(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        assert r.json.return_value.set.call_args.args[1] == "$"
-
-    def test_writes_source_field(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        written = r.json.return_value.set.call_args.args[2]
-        assert written["source"] == "uk-caa-registry"
-
-    def test_null_fields_omitted_from_written_record(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details(county=None))
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        written = r.json.return_value.set.call_args.args[2]
-        assert "administrative_area" not in written.get("registrant", {})
-
-    def test_no_foreign_key_in_record(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        written = r.json.return_value.set.call_args.args[2]
-        assert "foreign_key" not in written
-
-    def test_fire_and_forget_no_mget(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        r.json.return_value.mget.assert_not_called()
-
-    def test_expire_correct_ttl(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details())
-        with patch("time.sleep"):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        r.expire.assert_called_with("aircraft:registry:406B48", REDIS_TTL)
-
-    def test_search_error_skips_prefix_continues(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        bad_resp = MagicMock()
-        bad_resp.raise_for_status.side_effect = Exception("HTTP 503")
-
-        good_resp = MagicMock()
-        good_resp.json.return_value = []
-        good_resp.raise_for_status.return_value = None
-
-        session.post.side_effect = [bad_resp] + [good_resp] * 675
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert session.post.call_count == 676
-        assert count == 0
-
-    def test_prefix_403_queued_and_retried(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        error_resp = MagicMock()
-        error_resp.status_code = 403
-        bad_search = MagicMock()
-        bad_search.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        good_search = MagicMock()
-        good_search.json.return_value = _SEARCH_RESULT
-        good_search.raise_for_status.return_value = None
-
-        empty_search = MagicMock()
-        empty_search.json.return_value = []
-        empty_search.raise_for_status.return_value = None
-
-        # First prefix (AA) returns 403; remaining 675 return empty; retry returns a result
-        session.post.side_effect = [bad_search] + [empty_search] * 675 + [good_search]
-
-        details_resp = MagicMock()
-        details_resp.json.return_value = _make_details()
-        details_resp.raise_for_status.return_value = None
-        session.get.return_value = details_resp
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 1
-        assert session.post.call_count == 677  # 676 main + 1 retry
-
-    def test_prefix_403_retry_uses_500ms_sleep(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        error_resp = MagicMock()
-        error_resp.status_code = 403
-        bad_search = MagicMock()
-        bad_search.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        empty_search = MagicMock()
-        empty_search.json.return_value = []
-        empty_search.raise_for_status.return_value = None
-
-        # First prefix returns 403; retry returns empty
-        session.post.side_effect = [bad_search] + [empty_search] * 675 + [empty_search]
-
-        sleep_calls = []
-        with patch("time.sleep", side_effect=lambda x: sleep_calls.append(x)):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert 0.5 in sleep_calls
-
-    def test_prefix_non_403_not_retried(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        error_resp = MagicMock()
-        error_resp.status_code = 503
-        bad_search = MagicMock()
-        bad_search.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        empty_search = MagicMock()
-        empty_search.json.return_value = []
-        empty_search.raise_for_status.return_value = None
-
-        session.post.side_effect = [bad_search] + [empty_search] * 675
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 0
-        assert session.post.call_count == 676  # no retry
-
-    def test_detail_403_during_prefix_retry_is_retried(self):
-        """Aircraft that 403 during a prefix retry must still be retried via retry_queue."""
-        r = self._make_redis()
-        session = MagicMock()
-
-        prefix_403_resp = MagicMock()
-        prefix_403_resp.status_code = 403
-        bad_search = MagicMock()
-        bad_search.raise_for_status.side_effect = requests.HTTPError(response=prefix_403_resp)
-
-        good_search = MagicMock()
-        good_search.json.return_value = _SEARCH_RESULT
-        good_search.raise_for_status.return_value = None
-
-        empty_search = MagicMock()
-        empty_search.json.return_value = []
-        empty_search.raise_for_status.return_value = None
-
-        # Main loop: first prefix 403, rest empty; prefix retry returns a result
-        session.post.side_effect = [bad_search] + [empty_search] * 675 + [good_search]
-
-        detail_403_resp = MagicMock()
-        detail_403_resp.status_code = 403
-        detail_403 = MagicMock()
-        detail_403.raise_for_status.side_effect = requests.HTTPError(response=detail_403_resp)
-
-        good_detail = MagicMock()
-        good_detail.json.return_value = _make_details()
-        good_detail.raise_for_status.return_value = None
-
-        # Detail 403 during prefix retry, then success in aircraft retry_queue pass
-        session.get.side_effect = [detail_403, good_detail]
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 1
-
-    def test_details_error_skips_and_continues(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-        session.post.return_value = search_resp
-
-        error_resp = MagicMock()
-        error_resp.raise_for_status.side_effect = Exception("HTTP 503")
-        session.get.return_value = error_resp
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 0
-        r.json.return_value.set.assert_not_called()
-
-    def test_skips_non_registered_details_status(self):
-        r = self._make_redis()
-        session = self._make_session(_SEARCH_RESULT, _make_details(reg_status="De-registered"))
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-        assert count == 0
-        r.json.return_value.set.assert_not_called()
-
-    def test_no_sleep_between_search_calls(self):
-        r = self._make_redis()
-        session = self._make_session([], _make_details())
-        sleep_calls = []
-        with patch("time.sleep", side_effect=lambda x: sleep_calls.append(x)):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        # No registered aircraft → no details calls → no sleeps at all
-        assert sleep_calls == []
-
-    def test_403_queued_for_retry(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-        session.post.return_value = search_resp
-
-        error_resp = MagicMock()
-        error_resp.status_code = 403
-        details_403 = MagicMock()
-        details_403.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        good_details = MagicMock()
-        good_details.json.return_value = _make_details()
-        good_details.raise_for_status.return_value = None
-
-        # First details call → 403, retry → success
-        session.get.side_effect = [details_403] * 676 + [good_details] * 676
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 676
-
-    def test_403_retry_uses_500ms_sleep(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        # Only first prefix returns a result
-        search_hit = MagicMock()
-        search_hit.json.return_value = _SEARCH_RESULT
-        search_hit.raise_for_status.return_value = None
-
-        search_empty = MagicMock()
-        search_empty.json.return_value = []
-        search_empty.raise_for_status.return_value = None
-
-        session.post.side_effect = [search_hit] + [search_empty] * 675
-
-        error_resp = MagicMock()
-        error_resp.status_code = 403
-        details_403 = MagicMock()
-        details_403.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        good_details = MagicMock()
-        good_details.json.return_value = _make_details()
-        good_details.raise_for_status.return_value = None
-
-        session.get.side_effect = [details_403, good_details]
-
-        sleep_calls = []
-        with patch("time.sleep", side_effect=lambda x: sleep_calls.append(x)):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert 0.5 in sleep_calls
-
-    def test_non_403_http_error_not_retried(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-        session.post.return_value = search_resp
-
-        error_resp = MagicMock()
-        error_resp.status_code = 500
-        details_500 = MagicMock()
-        details_500.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-        session.get.return_value = details_500
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 0
-        # Details called 676 times (once per prefix hit) — no retries
-        assert session.get.call_count == 676
-
-    def test_sleep_only_before_details_calls(self):
-        r = self._make_redis()
-        # Two registered results from every prefix would be excessive; use a single prefix result
-        session = MagicMock()
-        search_empty = MagicMock()
-        search_empty.json.return_value = []
-        search_empty.raise_for_status.return_value = None
-
-        search_hit = MagicMock()
-        search_hit.json.return_value = _SEARCH_RESULT
-        search_hit.raise_for_status.return_value = None
-
-        details_resp = MagicMock()
-        details_resp.json.return_value = _make_details()
-        details_resp.raise_for_status.return_value = None
-
-        # Only first prefix (AA) returns a result
-        session.post.side_effect = [search_hit] + [search_empty] * 675
-        session.get.return_value = details_resp
-
-        sleep_calls = []
-        with patch("time.sleep", side_effect=lambda x: sleep_calls.append(x)):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        # Exactly one sleep — before the one details call
-        assert sleep_calls == [0.1]
+        assert not r.exists(uk_caa_queue_key(2))
+        assert _QUEUE_TTL - 60 < r.ttl(uk_caa_queue_key(1)) <= _QUEUE_TTL
+        assert (stats["aircraft_found"], stats["aircraft_added"], stats["aircraft_removed"]) == (1, 1, 0)
+
+    def test_known_aircraft_is_renewed_without_resetting_next_fetch_at(self, r):
+        key = _queue(r, 1, next_fetch_at=12345, ttl=50)
+        stats = _search_stats()
+        run_search(_Caa({"AA": [_result(1, mark="VNEW")]}), r, stats)
+        assert r.json().get(key) == {"aircraft_id": 1, "mark": "VNEW", "next_fetch_at": 12345}
+        assert r.ttl(key) > 50
+        assert stats["aircraft_added"] == 0
+
+    def test_non_registered_result_deletes_only_the_queue_record(self, r):
+        key = _queue(r, 1)
+        r.json().set("aircraft:registry:FF0001", "$", {"source": "uk-caa-registry"})
+        stats = _search_stats()
+        run_search(_Caa({"AA": [_result(1, "D")]}), r, stats)
+        assert not r.exists(key)
+        assert r.exists("aircraft:registry:FF0001")
+        assert stats["aircraft_removed"] == 1
+
+    @pytest.mark.parametrize("results", [
+        [_result(1, "R", "AFRZ"), _result(1, "D", "AIDE")],
+        [_result(1, "D", "AIDE"), _result(1, "R", "AFRZ")],
+    ])
+    def test_old_mark_does_not_remove_a_registered_aircraft(self, r, results):
+        stats = _search_stats()
+        run_search(_Caa({"AA": results[:1], "AB": results[1:]}), r, stats)
+        assert r.json().get(uk_caa_queue_key(1))["mark"] == "AFRZ"
+        assert stats["aircraft_removed"] == 0
+
+    @pytest.mark.parametrize("statuses", [("R", "D"), ("D", "R")])
+    def test_history_row_for_the_same_mark_does_not_remove_it(self, r, statuses):
+        key = _queue(r, 1, next_fetch_at=12345)
+        run_search(_Caa({"AA": [_result(1, status) for status in statuses]}), r, _search_stats())
+        assert _next_fetch(r, key) == 12345
+
+    def test_old_mark_leaves_the_schedule_of_a_known_aircraft(self, r):
+        key = _queue(r, 1, next_fetch_at=12345)
+        run_search(_Caa({"AA": [_result(1, "D", "AOLD")]}), r, _search_stats())
+        assert _next_fetch(r, key) == 12345
+
+    def test_missing_and_failed_results_delete_nothing(self, r):
+        key = _queue(r, 1, ttl=500)
+        with pytest.raises(IncompleteRunError):
+            run_search(_Caa({"AB": ValueError("boom")}), r, _search_stats())
+        assert r.exists(key)
+        assert r.ttl(key) <= 500
+
+    def test_every_prefix_is_searched_and_failures_are_not_marked(self, r):
+        caa = _Caa({"AB": ValueError("boom")})
+        stats = _search_stats()
+        with pytest.raises(IncompleteRunError):
+            run_search(caa, r, stats)
+        assert len(caa.requested) == 676
+        assert (stats["prefixes_searched"], stats["prefixes_failed"]) == (675, 1)
+        progress = r.hgetall(UK_CAA_SEARCH_PROGRESS_KEY)
+        assert len(progress) == 675 and "AB" not in progress
+        assert r.ttl(UK_CAA_SEARCH_PROGRESS_KEY) == -1
+
+    def test_longest_waiting_prefixes_go_first(self, r):
+        every = [a + b for a in _mod._LETTERS for b in _mod._LETTERS]
+        r.hset(UK_CAA_SEARCH_PROGRESS_KEY, mapping={p: 1000 for p in every})
+        r.hset(UK_CAA_SEARCH_PROGRESS_KEY, "ZZ", 1)
+        r.hdel(UK_CAA_SEARCH_PROGRESS_KEY, "MM")
+        caa = _Caa()
+        run_search(caa, r, _search_stats())
+        assert caa.requested[:3] == ["MM", "ZZ", "AA"]
+
+    def test_blocked_run_resumes_with_the_unsearched_prefixes(self, r):
+        with pytest.raises(RateLimitedError):
+            run_search(_Caa({"AC": RateLimitedError("refused")}), r, _search_stats())
+        caa = _Caa()
+        run_search(caa, r, _search_stats())
+        assert caa.requested[0] == "AC"
+        assert caa.requested[-2:] == ["AA", "AB"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: details job
+# ---------------------------------------------------------------------------
+
+@pytest.mark.xdist_group("uk_caa_redis")
+class TestRunDetails:
+    def test_fetches_only_due_aircraft_longest_due_first_up_to_limit(self, r):
+        now = int(time.time())
+        _queue(r, 1, now - 10)
+        _queue(r, 2, 0)
+        _queue(r, 3, now - 500)
+        _queue(r, 4, now + 500)
+        caa = _Caa()
+        run_details(caa, r, 2, _details_stats())
+        assert caa.requested == [2, 3]
+
+    def test_reads_in_batches_without_skipping(self, r):
+        for aircraft_id in range(1, 8):
+            _queue(r, aircraft_id, aircraft_id)
+        caa = _Caa()
+        with patch.object(_mod, "_QUEUE_BATCH_SIZE", 3):
+            run_details(caa, r, 100, _details_stats())
+        assert caa.requested == list(range(1, 8))
+
+    def test_success_writes_record_and_schedules_next_fetch(self, r):
+        key = _queue(r, 1, ttl=900)
+        r.json().set("aircraft:type:ZZZZ", "$", {"manufacturer_model": "TEST MODEL"})
+        stats = _details_stats()
+        run_details(_Caa(details={1: _make_details(icao_hex="FF0001", type_designator="ZZZZ")}),
+                    r, 10, stats)
+        record = r.json().get("aircraft:registry:FF0001")
+        assert record["source"] == "uk-caa-registry"
+        assert record["country_code"] == "GB"
+        assert record["aircraft"]["manufacturer_model"] == "TEST MODEL"
+        assert _REGISTRY_TTL - 60 < r.ttl("aircraft:registry:FF0001") <= _REGISTRY_TTL
+        assert _next_fetch(r, key) == pytest.approx(time.time() + _REFRESH, abs=60)
+        assert 800 < r.ttl(key) <= 900
+        assert stats["records_imported"] == 1
+
+    def test_failed_request_retries_in_a_day_and_renews_nothing(self, r):
+        key = _queue(r, 1, ttl=900)
+        r.json().set("aircraft:registry:FF0001", "$", {"source": "uk-caa-registry"})
+        r.expire("aircraft:registry:FF0001", 100)
+        with pytest.raises(IncompleteRunError):
+            run_details(_Caa(details={1: ValueError("boom")}), r, 10, _details_stats())
+        assert _next_fetch(r, key) == pytest.approx(time.time() + 86400, abs=60)
+        assert r.ttl(key) <= 900
+        assert r.ttl("aircraft:registry:FF0001") <= 100
+
+    @pytest.mark.parametrize("payload", [
+        _make_details(icao_hex="FF0001", reg_status="De-registered"),
+        _make_details(icao_hex=""),
+    ])
+    def test_unusable_answer_waits_a_full_cycle_and_is_not_a_failure(self, r, payload):
+        key = _queue(r, 1)
+        stats = _details_stats()
+        run_details(_Caa(details={1: payload}), r, 10, stats)
+        assert r.exists(key)
+        assert _next_fetch(r, key) == pytest.approx(time.time() + _REFRESH, abs=60)
+        assert not r.exists("aircraft:registry:FF0001")
+        assert (stats["records_imported"], stats["requests_failed"]) == (0, 0)
+
+    def test_record_removed_during_the_fetch_is_not_recreated(self, r):
+        key = _queue(r, 1)
+
+        class Removing(_Caa):
+            def request(self, *args, **kwargs):
+                r.delete(key)
+                return super().request(*args, **kwargs)
+
+        run_details(Removing(), r, 10, _details_stats())
+        assert not r.exists(key)
+
+    def test_few_failures_still_succeed(self, r):
+        for aircraft_id in range(1, 101):
+            _queue(r, aircraft_id, aircraft_id)
+        stats = _details_stats()
+        run_details(_Caa(details={5: ValueError("boom")}), r, 100, stats)
+        assert (stats["records_imported"], stats["requests_failed"]) == (99, 1)
+
+    def test_more_than_one_percent_failures_is_incomplete(self, r):
+        for aircraft_id in range(1, 101):
+            _queue(r, aircraft_id, aircraft_id)
+        with pytest.raises(IncompleteRunError):
+            run_details(_Caa(details={5: ValueError("a"), 6: ValueError("b")}),
+                        r, 100, _details_stats())
+
+    def test_refusal_stops_the_run_and_leaves_the_aircraft_due(self, r):
+        _queue(r, 1, 1)
+        key = _queue(r, 2, 2)
+        stats = _details_stats()
+        with pytest.raises(RateLimitedError):
+            run_details(_Caa(details={2: RateLimitedError("refused")}), r, 10, stats)
+        assert _next_fetch(r, key) == 2
+        assert stats["records_imported"] == 1
+
+    def test_deadline_after_progress_is_success(self, r):
+        _queue(r, 1, 1)
+        _queue(r, 2, 2)
+        stats = _details_stats()
+        run_details(_Caa(details={2: DeadlineReached("time")}), r, 10, stats)
+        assert stats["records_imported"] == 1
+
+    def test_deadline_without_progress_is_incomplete(self, r):
+        _queue(r, 1)
+        with pytest.raises(DeadlineReached):
+            run_details(_Caa(details={1: DeadlineReached("time")}), r, 10, _details_stats())
+
+    def test_nothing_due_succeeds(self, r):
+        _queue(r, 1, int(time.time()) + 500)
+        caa = _Caa()
+        run_details(caa, r, 10, _details_stats())
+        assert caa.requested == []
+
+    def test_queue_statistics(self, r):
+        now = int(time.time())
+        _queue(r, 1, 0)
+        _queue(r, 2, now - 3 * 86400 - 60)
+        _queue(r, 3, now - 60)
+        _queue(r, 4, now + 500)
+        assert _mod.queue_statistics(r) == {
+            "queue_size": 4, "aircraft_due": 3,
+            "aircraft_never_fetched": 1, "oldest_overdue_days": 3,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Tests: run lock and job runner
+# ---------------------------------------------------------------------------
+
+@pytest.mark.xdist_group("uk_caa_redis")
+class TestRunLock:
+    def test_second_holder_waits_until_released(self, r):
+        first = _mod._RunLock(r)
+        assert first.acquire(float("inf"))
+        with patch("time.sleep", side_effect=lambda _: first.release()):
+            second = _mod._RunLock(r)
+            assert second.acquire(float("inf"))
+        second.release()
+        assert not r.exists(UK_CAA_LOCK_KEY)
+
+    def test_gives_up_at_the_deadline_and_leaves_the_holder_alone(self, r):
+        r.set(UK_CAA_LOCK_KEY, "other")
+        assert not _mod._RunLock(r).acquire(time.monotonic() + 1)
+        _mod._RunLock(r).release()
+        assert r.get(UK_CAA_LOCK_KEY) == "other"
+
+    def test_job_releases_the_lock_after_a_failure(self, r):
+        _queue(r, 1)
+        with patch.object(_mod, "_get_aircraft_details", side_effect=ValueError("boom")):
+            status, stats = _mod.run_job("details", MagicMock(), r, 0, 10)
+        assert status == "failure"
+        assert stats["requests_failed"] == 1 and stats["queue_size"] == 1
+        assert not r.exists(UK_CAA_LOCK_KEY)
+
+
+# ---------------------------------------------------------------------------
+# Tests: main
+# ---------------------------------------------------------------------------
+
+class TestMain:
+    def _run_main(self, monkeypatch, job, status="success"):
+        monkeypatch.setenv("REDIS_HOST", "localhost")
+        monkeypatch.setenv("REDIS_PASSWORD", "x")
+        with patch.object(_mod, "build_redis_client"), \
+                patch.object(_mod, "configure_logging"), \
+                patch.object(_mod, "run_job", return_value=(status, {"a": 1})) as run, \
+                patch.object(_mod, "publish_completion_stats") as publish:
+            _mod.main([job])
+        return run, publish
+
+    def test_defaults(self, monkeypatch):
+        monkeypatch.delenv("REQUEST_INTERVAL_SECONDS", raising=False)
+        monkeypatch.delenv("DETAILS_LIMIT", raising=False)
+        run, publish = self._run_main(monkeypatch, "details")
+        assert run.call_args.args[0] == "details"
+        assert run.call_args.args[3:] == (1.0, 1000)
+        assert publish.call_args.args[1:] == ("details", {"a": 1}, "success")
+
+    def test_settings_from_environment(self, monkeypatch):
+        monkeypatch.setenv("REQUEST_INTERVAL_SECONDS", "2.5")
+        monkeypatch.setenv("DETAILS_LIMIT", "7")
+        run, _ = self._run_main(monkeypatch, "details")
+        assert run.call_args.args[3:] == (2.5, 7)
+
+    def test_sigterm_unwinds_so_the_lock_is_released(self):
+        with pytest.raises(SystemExit):
+            _mod._exit_on_sigterm(15, None)
+
+    def test_failure_exits_nonzero(self, monkeypatch):
+        with patch.object(_mod.sys, "exit") as exit_:
+            self._run_main(monkeypatch, "search", status="failure")
+        exit_.assert_called_once_with(1)
+
+    @pytest.mark.parametrize("argv", [[], ["both"]])
+    def test_a_known_job_is_required(self, argv):
+        with pytest.raises(SystemExit):
+            _mod.main(argv)
 
 
 # ---------------------------------------------------------------------------
@@ -934,76 +995,45 @@ class TestRunPipeline:
 # ---------------------------------------------------------------------------
 
 class TestMqttCompletionStats:
-    def _setup_mock_client(self):
-        mock_client = MagicMock()
+    def _publish(self, job, stats, status="success", cfg=None):
+        client = MagicMock()
+        client.connect.side_effect = lambda *a, **k: client.on_connect(client, None, None, 0, None)
+        with patch("uk_caa_registry_main.mqtt.Client", return_value=client), patch("time.sleep"):
+            publish_completion_stats(
+                cfg if cfg is not None else {"mqtt": {"host": "localhost", "port": 1883}},
+                job, stats, status,
+            )
+        return client, {c.args[0]: c.args[1] for c in client.publish.call_args_list}
 
-        def fake_connect(host, port, keepalive):
-            mock_client.on_connect(mock_client, None, None, 0, None)
+    def test_each_job_publishes_under_its_own_topic(self):
+        _, search = self._publish("search", {"prefixes_searched": 676})
+        _, details = self._publish("details", {"records_imported": 42}, "failure")
+        assert search[f"{MQTT_ROOT}/search/statistic/prefixes_searched"] == "676"
+        assert search[f"{MQTT_ROOT}/search/statistic/last_run_status"] == "Success"
+        assert details[f"{MQTT_ROOT}/details/statistic/records_imported"] == "42"
+        assert details[f"{MQTT_ROOT}/details/statistic/last_run_status"] == "Failure"
+        assert f"{MQTT_ROOT}/details/statistic/last_run_at" in details
 
-        mock_client.connect.side_effect = fake_connect
-        return mock_client
+    def test_unavailable_statistics_are_not_published(self):
+        _, published = self._publish("details", {"records_imported": 1})
+        assert f"{MQTT_ROOT}/details/statistic/queue_size" not in published
 
-    def test_publishes_records_imported(self):
-        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
-        mc = self._setup_mock_client()
-        with patch("uk_caa_registry_main.mqtt.Client", return_value=mc):
-            with patch("time.sleep"):
-                publish_completion_stats(cfg, 42, "success")
-        topics = [c.args[0] for c in mc.publish.call_args_list]
-        assert f"{MQTT_ROOT}/statistic/records_imported" in topics
+    @pytest.mark.parametrize("job, sensors", [("search", 7), ("details", 8)])
+    def test_ha_discovery_and_retired_topics(self, job, sensors):
+        client, published = self._publish(job, {})
+        configs = {t: p for t, p in published.items() if t.startswith("homeassistant/") and p}
+        assert len(configs) == sensors
+        assert all(f"_{job}_" in t for t in configs)
+        assert not any("total_increasing" in p for p in configs.values())
+        for name in ("records_imported", "last_run_at", "last_run_status"):
+            for topic in (
+                f"homeassistant/sensor/SkyFollower_runner_uk_caa_registry_{name}/config",
+                f"{MQTT_ROOT}/statistic/{name}",
+            ):
+                assert published[topic] == ""
+                client.publish.assert_any_call(topic, "", retain=True)
 
-    def test_records_imported_value(self):
-        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
-        mc = self._setup_mock_client()
-        with patch("uk_caa_registry_main.mqtt.Client", return_value=mc):
-            with patch("time.sleep"):
-                publish_completion_stats(cfg, 99, "success")
-        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
-        assert calls[f"{MQTT_ROOT}/statistic/records_imported"] == "99"
-
-    def test_publishes_last_run_at(self):
-        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
-        mc = self._setup_mock_client()
-        with patch("uk_caa_registry_main.mqtt.Client", return_value=mc):
-            with patch("time.sleep"):
-                publish_completion_stats(cfg, 0, "success")
-        topics = [c.args[0] for c in mc.publish.call_args_list]
-        assert f"{MQTT_ROOT}/statistic/last_run_at" in topics
-
-    def test_publishes_last_run_status(self):
-        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
-        mc = self._setup_mock_client()
-        with patch("uk_caa_registry_main.mqtt.Client", return_value=mc):
-            with patch("time.sleep"):
-                publish_completion_stats(cfg, 0, "failure")
-        calls = {c.args[0]: c.args[1] for c in mc.publish.call_args_list}
-        assert calls[f"{MQTT_ROOT}/statistic/last_run_status"] == "Failure"
-
-    def test_no_mqtt_config_skips(self):
-        cfg = {}
-        mc = self._setup_mock_client()
-        with patch("uk_caa_registry_main.mqtt.Client", return_value=mc):
-            publish_completion_stats(cfg, 0, "success")
-        mc.connect.assert_not_called()
-
-    def test_blank_host_skips_without_crashing(self):
-        """mqtt_config() returns {"host": ""} rather than None/{} when MQTT is
-        unset, so a bare `if not mc` check misses it and crashes on
-        None.on_connect. Must not raise."""
-        cfg = {"mqtt": {"host": "", "port": 1883, "username": "", "password": ""}}
-        publish_completion_stats(cfg, 0, "success")
-
-    def test_ha_autodiscovery_three_sensors(self):
-        cfg = {"mqtt": {"host": "localhost", "port": 1883}}
-        mc = self._setup_mock_client()
-        with patch("uk_caa_registry_main.mqtt.Client", return_value=mc):
-            with patch("time.sleep"):
-                publish_completion_stats(cfg, 100, "success")
-        ha_topics = [
-            c.args[0] for c in mc.publish.call_args_list
-            if c.args[0].startswith("homeassistant/")
-        ]
-        assert len(ha_topics) == 3
-        assert "homeassistant/sensor/SkyFollower_runner_uk_caa_registry_records_imported/config" in ha_topics
-        assert "homeassistant/sensor/SkyFollower_runner_uk_caa_registry_last_run_at/config" in ha_topics
-        assert "homeassistant/sensor/SkyFollower_runner_uk_caa_registry_last_run_status/config" in ha_topics
+    @pytest.mark.parametrize("cfg", [{}, {"mqtt": {"host": "", "port": 1883}}])
+    def test_no_mqtt_host_skips(self, cfg):
+        client, _ = self._publish("search", {}, cfg=cfg)
+        client.connect.assert_not_called()

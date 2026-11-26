@@ -7,16 +7,115 @@
 | **Registration prefix** | `G-` |
 | **Data source** | https://ginfoapi.caa.co.uk (G-INFO REST API) |
 | **Format** | JSON API (search + details endpoints; no bulk download) |
-| **Run frequency** | Weekly (Monday, 06:10 UTC) |
+| **Run frequency** | Search: weekly (Monday, 06:10 UTC). Details: daily (19:10 UTC) |
 | **Depends on Mictronics for ICAO hex** | No — the G-INFO details payload includes the aircraft's ICAO 24-bit address directly (`AircraftDetails.ICAO24BitAircraftAddress.Hex`). |
 
 ## How it works
 
-G-INFO has no bulk-export endpoint, so this runner enumerates the entire register itself: it POSTs `/api/aircraft/search` once for every 2-letter suffix combination from `AA` to `ZZ` (676 calls total, via `itertools.product`), then, for each result with `RegistrationStatus == "R"`, immediately calls `GET /api/aircraft/details/{id}` and writes the record — there is no intermediate accumulation. Search calls are not rate-limited; details calls sleep for `request_interval_seconds` between requests to be polite to the API. Any call that returns HTTP 403 is queued and retried once at a fixed 500ms interval after the main enumeration pass finishes. Lookup tables decode the API's free-text `AircraftClass` into canonical `aircraft.type`/`aircraft.category` values and full English country names into ISO 3166-1 alpha-2 codes, falling back to the raw source value for anything unmapped. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
+G-INFO has no bulk-export endpoint, and its rate limit makes fetching the whole register in one run too slow. The runner is therefore two jobs, run from one image:
+
+| Job | Command | Schedule | What it does |
+|---|---|---|---|
+| Search | `python uk-caa-registry/main.py search` | Weekly | Searches every 2-letter suffix `AA`–`ZZ` (676 `POST /api/aircraft/search` calls) and maintains a queue of registered aircraft in Redis. It never fetches details. |
+| Details | `python uk-caa-registry/main.py details` | Daily | Calls `GET /api/aircraft/details/{id}` for the aircraft that are due, up to a limit, and writes `aircraft:registry:{icao_hex}`. It never searches. |
+
+The search response has no ICAO address, so only the details job can write aircraft records. Search is weekly because how often CAA publishes register changes is not known.
+
+Lookup tables decode the API's free-text `AircraftClass` into canonical `aircraft.type`/`aircraft.category` values and full English country names into ISO 3166-1 alpha-2 codes, falling back to the raw source value for anything unmapped. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `description_code` (ICAO Doc 8643 description code, e.g. `L2J`) are set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from the CAA and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
-**Notable operational characteristic**: because it makes 676 prefix search calls plus a details fetch per registered aircraft, a full run takes several hours. It is deliberately scheduled as the last runner of the day by the `ofelia` service's labels in `docker-compose.core.yaml` (`0 10 6 * * 1`, after `ourairports` at `0 10 5 * * 1`) to avoid overlapping with other Monday jobs.
+## Redis keys
+
+| Key | Contents | TTL | TTL renewed by |
+|---|---|---|---|
+| `uk_caa:aircraft:{AircraftID}` | Queue record: `aircraft_id`, `mark`, `next_fetch_at` (epoch seconds; `0` until first processed) | 18 days | A search that finds the aircraft registered |
+| `uk_caa:search:progress` | Hash of prefix → epoch seconds of its last successful search | None | — |
+| `uk_caa:lock` | Held by whichever job is calling CAA | 5 minutes | The running job |
+| `aircraft:registry:{icao_hex}` | Aircraft record | 70 days | A successful details fetch |
+
+The details job asks the `idx:uk_caa:aircraft` search index for due records, so Redis does the filtering, sorting and limiting:
+
+```
+FT.SEARCH idx:uk_caa:aircraft "@next_fetch_at:[-inf {now}]" SORTBY next_fetch_at ASC LIMIT 0 {batch} NOCONTENT
+```
+
+Both TTLs drop data only after two missed refreshes: details are due every 28 days and searches every 7.
+
+### Search job
+
+- Prefixes are searched longest-waiting first, so a blocked or stopped run doesn't starve later ones. A prefix's timestamp changes only when its search succeeds.
+- A new registered (`R`) aircraft gets a queue record that is due immediately. A known one has its TTL renewed and keeps its `next_fetch_at`.
+- A result with any other status deletes the queue record **only if its mark matches the queued mark**. G-INFO lists one `AircraftID` under every mark the aircraft has held, so a deregistered old mark says nothing about the current one.
+- An aircraft missing from the results, or a failed search, deletes nothing.
+
+### Details job
+
+| Outcome | `next_fetch_at` | Aircraft record |
+|---|---|---|
+| Fetched | 28 days later | Written with a 70-day TTL |
+| Request failed | 1 day later | Not renewed |
+| Not `Registered`, or no ICAO address or mark | 28 days later | Not written |
+
+Neither job deletes `aircraft:registry:*` keys. A deregistered aircraft's record expires on its own, up to 70 days after its last successful fetch.
+
+## First fill
+
+New queue records are all due at once. At the default 1,000 a day, a register of about 20,000 aircraft (an estimate) takes about 20 days to fill, if CAA accepts that rate. Once filled, a 28-day cycle needs about 700 a day. If searches fail for long enough that queue records expire, those aircraft come back as due immediately.
+
+## Rate limiting
+
+G-INFO refuses clients that send requests too quickly with HTTP 403. Its limit is not published. In live runs, a block often followed 25 accepted requests, and sometimes came after only one.
+
+- **Pacing:** the runner waits before every request, 1 second by default.
+- **Refusals:** on HTTP 403 or 429 the runner waits, then retries the same request. The waits are 65, 120, 300, 600 and 900 seconds. A longer `Retry-After` value is honoured, up to one hour. Each refusal is logged with the number of requests accepted since the previous one, the response headers useful for diagnosis, and the start of the response body.
+- **Giving up:** if a request is still refused after the last wait, the run stops. The aircraft being fetched stays due.
+- **Other errors:** server errors, connection errors and timeouts are retried after 2, 5 and 15 seconds.
+- **One job at a time:** both jobs share CAA's limit, so each takes a Redis lock before its first request, waiting if the other holds it.
+- **Maximum run time:** 12 hours for search and 10 for details, including any wait for the lock. The schedules leave room for both.
+
+## Run status
+
+Reaching the details limit, or the details job's maximum run time after making progress, is a success.
+
+| Job | `last_run_status` is `Failure` when |
+|---|---|
+| Search | It stops before searching every prefix, or any prefix search fails |
+| Details | It stops on persistent refusal, loses the lock, cannot fetch anything while aircraft are due, or more than 1% of requests fail |
+
+The exit code is non-zero on failure. Work already done is kept.
+
+## Upgrading from the single weekly job
+
+`scripts/install.sh --upgrade` on the core role does the following:
+
+1. Replaces the compose file, and `up -d` recreates `ofelia` with the two new jobs in place of the old one.
+2. Stops any UK runner container still running from another version.
+3. If no search has completed a prefix yet, starts the search job in the background. The daily details job picks up queue records as they appear.
+
+Existing aircraft records are not migrated: each keeps its TTL until a details fetch rewrites it or it expires.
+
+To upgrade by hand, from the core host's directory after replacing `docker-compose.core.yaml` and setting the new `SKYFOLLOWER_VERSION`:
+
+```bash
+docker ps --format '{{.ID}} {{.Image}}' | grep skyfollower-runner-uk-caa-registry   # docker stop any old run
+docker compose --profile runners pull
+docker compose up -d
+docker compose run -d --rm runner-uk-caa-registry-search
+```
+
+## Running by hand
+
+```bash
+docker compose run --rm runner-uk-caa-registry-search
+docker compose run --rm runner-uk-caa-registry-details
+```
+
+To follow a run started by `ofelia` or the installer:
+
+```bash
+docker logs -f "$(docker ps -q --filter ancestor=ghcr.io/brentio/skyfollower-runner-uk-caa-registry:$(grep '^SKYFOLLOWER_VERSION=' .env | cut -d= -f2))"
+```
 
 ## Columns
 
@@ -26,9 +125,9 @@ Fields below are grouped by the payload they come from: the `POST /api/aircraft/
 
 | Source field | Imported | Notes |
 |---|---|---|
-| `AircraftID` | ✅ | Used to fetch the details payload; not stored |
-| `RegistrationStatus` | ✅ | Filters which `AircraftID`s get a details fetch (`"R"` only); not stored |
-| `Mark` | ❌ | Duplicate of `RegistrationDetails.Mark`, which is read from the details payload instead |
+| `AircraftID` | ✅ | → queue record `aircraft_id` and key; used to fetch the details payload |
+| `RegistrationStatus` | ✅ | Only `"R"` results are queued; not stored |
+| `Mark` | ✅ | → queue record `mark`; the aircraft record's `registration` comes from `RegistrationDetails.Mark` |
 | `SerialNo` | ❌ | Duplicate of `AircraftDetails.SerialNumber`, which is read from the details payload instead |
 | `MilitarySerialNo` | ❌ | Present in source; never read (no equivalent field exists in the details payload) |
 | `AircraftType` | ❌ | Duplicate of `AircraftDetails.Type`, which is read from the details payload instead |
@@ -207,16 +306,33 @@ docker run --rm --network host redis:latest redis-cli EVAL "$(cat ./shared/lua/m
 
 ## Configuration
 
-See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the full list of environment variables every runner reads. This runner writes `aircraft:registry:{icao_hex}` with a fixed 14-day TTL (`ENRICHMENT_TTL_SECONDS` in `shared/timing.py`).
+See [Data Runners](https://github.com/BrentIO/SkyFollower/blob/main/runners/README.md#configuration) for the environment variables every runner reads. Two more are optional, set in the core host's `.env`:
+
+| `.env` variable | In the container | Default | What it does |
+|---|---|---|---|
+| `UK_CAA_REQUEST_INTERVAL_SECONDS` | `REQUEST_INTERVAL_SECONDS` | `1` | Delay before every request |
+| `UK_CAA_DETAILS_LIMIT` | `DETAILS_LIMIT` | `1000` | Most aircraft one details run processes |
+
+After changing either, run `docker compose up -d` so `ofelia` picks it up. TTLs, refresh intervals and maximum run times are the `UK_CAA_*` constants in `shared/timing.py`.
 
 ## MQTT
 
-Published once, at the end of a run, to `SkyFollower/runner/uk-caa-registry/statistic/{name}` (all retained):
+Published once, at the end of each run, to `SkyFollower/runner/uk-caa-registry/{job}/statistic/{name}` (all retained), where `{job}` is `search` or `details`:
 
-| Topic suffix | Value | Format |
+| Job | Topic suffix | Value |
 |---|---|---|
-| `records_imported` | e.g. `271` | Integer as string |
-| `last_run_at` | e.g. `2026-07-07T14:32:01.123456+00:00` | ISO 8601 UTC |
-| `last_run_status` | `Success` or `Failure` | String |
+| search | `prefixes_searched` / `prefixes_failed` | Prefix searches this run |
+| search | `aircraft_found` | Registered results seen |
+| search | `aircraft_added` / `aircraft_removed` | Queue records created and deleted |
+| details | `records_imported` | Aircraft records written this run |
+| details | `requests_failed` | Failed details requests this run |
+| details | `queue_size` | Aircraft in the queue |
+| details | `aircraft_due` | Aircraft due now |
+| details | `aircraft_never_fetched` | Queue records not yet processed |
+| details | `oldest_overdue_days` | How far overdue the longest-waiting processed aircraft is. A value that keeps rising means the limit or rate is too low; near 42, aircraft records start expiring |
+| both | `last_run_at` | ISO 8601 UTC |
+| both | `last_run_status` | `Success` or `Failure` |
 
-Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_uk_caa_registry_{name}/config` for each of the three stats above.
+The four queue counts are omitted if Redis cannot be queried. Each run also publishes empty retained payloads to the single weekly job's old topics and discovery configs, which removes its three Home Assistant sensors.
+
+Home Assistant autodiscovery configs are also published (retained) to `homeassistant/sensor/SkyFollower_runner_uk_caa_registry_{job}_{name}/config` for each statistic above, on one shared device.

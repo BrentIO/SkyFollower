@@ -23,6 +23,17 @@ AIRCRAFT_MICTRONICS_SEARCH_INDEX = "idx:aircraft:mictronics"
 # Indexed fields: $.icao_hex, $.registration
 AIRCRAFT_REGISTRY_SEARCH_INDEX = "idx:aircraft:registry"
 
+# RediSearch index over the uk-caa-registry runner's uk_caa:aircraft:*
+# queue records. Indexed field: $.next_fetch_at
+UK_CAA_QUEUE_SEARCH_INDEX = "idx:uk_caa:aircraft"
+UK_CAA_QUEUE_KEY_PREFIX = "uk_caa:aircraft:"
+
+# Hash of search prefix -> epoch seconds of its last successful search.
+UK_CAA_SEARCH_PROGRESS_KEY = "uk_caa:search:progress"
+
+# Held by whichever uk-caa-registry job is calling CAA.
+UK_CAA_LOCK_KEY = "uk_caa:lock"
+
 # RediSearch index over all airport:{icao_code} JSON documents.
 AIRPORT_SEARCH_INDEX = "idx:airport"
 
@@ -35,6 +46,11 @@ def aircraft_mictronics_key(icao_hex: str) -> str:
 def aircraft_registry_key(icao_hex: str) -> str:
     """Country-runner aircraft enrichment record. aircraft:registry:{icao_hex}"""
     return f"aircraft:registry:{icao_hex.upper()}"
+
+
+def uk_caa_queue_key(aircraft_id: int) -> str:
+    """uk-caa-registry details queue record. uk_caa:aircraft:{AircraftID}"""
+    return f"{UK_CAA_QUEUE_KEY_PREFIX}{int(aircraft_id)}"
 
 
 def aircraft_livery_key(icao_hex: str) -> str:
