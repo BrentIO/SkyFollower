@@ -59,6 +59,26 @@ _apply_type_lookup = _mod._apply_type_lookup
 _search_by_prefix = _mod._search_by_prefix
 _get_aircraft_details = _mod._get_aircraft_details
 run_pipeline = _mod.run_pipeline
+IncompleteRunError = _mod.IncompleteRunError
+RateLimitedError = _mod.RateLimitedError
+
+
+def _client(session):
+    return _mod._Client(session, 0)
+
+
+def _ok(payload):
+    resp = MagicMock()
+    resp.json.return_value = payload
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+def _http_error(status, headers=None):
+    error = MagicMock(status_code=status, headers=headers or {}, text="blocked")
+    resp = MagicMock()
+    resp.raise_for_status.side_effect = requests.HTTPError(response=error)
+    return resp
 publish_completion_stats = _mod.publish_completion_stats
 REDIS_TTL = _mod.ENRICHMENT_TTL_SECONDS
 MQTT_ROOT = _mod.MQTT_ROOT
@@ -453,35 +473,35 @@ class TestSearchByPrefix:
 
     def test_posts_to_correct_url(self):
         session = self._make_session(_SEARCH_RESULT)
-        _search_by_prefix(session, "VA")
+        _search_by_prefix(_client(session), "VA")
         url = session.post.call_args.args[0]
         assert "/api/aircraft/search" in url
 
     def test_sends_registration_prefix(self):
         session = self._make_session(_SEARCH_RESULT)
-        _search_by_prefix(session, "VA")
+        _search_by_prefix(_client(session), "VA")
         payload = session.post.call_args.kwargs["json"]
         assert payload == {"Registration": "VA"}
 
     def test_returns_results_list(self):
         session = self._make_session(_SEARCH_RESULT)
-        results = _search_by_prefix(session, "VA")
+        results = _search_by_prefix(_client(session), "VA")
         assert results == _SEARCH_RESULT
 
     def test_empty_response_returns_empty_list(self):
         session = self._make_session([])
-        results = _search_by_prefix(session, "ZZ")
+        results = _search_by_prefix(_client(session), "ZZ")
         assert results == []
 
     def test_none_response_returns_empty_list(self):
         session = self._make_session(None)
-        results = _search_by_prefix(session, "ZZ")
+        results = _search_by_prefix(_client(session), "ZZ")
         assert results == []
 
     def test_logs_url_and_prefix_at_debug(self, caplog):
         session = self._make_session(_SEARCH_RESULT)
         with caplog.at_level(logging.DEBUG, logger="uk-caa-registry"):
-            _search_by_prefix(session, "VA")
+            _search_by_prefix(_client(session), "VA")
         assert any(
             "/api/aircraft/search" in r.message and "VA" in r.message
             for r in caplog.records
@@ -503,20 +523,20 @@ class TestGetAircraftDetails:
 
     def test_gets_correct_url(self):
         session = self._make_session(_make_details())
-        _get_aircraft_details(session, 66819)
+        _get_aircraft_details(_client(session), 66819)
         url = session.get.call_args.args[0]
         assert "/api/aircraft/details/66819" in url
 
     def test_returns_parsed_json(self):
         details = _make_details()
         session = self._make_session(details)
-        result = _get_aircraft_details(session, 66819)
+        result = _get_aircraft_details(_client(session), 66819)
         assert result == details
 
     def test_logs_url_at_debug(self, caplog):
         session = self._make_session(_make_details())
         with caplog.at_level(logging.DEBUG, logger="uk-caa-registry"):
-            _get_aircraft_details(session, 66819)
+            _get_aircraft_details(_client(session), 66819)
         assert any(
             "/api/aircraft/details/66819" in r.message for r in caplog.records
         )
@@ -654,155 +674,102 @@ class TestRunPipeline:
             run_pipeline(session, r, REDIS_TTL, 0.1)
         r.expire.assert_called_with("aircraft:registry:406B48", REDIS_TTL)
 
-    def test_search_error_skips_prefix_continues(self):
-        r = self._make_redis()
+    def _run(self, session, interval=1.0):
+        sleeps = []
+        with patch("time.sleep", side_effect=sleeps.append):
+            count = run_pipeline(session, self._make_redis(), REDIS_TTL, interval)
+        return count, sleeps
+
+    @pytest.mark.parametrize("status", [403, 429])
+    def test_refused_search_is_retried_in_place_after_waiting(self, status):
         session = MagicMock()
+        session.post.side_effect = [_http_error(status)] + [_ok([])] * 676
+        _, sleeps = self._run(session)
+        prefixes = [c.kwargs["json"]["Registration"] for c in session.post.call_args_list]
+        assert prefixes[:3] == ["AA", "AA", "AB"]
+        assert sleeps[:3] == [1.0, 60, 1.0]
 
-        bad_resp = MagicMock()
-        bad_resp.raise_for_status.side_effect = Exception("HTTP 503")
+    def test_refused_details_request_is_retried_and_written(self):
+        session = MagicMock()
+        session.post.side_effect = [_ok(_SEARCH_RESULT)] + [_ok([])] * 675
+        session.get.side_effect = [_http_error(403), _ok(_make_details())]
+        count, sleeps = self._run(session)
+        assert count == 1
+        assert 60 in sleeps
 
-        good_resp = MagicMock()
-        good_resp.json.return_value = []
-        good_resp.raise_for_status.return_value = None
+    def test_waits_increase_then_run_stops(self):
+        session = MagicMock()
+        session.post.return_value = _http_error(403)
+        sleeps = []
+        with patch("time.sleep", side_effect=sleeps.append):
+            with pytest.raises(RateLimitedError):
+                run_pipeline(session, self._make_redis(), REDIS_TTL, 1.0)
+        assert [s for s in sleeps if s != 1.0] == [60, 120, 300, 600, 900]
+        assert session.post.call_count == 6
 
-        session.post.side_effect = [bad_resp] + [good_resp] * 675
-
+    def test_rate_limited_run_reports_records_already_written(self):
+        session = MagicMock()
+        session.post.side_effect = [_ok(_SEARCH_RESULT)] + [_http_error(403)] * 6
+        session.get.return_value = _ok(_make_details())
         with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
+            with pytest.raises(RateLimitedError) as raised:
+                run_pipeline(session, self._make_redis(), REDIS_TTL, 1.0)
+        assert raised.value.records_imported == 1
 
+    @pytest.mark.parametrize("header, expected", [
+        ("200", 200), ("5", 60), ("999999", 3600), ("soon", 60),
+    ])
+    def test_retry_after_header(self, header, expected):
+        session = MagicMock()
+        session.post.side_effect = [_http_error(429, {"Retry-After": header})] + [_ok([])] * 676
+        _, sleeps = self._run(session)
+        assert sleeps[1] == expected
+
+    def test_refusal_is_logged_with_diagnostics(self, caplog):
+        session = MagicMock()
+        session.post.side_effect = (
+            [_ok([]), _http_error(403, {"x-azure-ref": "abc123"})] + [_ok([])] * 675
+        )
+        with caplog.at_level(logging.INFO, logger="uk-caa-registry"):
+            self._run(session)
+        assert "after 1 accepted requests" in caplog.text
+        assert "x-azure-ref=abc123" in caplog.text
+        assert "blocked" in caplog.text
+        assert "Accepted again after waiting 60s" in caplog.text
+
+    def test_server_error_is_retried(self):
+        session = MagicMock()
+        session.post.side_effect = [_http_error(503)] + [_ok([])] * 676
+        _, sleeps = self._run(session)
+        assert sleeps[1] == 2
+
+    def test_connection_error_is_retried(self):
+        session = MagicMock()
+        session.post.side_effect = [requests.ConnectionError()] + [_ok([])] * 676
+        _, sleeps = self._run(session)
+        assert sleeps[1] == 2
+
+    def test_lost_prefix_search_marks_run_incomplete(self):
+        session = MagicMock()
+        session.post.side_effect = [_http_error(400)] + [_ok([])] * 675
+        with pytest.raises(IncompleteRunError):
+            self._run(session)
         assert session.post.call_count == 676
-        assert count == 0
 
-    def test_prefix_403_queued_and_retried(self):
-        r = self._make_redis()
+    def test_many_failed_aircraft_mark_run_incomplete(self):
         session = MagicMock()
+        session.post.return_value = _ok(_SEARCH_RESULT)
+        session.get.return_value = _http_error(404)
+        with pytest.raises(IncompleteRunError):
+            self._run(session)
+        assert session.get.call_count == 676
 
-        error_resp = MagicMock()
-        error_resp.status_code = 403
-        bad_search = MagicMock()
-        bad_search.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        good_search = MagicMock()
-        good_search.json.return_value = _SEARCH_RESULT
-        good_search.raise_for_status.return_value = None
-
-        empty_search = MagicMock()
-        empty_search.json.return_value = []
-        empty_search.raise_for_status.return_value = None
-
-        # First prefix (AA) returns 403; remaining 675 return empty; retry returns a result
-        session.post.side_effect = [bad_search] + [empty_search] * 675 + [good_search]
-
-        details_resp = MagicMock()
-        details_resp.json.return_value = _make_details()
-        details_resp.raise_for_status.return_value = None
-        session.get.return_value = details_resp
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 1
-        assert session.post.call_count == 677  # 676 main + 1 retry
-
-    def test_prefix_403_retry_uses_500ms_sleep(self):
-        r = self._make_redis()
+    def test_few_failed_aircraft_still_succeed(self):
         session = MagicMock()
-
-        error_resp = MagicMock()
-        error_resp.status_code = 403
-        bad_search = MagicMock()
-        bad_search.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        empty_search = MagicMock()
-        empty_search.json.return_value = []
-        empty_search.raise_for_status.return_value = None
-
-        # First prefix returns 403; retry returns empty
-        session.post.side_effect = [bad_search] + [empty_search] * 675 + [empty_search]
-
-        sleep_calls = []
-        with patch("time.sleep", side_effect=lambda x: sleep_calls.append(x)):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert 0.5 in sleep_calls
-
-    def test_prefix_non_403_not_retried(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        error_resp = MagicMock()
-        error_resp.status_code = 503
-        bad_search = MagicMock()
-        bad_search.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        empty_search = MagicMock()
-        empty_search.json.return_value = []
-        empty_search.raise_for_status.return_value = None
-
-        session.post.side_effect = [bad_search] + [empty_search] * 675
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 0
-        assert session.post.call_count == 676  # no retry
-
-    def test_detail_403_during_prefix_retry_is_retried(self):
-        """Aircraft that 403 during a prefix retry must still be retried via retry_queue."""
-        r = self._make_redis()
-        session = MagicMock()
-
-        prefix_403_resp = MagicMock()
-        prefix_403_resp.status_code = 403
-        bad_search = MagicMock()
-        bad_search.raise_for_status.side_effect = requests.HTTPError(response=prefix_403_resp)
-
-        good_search = MagicMock()
-        good_search.json.return_value = _SEARCH_RESULT
-        good_search.raise_for_status.return_value = None
-
-        empty_search = MagicMock()
-        empty_search.json.return_value = []
-        empty_search.raise_for_status.return_value = None
-
-        # Main loop: first prefix 403, rest empty; prefix retry returns a result
-        session.post.side_effect = [bad_search] + [empty_search] * 675 + [good_search]
-
-        detail_403_resp = MagicMock()
-        detail_403_resp.status_code = 403
-        detail_403 = MagicMock()
-        detail_403.raise_for_status.side_effect = requests.HTTPError(response=detail_403_resp)
-
-        good_detail = MagicMock()
-        good_detail.json.return_value = _make_details()
-        good_detail.raise_for_status.return_value = None
-
-        # Detail 403 during prefix retry, then success in aircraft retry_queue pass
-        session.get.side_effect = [detail_403, good_detail]
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 1
-
-    def test_details_error_skips_and_continues(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-        session.post.return_value = search_resp
-
-        error_resp = MagicMock()
-        error_resp.raise_for_status.side_effect = Exception("HTTP 503")
-        session.get.return_value = error_resp
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 0
-        r.json.return_value.set.assert_not_called()
+        session.post.return_value = _ok(_SEARCH_RESULT)
+        session.get.side_effect = [_http_error(404)] + [_ok(_make_details())] * 675
+        count, _ = self._run(session)
+        assert count == 675
 
     def test_skips_non_registered_details_status(self):
         r = self._make_redis()
@@ -812,121 +779,46 @@ class TestRunPipeline:
         assert count == 0
         r.json.return_value.set.assert_not_called()
 
-    def test_no_sleep_between_search_calls(self):
-        r = self._make_redis()
-        session = self._make_session([], _make_details())
-        sleep_calls = []
-        with patch("time.sleep", side_effect=lambda x: sleep_calls.append(x)):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-        # No registered aircraft → no details calls → no sleeps at all
-        assert sleep_calls == []
-
-    def test_403_queued_for_retry(self):
-        r = self._make_redis()
+    def test_every_request_is_paced(self):
         session = MagicMock()
+        session.post.side_effect = [_ok(_SEARCH_RESULT)] + [_ok([])] * 675
+        session.get.return_value = _ok(_make_details())
+        _, sleeps = self._run(session, interval=0.25)
+        assert sleeps == [0.25] * 677
 
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-        session.post.return_value = search_resp
 
-        error_resp = MagicMock()
-        error_resp.status_code = 403
-        details_403 = MagicMock()
-        details_403.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
+# ---------------------------------------------------------------------------
+# Tests: main
+# ---------------------------------------------------------------------------
 
-        good_details = MagicMock()
-        good_details.json.return_value = _make_details()
-        good_details.raise_for_status.return_value = None
+class TestMain:
+    def _run_main(self, monkeypatch, **pipeline):
+        monkeypatch.setenv("REDIS_HOST", "localhost")
+        monkeypatch.setenv("REDIS_PASSWORD", "x")
+        with patch.object(_mod, "build_redis_client"), \
+                patch.object(_mod, "configure_logging"), \
+                patch.object(_mod, "_ensure_search_index"), \
+                patch.object(_mod, "run_pipeline", **pipeline) as run, \
+                patch.object(_mod, "publish_completion_stats") as publish:
+            _mod.main()
+        return run, publish
 
-        # First details call → 403, retry → success
-        session.get.side_effect = [details_403] * 676 + [good_details] * 676
+    @pytest.mark.parametrize("value, expected", [(None, 1.0), ("2.5", 2.5)])
+    def test_request_interval_from_environment(self, monkeypatch, value, expected):
+        monkeypatch.delenv("REQUEST_INTERVAL_SECONDS", raising=False)
+        if value:
+            monkeypatch.setenv("REQUEST_INTERVAL_SECONDS", value)
+        run, publish = self._run_main(monkeypatch, return_value=5)
+        assert run.call_args.args[3] == expected
+        assert publish.call_args.args[1:] == (5, "success")
 
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 676
-
-    def test_403_retry_uses_500ms_sleep(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        # Only first prefix returns a result
-        search_hit = MagicMock()
-        search_hit.json.return_value = _SEARCH_RESULT
-        search_hit.raise_for_status.return_value = None
-
-        search_empty = MagicMock()
-        search_empty.json.return_value = []
-        search_empty.raise_for_status.return_value = None
-
-        session.post.side_effect = [search_hit] + [search_empty] * 675
-
-        error_resp = MagicMock()
-        error_resp.status_code = 403
-        details_403 = MagicMock()
-        details_403.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-
-        good_details = MagicMock()
-        good_details.json.return_value = _make_details()
-        good_details.raise_for_status.return_value = None
-
-        session.get.side_effect = [details_403, good_details]
-
-        sleep_calls = []
-        with patch("time.sleep", side_effect=lambda x: sleep_calls.append(x)):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert 0.5 in sleep_calls
-
-    def test_non_403_http_error_not_retried(self):
-        r = self._make_redis()
-        session = MagicMock()
-
-        search_resp = MagicMock()
-        search_resp.json.return_value = _SEARCH_RESULT
-        search_resp.raise_for_status.return_value = None
-        session.post.return_value = search_resp
-
-        error_resp = MagicMock()
-        error_resp.status_code = 500
-        details_500 = MagicMock()
-        details_500.raise_for_status.side_effect = requests.HTTPError(response=error_resp)
-        session.get.return_value = details_500
-
-        with patch("time.sleep"):
-            count = run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        assert count == 0
-        # Details called 676 times (once per prefix hit) — no retries
-        assert session.get.call_count == 676
-
-    def test_sleep_only_before_details_calls(self):
-        r = self._make_redis()
-        # Two registered results from every prefix would be excessive; use a single prefix result
-        session = MagicMock()
-        search_empty = MagicMock()
-        search_empty.json.return_value = []
-        search_empty.raise_for_status.return_value = None
-
-        search_hit = MagicMock()
-        search_hit.json.return_value = _SEARCH_RESULT
-        search_hit.raise_for_status.return_value = None
-
-        details_resp = MagicMock()
-        details_resp.json.return_value = _make_details()
-        details_resp.raise_for_status.return_value = None
-
-        # Only first prefix (AA) returns a result
-        session.post.side_effect = [search_hit] + [search_empty] * 675
-        session.get.return_value = details_resp
-
-        sleep_calls = []
-        with patch("time.sleep", side_effect=lambda x: sleep_calls.append(x)):
-            run_pipeline(session, r, REDIS_TTL, 0.1)
-
-        # Exactly one sleep — before the one details call
-        assert sleep_calls == [0.1]
+    def test_incomplete_run_publishes_failure_with_count_and_exits_nonzero(self, monkeypatch):
+        with patch.object(_mod.sys, "exit") as exit_:
+            _, publish = self._run_main(
+                monkeypatch, side_effect=RateLimitedError("refused", 42)
+            )
+        assert publish.call_args.args[1:] == (42, "failure")
+        exit_.assert_called_once_with(1)
 
 
 # ---------------------------------------------------------------------------

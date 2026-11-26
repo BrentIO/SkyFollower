@@ -12,11 +12,23 @@
 
 ## How it works
 
-G-INFO has no bulk-export endpoint, so this runner enumerates the entire register itself: it POSTs `/api/aircraft/search` once for every 2-letter suffix combination from `AA` to `ZZ` (676 calls total, via `itertools.product`), then, for each result with `RegistrationStatus == "R"`, immediately calls `GET /api/aircraft/details/{id}` and writes the record — there is no intermediate accumulation. Search calls are not rate-limited; details calls sleep for `request_interval_seconds` between requests to be polite to the API. Any call that returns HTTP 403 is queued and retried once at a fixed 500ms interval after the main enumeration pass finishes. Lookup tables decode the API's free-text `AircraftClass` into canonical `aircraft.type`/`aircraft.category` values and full English country names into ISO 3166-1 alpha-2 codes, falling back to the raw source value for anything unmapped. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
+G-INFO has no bulk-export endpoint, so this runner enumerates the entire register itself: it POSTs `/api/aircraft/search` once for every 2-letter suffix combination from `AA` to `ZZ` (676 calls total, via `itertools.product`), then, for each result with `RegistrationStatus == "R"`, immediately calls `GET /api/aircraft/details/{id}` and writes the record — there is no intermediate accumulation. See [Rate limiting](#rate-limiting) for how requests are paced. Lookup tables decode the API's free-text `AircraftClass` into canonical `aircraft.type`/`aircraft.category` values and full English country names into ISO 3166-1 alpha-2 codes, falling back to the raw source value for anything unmapped. Every written record explicitly sets `military: false` — this register is exclusively civil, and the explicit value ensures a stale `military: true` flag (from Mictronics or a prior record on a reused hex) is corrected on re-registration.
 
 Whenever a record has an `aircraft.type_designator`, `aircraft:type:{type_designator}` is looked up in Redis (populated by the `mictronics` runner) and, if found, its `manufacturer_model` and `description_code` (ICAO Doc 8643 description code, e.g. `L2J`) are set directly on this record — unconditionally, regardless of whether Mictronics also has values for the same hex. This runner's own `type_designator` is sourced directly from the CAA and is authoritative; `merge_aircraft.lua`'s "registry wins over mictronics" precedence rule guarantees these values take priority at read time either way. The lookup is not a hard dependency — a missing reference table entry, or the table not existing yet, leaves the record exactly as it would have been without this step.
 
-**Notable operational characteristic**: because it makes 676 prefix search calls plus a details fetch per registered aircraft, a full run takes several hours. It is deliberately scheduled as the last runner of the day by the `ofelia` service's labels in `docker-compose.core.yaml` (`0 10 6 * * 1`, after `ourairports` at `0 10 5 * * 1`) to avoid overlapping with other Monday jobs.
+**Notable operational characteristic**: because it makes 676 prefix search calls plus a details fetch per registered aircraft, all paced, a full run takes several hours. It is deliberately scheduled as the last runner of the day by the `ofelia` service's labels in `docker-compose.core.yaml` (`0 10 6 * * 1`, after `ourairports` at `0 10 5 * * 1`) to avoid overlapping with other Monday jobs.
+
+## Rate limiting
+
+G-INFO refuses clients that send requests too quickly with HTTP 403. Its limit is not published.
+
+- **Pacing:** the runner waits before every request, 1 second by default. Set the `REQUEST_INTERVAL_SECONDS` environment variable to change it.
+- **Refusals:** on HTTP 403 or 429 the runner waits, then retries the same request. The waits are 60, 120, 300, 600 and 900 seconds. A longer `Retry-After` value is honoured, up to one hour. Each refusal is logged with the number of requests accepted since the previous one, the response headers useful for diagnosis, and the start of the response body.
+- **Giving up:** if a request is still refused after the last wait, the run stops.
+- **Other errors:** server errors, connection errors and timeouts are retried after 2, 5 and 15 seconds.
+- **Run status:** `last_run_status` is `failure`, and the exit code is non-zero, if the run stops early, any prefix search fails, or more than 1% of aircraft fail. Records already written are kept and counted in `records_imported`.
+
+A new run always starts again at `AA`.
 
 ## Columns
 
