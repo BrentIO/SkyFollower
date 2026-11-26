@@ -631,8 +631,6 @@ function MapViewInner({ config }: { config: AppConfig }) {
         paint: {
           "circle-color": ["get", "color"],
           "circle-radius": METAR_DOT_RADIUS_PX,
-          "circle-stroke-width": 1,
-          "circle-stroke-color": "#1f2937",
         },
       });
 
